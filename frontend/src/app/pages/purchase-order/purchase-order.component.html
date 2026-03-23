@@ -51,34 +51,35 @@
         <div>
           <h3 class="text-lg font-semibold text-gray-800 dark:text-white/90">{{ drawerMode === 'create' ? 'Create Purchase Order' : ((activeTab === 'approvals' || activeTab === 'master-data') ? 'View Purchase Order' : 'Update Purchase Order') }}</h3>
           <p class="text-sm text-gray-500 dark:text-gray-400">Simple and refined request form based on API body.</p>
+          <p class="mt-1 text-xs text-amber-600 dark:text-amber-300">Idle timeout protection and browser refresh blocking are active while this PO drawer is open.</p>
         </div>
-        <button type="button" (click)="closeCreateDrawer()" class="rounded-lg border border-gray-300 px-3 py-1.5 text-sm text-gray-600 hover:bg-gray-50 dark:border-gray-700 dark:text-gray-300 dark:hover:bg-gray-800">Close</button>
+        <button type="button" (click)="requestCloseDrawer()" class="rounded-lg border border-gray-300 px-3 py-1.5 text-sm text-gray-600 hover:bg-gray-50 dark:border-gray-700 dark:text-gray-300 dark:hover:bg-gray-800">Close</button>
       </div>
 
       <div class="flex-1 space-y-5 overflow-y-auto px-6 py-5">
         <section class="rounded-xl border border-gray-200 p-4 dark:border-gray-800">
-          <h4 class="mb-3 text-sm font-semibold text-gray-700 dark:text-gray-200">Vendor</h4>
+          <h4 class="mb-3 text-sm font-semibold text-gray-700 dark:text-gray-200">Dealer</h4>
           <div class="mb-3 flex gap-5 text-sm">
             <label class="inline-flex items-center gap-2 text-gray-700 dark:text-gray-300">
               <input type="radio" name="vendorMode" [value]="'existing'" [(ngModel)]="vendorMode" [disabled]="isMasterDataDrawerMode()" />
-              Existing Vendor
+              Existing Dealer
             </label>
             <label class="inline-flex items-center gap-2 text-gray-700 dark:text-gray-300">
               <input type="radio" name="vendorMode" [value]="'new'" [(ngModel)]="vendorMode" [disabled]="isMasterDataDrawerMode()" />
-              New Vendor
+              New Dealer
             </label>
           </div>
 
           @if (vendorMode === 'existing') {
             <div>
-              <label class="mb-1 block text-xs font-medium text-gray-600 dark:text-gray-300">Existing Vendor</label>
+              <label class="mb-1 block text-xs font-medium text-gray-600 dark:text-gray-300">Existing Dealer</label>
               <div class="relative">
                 <input
                   type="text"
                   [ngModel]="vendorSearch"
                   (ngModelChange)="onVendorSearchChange($event)"
                   name="vendorSearch"
-                  placeholder="Search and select vendor"
+                  placeholder="Search and select Dealer"
                   autocomplete="off"
                   [readonly]="isMasterDataDrawerMode()"
                   (focus)="onVendorComboboxFocus()"
@@ -91,7 +92,7 @@
                 @if (isVendorDropdownOpen && !isMasterDataDrawerMode()) {
                   <div class="absolute z-40 mt-1 max-h-56 w-full overflow-y-auto rounded-lg border border-gray-200 bg-white shadow-lg dark:border-gray-700 dark:bg-gray-900">
                     @if (getFilteredVendorOptions().length === 0) {
-                      <p class="px-3 py-2 text-xs text-gray-500 dark:text-gray-400">No vendors found.</p>
+                      <p class="px-3 py-2 text-xs text-gray-500 dark:text-gray-400">No dealers found.</p>
                     } @else {
                       @for (vendor of getFilteredVendorOptions(); track vendor.id) {
                         <button
@@ -107,12 +108,12 @@
                   </div>
                 }
               </div>
-              <p class="mt-1 text-xs text-gray-500 dark:text-gray-400">Type vendor name and pick one from the list.</p>
+              <p class="mt-1 text-xs text-gray-500 dark:text-gray-400">Type Dealer name and pick one from the list.</p>
 
               @if (createForm.vendorId) {
                 <div class="mt-3 grid grid-cols-1 gap-3 md:grid-cols-2">
                   <div>
-                    <label class="mb-1 block text-xs font-medium text-gray-600 dark:text-gray-300">Vendor Name</label>
+                    <label class="mb-1 block text-xs font-medium text-gray-600 dark:text-gray-300">Dealer Name</label>
                     <input
                       type="text"
                       [(ngModel)]="createForm.vendorName"
@@ -157,7 +158,7 @@
           } @else {
             <div class="grid grid-cols-1 gap-3 md:grid-cols-2">
               <div>
-                <label class="mb-1 block text-xs font-medium text-gray-600 dark:text-gray-300">Vendor Name</label>
+                <label class="mb-1 block text-xs font-medium text-gray-600 dark:text-gray-300">Dealer Name</label>
                 <input type="text" [(ngModel)]="createForm.vendorName" name="vendorName" [readonly]="isMasterDataDrawerMode()" class="w-full rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm dark:border-gray-700 dark:bg-gray-900" required />
               </div>
               <div>
@@ -312,7 +313,7 @@
                   ? 'border-brand-500 bg-brand-50 text-brand-700 dark:border-brand-400 dark:bg-brand-500/10 dark:text-brand-300'
                   : 'border-gray-300 text-gray-600 hover:bg-gray-50 dark:border-gray-700 dark:text-gray-300 dark:hover:bg-gray-800'"
               >
-                Product {{ index + 1 }}
+                {{ getProductItemTabLabel(item, index) }}
               </button>
             }
           </div>
@@ -439,15 +440,15 @@
                                     </tr>
                                   </thead>
                                   <tbody>
-                                    @for (serial of unitType.serials; track serial; let serialIndex = $index) {
+                                    @for (serial of getPagedScannedSerials(activeProductTabIndex, unitType.label); track serial; let serialIndex = $index) {
                                       <tr class="border-b border-gray-100 last:border-b-0 dark:border-gray-800/70">
-                                        <td class="px-3 py-2 text-xs text-gray-700 dark:text-gray-300">{{ serialIndex + 1 }}</td>
+                                        <td class="px-3 py-2 text-xs text-gray-700 dark:text-gray-300">{{ getScannedSerialRowNumber(activeProductTabIndex, unitType.label, serialIndex) }}</td>
                                         <td class="px-3 py-2 text-xs text-gray-700 dark:text-gray-300">{{ serial }}</td>
                                         @if (!isMasterDataDrawerMode()) {
                                           <td class="px-3 py-2 text-right">
                                             <button
                                               type="button"
-                                              (click)="removeScannedSerial(activeProductTabIndex, unitType.label, serial)"
+                                              (click)="requestRemoveScannedSerial(activeProductTabIndex, unitType.label, serial)"
                                               [disabled]="unitType.isScanning"
                                               class="rounded border border-gray-300 px-2 py-1 text-[11px] text-gray-600 hover:bg-gray-50 disabled:opacity-50 dark:border-gray-600 dark:text-gray-300 dark:hover:bg-gray-800"
                                             >
@@ -460,6 +461,32 @@
                                   </tbody>
                                 </table>
                               </div>
+
+                              @if (unitType.serials.length > scannedSerialTablePageSize) {
+                                <div class="mt-2 flex items-center justify-between gap-2 text-xs text-gray-600 dark:text-gray-300">
+                                  <p>
+                                    Page {{ getScannedSerialCurrentPage(activeProductTabIndex, unitType.label) }} of {{ getScannedSerialTotalPages(activeProductTabIndex, unitType.label) }}
+                                  </p>
+                                  <div class="flex items-center gap-2">
+                                    <button
+                                      type="button"
+                                      (click)="setScannedSerialPage(activeProductTabIndex, unitType.label, getScannedSerialCurrentPage(activeProductTabIndex, unitType.label) - 1)"
+                                      [disabled]="getScannedSerialCurrentPage(activeProductTabIndex, unitType.label) <= 1"
+                                      class="rounded border border-gray-300 px-2 py-1 text-[11px] text-gray-600 disabled:opacity-50 dark:border-gray-600 dark:text-gray-300"
+                                    >
+                                      Prev
+                                    </button>
+                                    <button
+                                      type="button"
+                                      (click)="setScannedSerialPage(activeProductTabIndex, unitType.label, getScannedSerialCurrentPage(activeProductTabIndex, unitType.label) + 1)"
+                                      [disabled]="getScannedSerialCurrentPage(activeProductTabIndex, unitType.label) >= getScannedSerialTotalPages(activeProductTabIndex, unitType.label)"
+                                      class="rounded border border-gray-300 px-2 py-1 text-[11px] text-gray-600 disabled:opacity-50 dark:border-gray-600 dark:text-gray-300"
+                                    >
+                                      Next
+                                    </button>
+                                  </div>
+                                </div>
+                              }
                             </div>
                           }
 
@@ -488,7 +515,7 @@
       </div>
 
       <div class="flex items-center justify-end gap-3 border-t border-gray-200 px-6 py-4 dark:border-gray-800">
-        <button type="button" (click)="closeCreateDrawer()" class="rounded-lg border border-gray-300 px-4 py-2 text-sm text-gray-700 dark:border-gray-700 dark:text-gray-300">Cancel</button>
+        <button type="button" (click)="requestCloseDrawer()" class="rounded-lg border border-gray-300 px-4 py-2 text-sm text-gray-700 dark:border-gray-700 dark:text-gray-300">Cancel</button>
         @if (drawerMode === 'edit' && !isMasterDataDrawerMode() && canImportPurchaseCsv()) {
           <input
             id="purchaseSerialCsvInput"
@@ -551,6 +578,88 @@
     </form>
   </aside>
 
+  @if (isPoGuardDialogOpen) {
+    <div class="fixed inset-0 z-[100020] bg-gray-950/55 backdrop-blur-sm"></div>
+    <div class="fixed inset-0 z-[100021] flex items-center justify-center p-4">
+      <div class="w-full max-w-md overflow-hidden rounded-[28px] border border-gray-200 bg-white shadow-2xl dark:border-gray-800 dark:bg-gray-900">
+        <div class="border-b border-gray-200 bg-gradient-to-r from-amber-50 via-white to-sky-50 px-6 py-5 dark:border-gray-800 dark:from-amber-500/10 dark:via-gray-900 dark:to-sky-500/10">
+          <div class="flex items-start justify-between gap-4">
+            <div>
+              <p class="text-[11px] font-semibold uppercase tracking-[0.22em] text-amber-700 dark:text-amber-300">PO Session Guard</p>
+              <h3 class="mt-2 text-xl font-semibold text-gray-900 dark:text-white">{{ poGuardDialogTitle }}</h3>
+            </div>
+            @if (poGuardDialogMode === 'idle-warning') {
+              <div class="rounded-full border border-amber-300 bg-amber-100 px-3 py-1 text-sm font-semibold text-amber-800 dark:border-amber-500/30 dark:bg-amber-500/10 dark:text-amber-200">
+                {{ poIdleCountdownLabel }}
+              </div>
+            }
+          </div>
+        </div>
+
+        <div class="space-y-4 px-6 py-5">
+          <p class="text-sm leading-6 text-gray-600 dark:text-gray-300">{{ poGuardDialogMessage }}</p>
+
+          @if (poGuardDialogMode === 'idle-warning') {
+            <div class="rounded-2xl border border-amber-200 bg-amber-50/80 px-4 py-3 text-sm text-amber-800 dark:border-amber-500/20 dark:bg-amber-500/10 dark:text-amber-100">
+              Your PO session will lock in {{ poIdleCountdownLabel }} if there is no confirmation to continue.
+            </div>
+          }
+
+          @if (poGuardDialogMode === 'session-timeout') {
+            <div class="rounded-2xl border border-rose-200 bg-rose-50/80 px-4 py-3 text-sm text-rose-800 dark:border-rose-500/20 dark:bg-rose-500/10 dark:text-rose-100">
+              Unsaved browser state may be stale now. Refresh is the safest option if you want to continue working in this PO.
+            </div>
+          }
+
+          @if (poGuardDialogMode === 'close-confirm') {
+            <div class="rounded-2xl border border-sky-200 bg-sky-50/80 px-4 py-3 text-sm text-sky-800 dark:border-sky-500/20 dark:bg-sky-500/10 dark:text-sky-100">
+              If you refresh or close the browser tab instead, the browser will still show its native confirmation prompt.
+            </div>
+          }
+
+          @if (poGuardDialogMode === 'refresh-confirm') {
+            <div class="rounded-2xl border border-amber-200 bg-amber-50/80 px-4 py-3 text-sm text-amber-800 dark:border-amber-500/20 dark:bg-amber-500/10 dark:text-amber-100">
+              This prompt appears only when there are unsaved field changes or serials queued for insertion.
+            </div>
+          }
+
+          @if (poGuardDialogMode === 'remove-serial-confirm') {
+            <div class="rounded-2xl border border-rose-200 bg-rose-50/80 px-4 py-3 text-sm text-rose-800 dark:border-rose-500/20 dark:bg-rose-500/10 dark:text-rose-100">
+              This will remove the serial from the current unit type list for this PO.
+            </div>
+          }
+        </div>
+
+        <div class="flex flex-wrap items-center justify-end gap-3 border-t border-gray-200 px-6 py-4 dark:border-gray-800">
+          @if (poGuardDialogMode === 'idle-warning') {
+            <button type="button" (click)="requestCloseDrawer()" class="rounded-lg border border-gray-300 px-4 py-2 text-sm font-medium text-gray-700 dark:border-gray-700 dark:text-gray-300">Leave PO</button>
+            <button type="button" (click)="continuePoSession()" class="rounded-lg bg-brand-500 px-4 py-2 text-sm font-medium text-white">Continue Session</button>
+          }
+
+          @if (poGuardDialogMode === 'session-timeout') {
+            <button type="button" (click)="closeTimedOutPo()" class="rounded-lg border border-gray-300 px-4 py-2 text-sm font-medium text-gray-700 dark:border-gray-700 dark:text-gray-300">Close PO</button>
+            <button type="button" (click)="refreshPoSession()" class="rounded-lg bg-brand-500 px-4 py-2 text-sm font-medium text-white">Refresh Page</button>
+          }
+
+          @if (poGuardDialogMode === 'close-confirm') {
+            <button type="button" (click)="keepEditingPo()" class="rounded-lg border border-gray-300 px-4 py-2 text-sm font-medium text-gray-700 dark:border-gray-700 dark:text-gray-300">Keep Editing</button>
+            <button type="button" (click)="confirmCloseDrawer()" class="rounded-lg bg-rose-600 px-4 py-2 text-sm font-medium text-white">Close Drawer</button>
+          }
+
+          @if (poGuardDialogMode === 'refresh-confirm') {
+            <button type="button" (click)="keepEditingPo()" class="rounded-lg border border-gray-300 px-4 py-2 text-sm font-medium text-gray-700 dark:border-gray-700 dark:text-gray-300">Keep Editing</button>
+            <button type="button" (click)="refreshPoSession()" class="rounded-lg bg-brand-500 px-4 py-2 text-sm font-medium text-white">Refresh Now</button>
+          }
+
+          @if (poGuardDialogMode === 'remove-serial-confirm') {
+            <button type="button" (click)="keepEditingPo()" class="rounded-lg border border-gray-300 px-4 py-2 text-sm font-medium text-gray-700 dark:border-gray-700 dark:text-gray-300">Cancel</button>
+            <button type="button" (click)="confirmRemoveScannedSerial()" class="rounded-lg bg-rose-600 px-4 py-2 text-sm font-medium text-white">Remove Serial</button>
+          }
+        </div>
+      </div>
+    </div>
+  }
+
   <div class="border-b border-default">
     <ul class="flex flex-wrap -mb-px text-sm font-medium text-center text-body">
         @if (canAccessPurchaseTab('deliveries')) {
@@ -603,7 +712,7 @@
         type="text"
         [value]="search"
         (input)="onSearchChange($any($event.target).value)"
-        placeholder="Search PO number, vendor, or status"
+        placeholder="Search PO number, Dealer, or status"
         class="w-full rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm text-gray-700 focus:border-brand-300 focus:outline-none dark:border-gray-700 dark:bg-gray-900 dark:text-gray-300 sm:max-w-sm"
       />
       <div class="text-sm text-gray-500 dark:text-gray-400">
@@ -623,7 +732,7 @@
           <thead>
             <tr class="border-b border-gray-200 dark:border-gray-800">
               <th class="px-4 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-400">PO Number</th>
-              <th class="px-4 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-400">Vendor</th>
+              <th class="px-4 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-400">Dealer</th>
               <th class="px-4 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-400">Amount</th>
               <th class="px-4 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-400">Status</th>
               <th class="px-4 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-400">Serial Count</th>

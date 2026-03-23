@@ -16,6 +16,18 @@ import { RbacService } from '../../shared/services/rbac.service';
 import axios from 'axios';
 
 type PurchaseTab = 'deliveries' | 'approvals' | 'master-data';
+type PurchaseOrderGuardDialogMode =
+  | 'idle-warning'
+  | 'session-timeout'
+  | 'close-confirm'
+  | 'refresh-confirm'
+  | 'remove-serial-confirm';
+
+type PendingSerialRemoval = {
+  productIndex: number;
+  unitLabel: string;
+  serialNumber: string;
+};
 
 interface PurchaseProductFormItem {
   productId: string;
@@ -91,6 +103,9 @@ export class PurchaseOrderComponent implements OnInit, OnDestroy {
   createSuccess = '';
   isExportingSerials = false;
   isImportingSerials = false;
+  poGuardDialogMode: PurchaseOrderGuardDialogMode | null = null;
+  poIdleCountdownSeconds = 0;
+  pendingSerialRemoval: PendingSerialRemoval | null = null;
   sendingForApprovalIds = new Set<number>();
   approvingPurchaseIds = new Set<number>();
   catalogProducts: ProductOption[] = [];
@@ -99,6 +114,8 @@ export class PurchaseOrderComponent implements OnInit, OnDestroy {
   isVendorDropdownOpen = false;
   activeProductTabIndex = 0;
   selectedUnitTypeByProduct: Record<number, string> = {};
+  scannedSerialTablePageByKey: Record<string, number> = {};
+  readonly scannedSerialTablePageSize = 10;
   readonly paymentMethodOptions: PurchasePaymentFormItem['method'][] = [
     'Cash',
     'Bank Transfer',
@@ -126,6 +143,8 @@ export class PurchaseOrderComponent implements OnInit, OnDestroy {
   private readonly serialBatchSize = 20;
   private readonly serialBatchIdleMs = 1000;
   private readonly serialBatchIntervalMs = 5000;
+  private readonly poIdleWarningMs = 12 * 60 * 1000;
+  private readonly poSessionTimeoutMs = 15 * 60 * 1000;
   private serialScanTimers: Record<string, ReturnType<typeof setTimeout>> = {};
   private serialScanErrorTimers: Record<string, ReturnType<typeof setTimeout>> = {};
   isFlushingQueuedSerials = false;
@@ -136,6 +155,11 @@ export class PurchaseOrderComponent implements OnInit, OnDestroy {
   private queuedSerialScans: QueuedPurchaseSerialScan[] = [];
   private queuedSerialFlushTimer: ReturnType<typeof setTimeout> | null = null;
   private queuedSerialIntervalTimer: ReturnType<typeof setInterval> | null = null;
+  private poIdleWarningTimer: ReturnType<typeof setTimeout> | null = null;
+  private poSessionTimeoutTimer: ReturnType<typeof setTimeout> | null = null;
+  private poIdleCountdownTimer: ReturnType<typeof setInterval> | null = null;
+  private suppressBeforeUnloadPrompt = false;
+  private drawerInitialStateSnapshot = '';
   private readonly purchaseTabPermissionKeyMap: Record<PurchaseTab, string[]> = {
     deliveries: ['purchase-order.tab.deliveries', 'purchase-order.tab.local'],
     approvals: ['purchase-order.tab.approvals'],
@@ -181,16 +205,43 @@ export class PurchaseOrderComponent implements OnInit, OnDestroy {
 
     this.clearQueuedSerialFlushTimer();
     this.stopQueuedSerialAutoFlush();
+    this.stopPoSessionGuard();
   }
 
   @HostListener('window:beforeunload', ['$event'])
   onBeforeUnload(event: BeforeUnloadEvent): void {
-    if (!this.isFormDrawerOpen) {
+    if (!this.shouldBlockNavigationPrompt() || this.suppressBeforeUnloadPrompt) {
       return;
     }
 
     event.preventDefault();
     event.returnValue = '';
+  }
+
+  @HostListener('document:mousemove')
+  @HostListener('document:keydown')
+  @HostListener('document:click')
+  @HostListener('document:touchstart')
+  onPurchaseOrderActivity(): void {
+    this.registerPoActivity();
+  }
+
+  @HostListener('window:keydown', ['$event'])
+  onWindowRefreshShortcut(event: KeyboardEvent): void {
+    if (!this.isFormDrawerOpen || !this.shouldBlockNavigationPrompt()) {
+      return;
+    }
+
+    const key = String(event.key ?? '').toLowerCase();
+    const isF5 = key === 'f5';
+    const isReloadShortcut = key === 'r' && (event.ctrlKey || event.metaKey);
+
+    if (!isF5 && !isReloadShortcut) {
+      return;
+    }
+
+    event.preventDefault();
+    this.openRefreshConfirmDialog();
   }
 
   get pendingSerialScanCount(): number {
@@ -213,6 +264,55 @@ export class PurchaseOrderComponent implements OnInit, OnDestroy {
     }
 
     return 'Processing request...';
+  }
+
+  get isPoGuardDialogOpen(): boolean {
+    return this.poGuardDialogMode !== null;
+  }
+
+  get poGuardDialogTitle(): string {
+    switch (this.poGuardDialogMode) {
+      case 'idle-warning':
+        return 'Still working on this purchase order?';
+      case 'session-timeout':
+        return 'Session timed out for this PO';
+      case 'close-confirm':
+        return 'Close purchase order?';
+      case 'refresh-confirm':
+        return 'Refresh this page?';
+      case 'remove-serial-confirm':
+        return 'Remove serial number?';
+      default:
+        return '';
+    }
+  }
+
+  get poGuardDialogMessage(): string {
+    switch (this.poGuardDialogMode) {
+      case 'idle-warning':
+        return 'You have been idle in the PO drawer. Continue this session to keep scanning and editing without losing your place.';
+      case 'session-timeout':
+        return 'This PO was locked after extended inactivity. Refresh the page to re-establish the session, or close the drawer if you want to leave it for now.';
+      case 'close-confirm':
+        return 'Closing this PO drawer will discard the current on-screen editing context. Browser refresh and tab close are also guarded while this drawer is open.';
+      case 'refresh-confirm':
+        return 'Refreshing now may lose unsaved PO form changes and queued serial scans. Continue only if you want to reload this page.';
+      case 'remove-serial-confirm': {
+        const serialNumber = String(this.pendingSerialRemoval?.serialNumber ?? '').trim();
+        return serialNumber
+          ? `Are you sure you want to remove serial '${serialNumber}' from this PO item?`
+          : 'Are you sure you want to remove this serial from this PO item?';
+      }
+      default:
+        return '';
+    }
+  }
+
+  get poIdleCountdownLabel(): string {
+    const totalSeconds = Math.max(0, this.poIdleCountdownSeconds);
+    const minutes = Math.floor(totalSeconds / 60);
+    const seconds = totalSeconds % 60;
+    return `${minutes}:${String(seconds).padStart(2, '0')}`;
   }
 
   onVendorSearchChange(value: string): void {
@@ -847,6 +947,8 @@ export class PurchaseOrderComponent implements OnInit, OnDestroy {
     this.createSuccess = '';
     this.stopQueuedSerialAutoFlush();
     this.isFormDrawerOpen = true;
+    this.captureDrawerInitialSnapshot();
+    this.startPoSessionGuard();
   }
 
   async openEditDrawer(item: PurchaseOrderItem): Promise<void> {
@@ -862,6 +964,7 @@ export class PurchaseOrderComponent implements OnInit, OnDestroy {
     this.createError = '';
     this.createSuccess = '';
     this.startQueuedSerialAutoFlush();
+    this.startPoSessionGuard();
 
     try {
       const detail = await this.purchaseOrderService.getPurchaseById(item.id);
@@ -874,6 +977,7 @@ export class PurchaseOrderComponent implements OnInit, OnDestroy {
       this.applyDetailToForm(detail, item);
       this.editingPoNumber = String(detail.poNumber ?? item.poNumber ?? '').trim();
       this.editingPurchaseStatus = String(detail.status ?? item.status ?? '').trim();
+      this.captureDrawerInitialSnapshot();
     } catch (error: unknown) {
       if (axios.isAxiosError(error)) {
         this.createError =
@@ -895,6 +999,100 @@ export class PurchaseOrderComponent implements OnInit, OnDestroy {
     }
 
     this.finalizeDrawerClose();
+  }
+
+  requestCloseDrawer(): void {
+    if (!this.isFormDrawerOpen || this.isFormDrawerBusy) {
+      return;
+    }
+
+    if (!this.shouldBlockNavigationPrompt()) {
+      void this.closeCreateDrawer();
+      return;
+    }
+
+    this.clearPoSessionGuardTimers();
+    this.poGuardDialogMode = 'close-confirm';
+  }
+
+  continuePoSession(): void {
+    if (this.poGuardDialogMode !== 'idle-warning') {
+      return;
+    }
+
+    this.poGuardDialogMode = null;
+    this.poIdleCountdownSeconds = 0;
+    this.startPoSessionGuard();
+  }
+
+  keepEditingPo(): void {
+    if (
+      this.poGuardDialogMode !== 'close-confirm' &&
+      this.poGuardDialogMode !== 'refresh-confirm' &&
+      this.poGuardDialogMode !== 'remove-serial-confirm'
+    ) {
+      return;
+    }
+
+    this.poGuardDialogMode = null;
+    this.pendingSerialRemoval = null;
+    this.startPoSessionGuard();
+  }
+
+  async confirmCloseDrawer(): Promise<void> {
+    this.poGuardDialogMode = null;
+    await this.closeCreateDrawer();
+  }
+
+  requestRemoveScannedSerial(
+    productIndex: number,
+    unitLabel: string,
+    serialNumber: string,
+  ): void {
+    if (this.isFormDrawerBusy) {
+      return;
+    }
+
+    this.pendingSerialRemoval = {
+      productIndex,
+      unitLabel,
+      serialNumber,
+    };
+
+    this.clearPoSessionGuardTimers();
+    this.poGuardDialogMode = 'remove-serial-confirm';
+  }
+
+  async confirmRemoveScannedSerial(): Promise<void> {
+    const pendingRemoval = this.pendingSerialRemoval;
+    this.poGuardDialogMode = null;
+
+    if (!pendingRemoval) {
+      this.startPoSessionGuard();
+      return;
+    }
+
+    this.pendingSerialRemoval = null;
+    await this.removeScannedSerial(
+      pendingRemoval.productIndex,
+      pendingRemoval.unitLabel,
+      pendingRemoval.serialNumber,
+    );
+
+    if (this.isFormDrawerOpen) {
+      this.startPoSessionGuard();
+    }
+  }
+
+  closeTimedOutPo(): void {
+    this.poGuardDialogMode = null;
+    this.createError = 'PO session timed out because of inactivity. Reopen the drawer to continue.';
+    this.finalizeDrawerClose();
+  }
+
+  refreshPoSession(): void {
+    this.suppressBeforeUnloadPrompt = true;
+    globalThis.location.reload();
   }
 
   hasAnyScannedSerials(): boolean {
@@ -1105,6 +1303,7 @@ export class PurchaseOrderComponent implements OnInit, OnDestroy {
     this.vendorSearch = '';
     this.activeProductTabIndex = 0;
     this.selectedUnitTypeByProduct = {};
+    this.scannedSerialTablePageByKey = {};
     this.queuedSerialScans = [];
     this.activeSerialFlushCount = 0;
     this.serialFlushFailureCount = 0;
@@ -1114,6 +1313,7 @@ export class PurchaseOrderComponent implements OnInit, OnDestroy {
   }
 
   private finalizeDrawerClose(): void {
+    this.stopPoSessionGuard();
     this.stopQueuedSerialAutoFlush();
     this.clearQueuedSerialFlushTimer();
     this.queuedSerialScans = [];
@@ -1124,6 +1324,164 @@ export class PurchaseOrderComponent implements OnInit, OnDestroy {
     this.isFormDrawerOpen = false;
     this.isProcessingApprovalAction = false;
     this.isExportingSerials = false;
+  }
+
+  private openRefreshConfirmDialog(): void {
+    if (this.isFormDrawerBusy || !this.shouldBlockNavigationPrompt()) {
+      return;
+    }
+
+    this.clearPoSessionGuardTimers();
+    this.poGuardDialogMode = 'refresh-confirm';
+  }
+
+  private shouldBlockNavigationPrompt(): boolean {
+    if (!this.isFormDrawerOpen) {
+      return false;
+    }
+
+    return this.hasDrawerFormChanges() || this.pendingSerialScanCount > 0;
+  }
+
+  private hasDrawerFormChanges(): boolean {
+    return this.getDrawerStateSnapshot() !== this.drawerInitialStateSnapshot;
+  }
+
+  private captureDrawerInitialSnapshot(): void {
+    this.drawerInitialStateSnapshot = this.getDrawerStateSnapshot();
+  }
+
+  private getDrawerStateSnapshot(): string {
+    const comparableState = {
+      vendorMode: this.vendorMode,
+      vendorId: String(this.createForm.vendorId ?? '').trim(),
+      vendorName: String(this.createForm.vendorName ?? '').trim(),
+      vendorAddress: String(this.createForm.vendorAddress ?? '').trim(),
+      vendorContactPerson: String(this.createForm.vendorContactPerson ?? '').trim(),
+      vendorContactNumber: String(this.createForm.vendorContactNumber ?? '').trim(),
+      paymentDetails: this.createForm.paymentDetails.map((payment) => ({
+        method: String(payment.method ?? '').trim(),
+        amount: Number(payment.amount) || 0,
+        terms: String(payment.terms ?? '').trim(),
+        termsDueDate: payment.termsDueDate || '',
+        status: String(payment.status ?? '').trim(),
+        paymentDate: payment.paymentDate || '',
+        bankName: String(payment.bankName ?? '').trim(),
+        referenceNo: String(payment.referenceNo ?? '').trim(),
+        checkNo: String(payment.checkNo ?? '').trim(),
+        chequeDate: payment.chequeDate || '',
+        issuedBy: String(payment.issuedBy ?? '').trim(),
+        downPayment: Number(payment.downPayment) || 0,
+      })),
+      productItems: this.createForm.productItems.map((item) => ({
+        productId: String(item.productId ?? '').trim(),
+        capacityId: String(item.capacityId ?? '').trim(),
+        unitPrice: Number(item.unitPrice) || 0,
+        sellPrice: item.sellPrice === '' ? '' : Number(item.sellPrice) || 0,
+        discountPrice: item.discountPrice === '' ? '' : Number(item.discountPrice) || 0,
+        totalSetQty: Number(item.totalSetQty) || 0,
+        unitTypes: item.unitTypes.map((entry) => ({
+          label: String(entry.label ?? '').trim(),
+          value: Number(entry.value) || 0,
+          serials: entry.serials.map((serial) => String(serial ?? '').trim()),
+        })),
+      })),
+      totalAmount: Number(this.createForm.totalAmount) || 0,
+    };
+
+    return JSON.stringify(comparableState);
+  }
+
+  private registerPoActivity(): void {
+    if (!this.isFormDrawerOpen || this.isFormDrawerBusy) {
+      return;
+    }
+
+    if (this.poGuardDialogMode !== null) {
+      return;
+    }
+
+    this.startPoSessionGuard();
+  }
+
+  private startPoSessionGuard(): void {
+    if (!this.isFormDrawerOpen) {
+      return;
+    }
+
+    this.suppressBeforeUnloadPrompt = false;
+    this.clearPoSessionGuardTimers();
+    this.poGuardDialogMode = null;
+    this.poIdleCountdownSeconds = 0;
+
+    this.poIdleWarningTimer = setTimeout(() => {
+      this.openPoIdleWarningDialog();
+    }, this.poIdleWarningMs);
+
+    this.poSessionTimeoutTimer = setTimeout(() => {
+      this.openPoSessionTimeoutDialog();
+    }, this.poSessionTimeoutMs);
+  }
+
+  private stopPoSessionGuard(): void {
+    this.clearPoSessionGuardTimers();
+    this.poGuardDialogMode = null;
+    this.poIdleCountdownSeconds = 0;
+    this.pendingSerialRemoval = null;
+    this.suppressBeforeUnloadPrompt = false;
+    this.drawerInitialStateSnapshot = '';
+  }
+
+  private clearPoSessionGuardTimers(): void {
+    if (this.poIdleWarningTimer) {
+      clearTimeout(this.poIdleWarningTimer);
+      this.poIdleWarningTimer = null;
+    }
+
+    if (this.poSessionTimeoutTimer) {
+      clearTimeout(this.poSessionTimeoutTimer);
+      this.poSessionTimeoutTimer = null;
+    }
+
+    if (this.poIdleCountdownTimer) {
+      clearInterval(this.poIdleCountdownTimer);
+      this.poIdleCountdownTimer = null;
+    }
+  }
+
+  private openPoIdleWarningDialog(): void {
+    if (!this.isFormDrawerOpen) {
+      return;
+    }
+
+    if (this.isFormDrawerBusy) {
+      this.startPoSessionGuard();
+      return;
+    }
+
+    this.poGuardDialogMode = 'idle-warning';
+    this.poIdleCountdownSeconds = Math.max(
+      0,
+      Math.ceil((this.poSessionTimeoutMs - this.poIdleWarningMs) / 1000),
+    );
+
+    if (this.poIdleCountdownTimer) {
+      clearInterval(this.poIdleCountdownTimer);
+    }
+
+    this.poIdleCountdownTimer = setInterval(() => {
+      this.poIdleCountdownSeconds = Math.max(0, this.poIdleCountdownSeconds - 1);
+    }, 1000);
+  }
+
+  private openPoSessionTimeoutDialog(): void {
+    if (!this.isFormDrawerOpen) {
+      return;
+    }
+
+    this.clearPoSessionGuardTimers();
+    this.poGuardDialogMode = 'session-timeout';
+    this.poIdleCountdownSeconds = 0;
   }
 
   private buildScannedSerialExportRows(): Array<{
@@ -1428,6 +1786,7 @@ export class PurchaseOrderComponent implements OnInit, OnDestroy {
         return [itemIndex, label];
       }),
     );
+    this.scannedSerialTablePageByKey = {};
     this.activeProductTabIndex = Math.max(0, Math.min(this.activeProductTabIndex, this.createForm.productItems.length - 1));
     this.ensureSelectedUnitType(this.activeProductTabIndex);
     this.recalculateTotalAmount();
@@ -1447,6 +1806,7 @@ export class PurchaseOrderComponent implements OnInit, OnDestroy {
       unitTypes: nextUnitTypes,
     };
     this.createForm.productItems = nextItems;
+    this.scannedSerialTablePageByKey = {};
     this.ensureSelectedUnitType(index);
     this.recalculateTotalAmount();
   }
@@ -1467,6 +1827,30 @@ export class PurchaseOrderComponent implements OnInit, OnDestroy {
   getCapacitiesByProduct(productId: string): ProductCapacityOption[] {
     const product = this.catalogProducts.find((item) => String(item.id) === String(productId));
     return product?.capacities ?? [];
+  }
+
+  getProductItemTabLabel(item: PurchaseProductFormItem, index: number): string {
+    const fallbackLabel = `Product ${index + 1}`;
+    if (!item) {
+      return fallbackLabel;
+    }
+
+    const productName = String(item.productId ? this.getProductNameById(item.productId) : '').trim();
+    const capacityName = String(
+      item.productId && item.capacityId
+        ? this.getCapacityNameByProductAndCapacity(item.productId, item.capacityId)
+        : '',
+    ).trim();
+
+    if (productName && capacityName) {
+      return `${productName} (${capacityName})`;
+    }
+
+    if (productName) {
+      return productName;
+    }
+
+    return fallbackLabel;
   }
 
   addPaymentDetail(): void {
@@ -1618,9 +2002,59 @@ export class PurchaseOrderComponent implements OnInit, OnDestroy {
 
   selectUnitType(productIndex: number, unitLabel: string): void {
     this.selectedUnitTypeByProduct[productIndex] = unitLabel;
+    this.setScannedSerialPage(productIndex, unitLabel, 1);
     if (this.drawerMode === 'edit') {
       this.focusSerialScanInput(productIndex, unitLabel);
     }
+  }
+
+  private getScannedSerialPageKey(productIndex: number, unitLabel: string): string {
+    return `${productIndex}::${unitLabel}`;
+  }
+
+  private normalizeScannedSerialPage(page: number): number {
+    const parsed = Number(page);
+    if (!Number.isFinite(parsed) || parsed <= 0) {
+      return 1;
+    }
+
+    return Math.floor(parsed);
+  }
+
+  getScannedSerialTotalPages(productIndex: number, unitLabel: string): number {
+    const unitEntry = this.getUnitEntry(productIndex, unitLabel);
+    const totalSerials = unitEntry?.serials.length ?? 0;
+    return Math.max(1, Math.ceil(totalSerials / this.scannedSerialTablePageSize));
+  }
+
+  getScannedSerialCurrentPage(productIndex: number, unitLabel: string): number {
+    const pageKey = this.getScannedSerialPageKey(productIndex, unitLabel);
+    const storedPage = this.normalizeScannedSerialPage(this.scannedSerialTablePageByKey[pageKey] ?? 1);
+    const totalPages = this.getScannedSerialTotalPages(productIndex, unitLabel);
+    return Math.min(storedPage, totalPages);
+  }
+
+  setScannedSerialPage(productIndex: number, unitLabel: string, page: number): void {
+    const totalPages = this.getScannedSerialTotalPages(productIndex, unitLabel);
+    const nextPage = Math.min(this.normalizeScannedSerialPage(page), totalPages);
+    const pageKey = this.getScannedSerialPageKey(productIndex, unitLabel);
+    this.scannedSerialTablePageByKey[pageKey] = nextPage;
+  }
+
+  getPagedScannedSerials(productIndex: number, unitLabel: string): string[] {
+    const unitEntry = this.getUnitEntry(productIndex, unitLabel);
+    if (!unitEntry) {
+      return [];
+    }
+
+    const currentPage = this.getScannedSerialCurrentPage(productIndex, unitLabel);
+    const startIndex = (currentPage - 1) * this.scannedSerialTablePageSize;
+    return unitEntry.serials.slice(startIndex, startIndex + this.scannedSerialTablePageSize);
+  }
+
+  getScannedSerialRowNumber(productIndex: number, unitLabel: string, pageIndex: number): number {
+    const currentPage = this.getScannedSerialCurrentPage(productIndex, unitLabel);
+    return (currentPage - 1) * this.scannedSerialTablePageSize + pageIndex + 1;
   }
 
   onUnitTypeQtyChange(productIndex: number): void {
@@ -1629,17 +2063,9 @@ export class PurchaseOrderComponent implements OnInit, OnDestroy {
       return;
     }
 
-    const maxQtyFromUnitTypes = item.unitTypes.reduce((maxQty, entry) => {
-      const parsed = Number(entry.value) || 0;
-      return parsed > maxQty ? parsed : maxQty;
-    }, 0);
-
-    if (maxQtyFromUnitTypes > 0) {
-      item.totalSetQty = maxQtyFromUnitTypes;
-      item.unitTypes.forEach((entry) => {
-        entry.value = maxQtyFromUnitTypes;
-      });
-    }
+    item.unitTypes.forEach((entry) => {
+      entry.value = Math.max(0, Number(entry.value) || 0);
+    });
 
     this.recalculateTotalAmount();
   }
@@ -1652,9 +2078,6 @@ export class PurchaseOrderComponent implements OnInit, OnDestroy {
 
     const parsedTotalSetQty = Math.max(0, Number(item.totalSetQty) || 0);
     item.totalSetQty = parsedTotalSetQty;
-    item.unitTypes.forEach((entry) => {
-      entry.value = parsedTotalSetQty;
-    });
 
     this.recalculateTotalAmount();
   }
