@@ -1,4 +1,4 @@
-import { CommonModule } from '@angular/common';
+﻿import { CommonModule } from '@angular/common';
 import { Component, HostListener, OnDestroy, OnInit } from '@angular/core';
 import { FormsModule } from '@angular/forms';
 import { ActivatedRoute } from '@angular/router';
@@ -14,12 +14,14 @@ import {
   SalesOrderDetailUnitType,
   SalesOrderExpenseDetailsPayload,
   SalesOrderListItem,
+  SalesOrderMigrationPreviewItem,
   SalesOrderPayload,
   SalesOrderService,
   SalesOrderTransferDetailsPayload,
 } from '../../shared/services/sales-order.service';
 import { MaterialTransactionItem } from '../../shared/services/sales-order-material.service';
 import { RbacService } from '../../shared/services/rbac.service';
+import { UserManagementService, UserApiItem } from '../../shared/services/user-management.service';
 import {
   BusinessProfileSettings,
   BusinessSettingsService,
@@ -48,6 +50,7 @@ interface SalesOrderRow {
   scheduleDate: string;
   serialCount?: number;
   createdAt?: string | null;
+  concernStatus?: string;
 }
 
 interface SalesUnitTypeFormItem {
@@ -103,44 +106,51 @@ interface SalesPendingSerialRemoval {
   serialNumber: string;
 }
 
+interface SalesReturnSerialOptionGroup {
+  unitLabel: string;
+  serials: string[];
+}
+
+
 @Component({
   selector: 'app-sales-order',
   imports: [CommonModule, FormsModule, PageBreadcrumbComponent],
   templateUrl: './sales-order.component.html',
   styles: ``,
 })
-export class SalesOrderComponent implements OnInit, OnDestroy {
-    readonly salesTypeOptions = [
-      'sales',
-      'sales and service',
-      'project',
-      'sub-dealer',
-      'service',
-      'concern',
-      'transfer',
-    ] as const;
+export class SalesOrderComponent {
+  receiverOptions: UserApiItem[] = [];
+  readonly salesTypeOptions = [
+    'sales',
+    'sales and service',
+    'project',
+    'sub-dealer',
+    'service',
+    'concern',
+    'transfer',
+  ] as const;
 
-    readonly serviceNameOptions = [
-      'CLEANING',
-      'DISMANTLE',
-      'RELOCATION',
-      'CHARING FREON',
-      'SURVEY',
-      'CHIPPING',
-      'PUMP DOWN',
-      'INSTALL ONLY',
-      'CHECKUP',
-    ] as const;
+  readonly serviceNameOptions = [
+    'CLEANING',
+    'DISMANTLE',
+    'RELOCATION',
+    'CHARING FREON',
+    'SURVEY',
+    'CHIPPING',
+    'PUMP DOWN',
+    'INSTALL ONLY',
+    'CHECKUP',
+  ] as const;
 
-    readonly paymentMethodOptions: SalesPaymentFormItem['method'][] = [
-      'Cash',
-      'Bank Transfer',
-      'Terms',
-      'Terms with DP',
-      'Cheque',
-      'Credit Card',
-      'Installment',
-    ];
+  readonly paymentMethodOptions: SalesPaymentFormItem['method'][] = [
+    'Cash',
+    'Bank Transfer',
+    'Terms',
+    'Terms with DP',
+    'Cheque',
+    'Credit Card',
+    'Installment',
+  ];
 
   constructor(
     private readonly salesOrderService: SalesOrderService,
@@ -148,7 +158,10 @@ export class SalesOrderComponent implements OnInit, OnDestroy {
     private readonly route: ActivatedRoute,
     private readonly sanitizer: DomSanitizer,
     private readonly rbacService: RbacService,
+    private readonly userManagementService: UserManagementService
   ) {}
+
+  // ...existing code (all properties, methods, etc. go here, inside the class)...
 
   activeTab: SalesTab = 'schedules';
   isLoading = false;
@@ -184,16 +197,59 @@ export class SalesOrderComponent implements OnInit, OnDestroy {
   isGuardDialogOpen = false;
   pendingSerialRemoval: SalesPendingSerialRemoval | null = null;
   pendingRefreshEvent: BeforeUnloadEvent | null = null;
+  isReturnModalOpen = false;
+  pendingReturnOrder: SalesOrderRow | null = null;
+  isReturnModalLoading = false;
+  returnModalError = '';
+  returnSerialGroups: SalesReturnSerialOptionGroup[] = [];
+  returnForm = {
+    remarks: '',
+    isDefective: false,
+  };
+  selectedReturnedSerialNumbers = new Set<string>();
   editingSalesId: number | null = null;
   customerMode: 'existing' | 'new' = 'existing';
   uiMessage = '';
   uiError = '';
+  isMigrationModalOpen = false;
+  isMigrationPreviewLoading = false;
+  isMigrationImporting = false;
+  migrationPreviewError = '';
+  migrationPreviewFileName = '';
+  migrationSourceRows: Array<Record<string, unknown>> = [];
+  selectedMediumRowNumbers = new Set<number>();
+  migrationImportSummary: {
+    batchFailed: boolean;
+    message: string;
+    total: number;
+    created: number;
+    failed: number;
+    blocked: number;
+    aborted: number;
+    skippedReview: number;
+    failureDetails: Array<{ rowNumber: number; status: string; message: string }>;
+  } | null = null;
+  migrationPreviewSummary: {
+    total: number;
+    highConfidence: number;
+    reviewNeeded: number;
+    rejected: number;
+    matchedCustomers: number;
+    newCustomers: number;
+  } | null = null;
+  migrationPreviewItems: SalesOrderMigrationPreviewItem[] = [];
+  isMigrationDrawerMode = false;
+  migrationEditingRowNumber: number | null = null;
+  migrationEditedPayloadByRow: Record<number, SalesOrderPayload> = {};
   isSubmitting = false;
   isRemitting = false;
+  isSendingForDelivery = false;
   customerOptions: SalesCustomerOption[] = [];
   customerSearch = '';
   isCustomerDropdownOpen = false;
   catalogProducts: ProductOption[] = [];
+  productSearchQuery = '';
+  isProductDropdownOpen = false;
   activeProductTabIndex = 0;
   activeServiceTabIndex = 0;
   readonly serialsPerPage = 10;
@@ -204,8 +260,15 @@ export class SalesOrderComponent implements OnInit, OnDestroy {
   branchOptions: Array<{ id: number; branchName: string }> = [];
   activeExpenseTabIndex = 0;
 
+  // Project search/picker properties
+  projectSearchInput = '';
+  projectSearchResults: any[] = [];
+  projectSearchDebounceTimer: ReturnType<typeof setTimeout> | null = null;
+  selectedProjectDetails: any = null;
+
   form: any = {
     customer_id: '',
+    projectId: undefined as number | undefined,
     totalAmount: 0,
     scheduleDate: '',
     salesType: 'sales',
@@ -230,6 +293,7 @@ export class SalesOrderComponent implements OnInit, OnDestroy {
       priority: '',
       resolutionNotes: '',
       resolvedAt: '',
+      warrantySerials: '',
     },
     expenseDetails: [this.createEmptyExpenseItem()],
     customer: {
@@ -264,6 +328,11 @@ export class SalesOrderComponent implements OnInit, OnDestroy {
     void this.loadTabData(this.activeTab);
     void this.loadReferenceData();
     void this.loadCustomerOptions();
+
+    // Load employees for receiver dropdown
+    this.userManagementService.getUsers().then((res) => {
+      this.receiverOptions = res.data || [];
+    });
 
     const editId = Number(this.route.snapshot.queryParamMap.get('editId'));
     if (Number.isInteger(editId) && editId > 0) {
@@ -304,6 +373,411 @@ export class SalesOrderComponent implements OnInit, OnDestroy {
     this.activeTab = tab;
     this.page = 1;
     await this.loadTabData(tab);
+  }
+
+  openMigrationModal(): void {
+    this.isMigrationModalOpen = true;
+    this.migrationPreviewError = '';
+  }
+
+  closeMigrationModal(): void {
+    this.isMigrationModalOpen = false;
+    this.migrationImportSummary = null;
+    this.selectedMediumRowNumbers.clear();
+    this.migrationEditedPayloadByRow = {};
+    this.closeMigrationRowEdit();
+  }
+
+  openMigrationRowEdit(item: SalesOrderMigrationPreviewItem): void {
+    if (this.isMigrationBranchAssignmentRow(item)) {
+      this.migrationPreviewError =
+        'This row is configured for direct branch assignment, so it does not open in the Sales Order editor.';
+      return;
+    }
+
+    const rowNumber = Number(item.rowNumber ?? 0);
+    if (!Number.isFinite(rowNumber) || rowNumber <= 0) {
+      this.migrationPreviewError = 'Invalid migration row selected.';
+      return;
+    }
+
+    const candidatePayload =
+      this.migrationEditedPayloadByRow[rowNumber] ??
+      ((item.mappedPayload as SalesOrderPayload | null) ?? null);
+
+    if (!candidatePayload) {
+      this.migrationPreviewError = 'This row has no importable payload yet. Fix mapping issues first.';
+      return;
+    }
+
+    this.migrationEditingRowNumber = rowNumber;
+    this.isMigrationDrawerMode = true;
+    this.migrationPreviewError = '';
+    this.isMigrationModalOpen = false;
+
+    this.resetForm();
+    this.drawerMode = 'create';
+    this.editingSalesId = null;
+    this.isDrawerOpen = true;
+    this.serialPageByUnitType = {};
+    this.uiMessage = '';
+    this.uiError = '';
+    this.applyMigrationPayloadToForm(candidatePayload);
+    this.captureDrawerBaselineSnapshot();
+  }
+
+  closeMigrationRowEdit(): void {
+    this.isMigrationDrawerMode = false;
+    this.migrationEditingRowNumber = null;
+  }
+
+  isMigrationRowEdited(rowNumber: number): boolean {
+    return Boolean(this.migrationEditedPayloadByRow[rowNumber]);
+  }
+
+  isMigrationBranchAssignmentRow(item: SalesOrderMigrationPreviewItem): boolean {
+    const mappedPayload = (item.mappedPayload ?? null) as Record<string, unknown> | null;
+    return String(mappedPayload?.['migrationMode'] ?? '').trim().toLowerCase() === 'branch-assignment';
+  }
+
+  private applyMigrationPayloadToForm(payload: SalesOrderPayload): void {
+    const paymentDetails =
+      Array.isArray(payload.paymentDetails) && payload.paymentDetails.length > 0
+        ? payload.paymentDetails.map((payment) => ({
+            method: this.toPaymentMethod(payment?.method),
+            amount: Number(payment?.amount) || 0,
+            terms: String(payment?.terms ?? ''),
+            termsDueDate: this.toDateInputValue(String(payment?.termsDueDate ?? '')),
+            autoTermsDueDate: true,
+            status: String(payment?.status ?? ''),
+            referenceNo: String(payment?.referenceNo ?? ''),
+            paymentDate: this.toDateInputValue(String(payment?.paymentDate ?? '')),
+            issuedBy: String(payment?.issuedBy ?? ''),
+            ccCharge: String(payment?.ccCharge ?? ''),
+            checkNo: String(payment?.checkNo ?? ''),
+            bankName: String(payment?.bankName ?? ''),
+            bankAccount: String(payment?.bankAccount ?? ''),
+            postDated: String(payment?.postDated ?? ''),
+            downPayment: Number(payment?.downPayment) || 0,
+          }))
+        : [this.createEmptyPaymentItem()];
+
+    const productItems =
+      Array.isArray(payload.productItems) && payload.productItems.length > 0
+        ? payload.productItems.map((product: any) => {
+            const unitTypesFromPayload = Array.isArray(product?.unitTypesQty)
+              ? product.unitTypesQty
+              : [];
+            const serialNumbersRaw =
+              product?.serialNumbers && typeof product.serialNumbers === 'object'
+                ? (product.serialNumbers as Record<string, unknown>)
+                : {};
+
+            const serialNumbers: Record<string, string[]> = {};
+            for (const [key, value] of Object.entries(serialNumbersRaw)) {
+              if (key.toLowerCase() === 'status') continue;
+              if (!Array.isArray(value)) continue;
+              const normalized = value
+                .map((entry) => this.normalizeSerial(String(entry ?? '')))
+                .filter((entry) => entry.length > 0);
+              if (normalized.length > 0) {
+                serialNumbers[String(key).trim().toLowerCase()] = normalized;
+              }
+            }
+
+            const labelsFromPayload = unitTypesFromPayload
+              .map((entry: any) => String(entry?.label ?? '').trim().toLowerCase())
+              .filter((label: string, index: number, self: string[]) => label.length > 0 && self.indexOf(label) === index);
+            const labelsFromSerial = Object.keys(serialNumbers).filter((label, index, self) => self.indexOf(label) === index);
+            const labels =
+              labelsFromPayload.length > 0
+                ? labelsFromPayload
+                : labelsFromSerial.length > 0
+                  ? labelsFromSerial
+                  : ['set'];
+
+            const qtyMap = new Map<string, number>();
+            for (const entry of unitTypesFromPayload) {
+              const label = String(entry?.label ?? '').trim().toLowerCase();
+              if (!label) continue;
+              qtyMap.set(label, Math.max(0, Math.floor(Number(entry?.value) || 0)));
+            }
+
+            const fallbackQty = Math.max(0, Math.floor(Number(product?.totalSetQty) || 0));
+            const unitTypes = labels.map((label: string) => {
+              const serials = Array.isArray(serialNumbers[label]) ? serialNumbers[label] : [];
+              const value = qtyMap.get(label) ?? (serials.length > 0 ? serials.length : fallbackQty);
+              return this.createUnitTypeEntry(label, value, serials);
+            });
+
+            return {
+              productId: String(product?.productId ?? ''),
+              capacityId: String(product?.capacityId ?? ''),
+              unitPrice: Number(product?.unitPrice) || 0,
+              sellPrice: Number(product?.sellPrice) || 0,
+              discountPrice: Number(product?.discountPrice) || 0,
+              unitTypes,
+              totalSetQty: Math.max(0, Math.floor(Number(product?.totalSetQty) || 0)),
+            };
+          })
+        : [this.createEmptyProductItem()];
+
+    const serviceItems =
+      Array.isArray(payload.serviceItems) && payload.serviceItems.length > 0
+        ? payload.serviceItems.map((item: any) => ({
+            serviceName: String(item?.serviceName ?? ''),
+            unitPrice: Number(item?.serviceCost) || 0,
+            qty: Number(item?.serviceDurationHours) || 0,
+            total: Number(item?.serviceCost) || 0,
+          }))
+        : [this.createEmptyServiceItem()];
+
+    const customer = payload.customer ?? {};
+    this.customerMode = payload.customer_id ? 'existing' : 'new';
+    this.form = {
+      ...this.form,
+      customer_id: payload.customer_id ?? '',
+      totalAmount: Number(payload.totalAmount) || 0,
+      scheduleDate: this.toDateInputValue(String(payload.scheduleDate ?? '')),
+      salesType: String(payload.salesType ?? this.getSalesTypeFromActiveTab()),
+      projectName: String(payload.projectName ?? ''),
+      projectCode: String(payload.projectCode ?? ''),
+      installer: String(payload.installer ?? ''),
+      remarks: String(payload.remarks ?? ''),
+      transferDetails: payload.transferDetails ?? this.form.transferDetails,
+      concernDetails: payload.concernDetails ?? this.form.concernDetails,
+      expenseDetails:
+        Array.isArray(payload.expenseDetails) && payload.expenseDetails.length > 0
+          ? payload.expenseDetails
+          : [this.createEmptyExpenseItem()],
+      customer: {
+        name: String((customer as any).name ?? ''),
+        address: String((customer as any).address ?? ''),
+        contact_person: String((customer as any).contact_person ?? ''),
+        contact_number: String((customer as any).contact_number ?? ''),
+        email: String((customer as any).email ?? ''),
+        tin_number: String((customer as any).tin_number ?? ''),
+      },
+      paymentDetails,
+      productItems,
+      serviceItems,
+      status: String(payload.status ?? 'pending'),
+    };
+
+    this.customerSearch = this.form.customer.name ?? '';
+    this.activeProductTabIndex = 0;
+    this.syncProductSearchQuery();
+    this.activeServiceTabIndex = 0;
+    this.selectedUnitTypeByProduct = {};
+    this.form.productItems.forEach((_: unknown, index: number) => this.ensureSelectedUnitType(index));
+    this.recalculateTotalAmount();
+  }
+
+  private async refreshMigrationPreview(): Promise<void> {
+    this.isMigrationPreviewLoading = true;
+    this.migrationPreviewError = '';
+    this.migrationImportSummary = null;
+    this.selectedMediumRowNumbers.clear();
+
+    try {
+      const result = await this.salesOrderService.previewDailyReleaseMigration(this.migrationSourceRows);
+      if (!result.success) {
+        this.migrationPreviewError = result.message ?? 'Failed to preview migration CSV.';
+        this.migrationPreviewSummary = null;
+        this.migrationPreviewItems = [];
+        return;
+      }
+
+      this.migrationPreviewSummary = result.summary;
+      this.migrationPreviewItems = result.items ?? [];
+    } catch (error) {
+      this.migrationPreviewError =
+        error instanceof Error ? error.message : 'Failed to refresh migration preview.';
+      this.migrationPreviewSummary = null;
+      this.migrationPreviewItems = [];
+    } finally {
+      this.isMigrationPreviewLoading = false;
+    }
+  }
+
+  async onMigrationFileSelected(event: Event): Promise<void> {
+    const input = event.target as HTMLInputElement;
+    const file = input.files?.[0];
+    if (!file) return;
+
+    this.migrationPreviewError = '';
+    this.migrationPreviewFileName = file.name;
+    this.isMigrationPreviewLoading = true;
+
+    try {
+      const content = await file.text();
+      const rows = this.parseMigrationCsv(content);
+      this.migrationSourceRows = rows;
+      this.migrationImportSummary = null;
+      this.selectedMediumRowNumbers.clear();
+      this.migrationEditedPayloadByRow = {};
+
+      if (rows.length === 0) {
+        this.migrationPreviewError = 'No valid rows found in CSV.';
+        this.migrationPreviewSummary = null;
+        this.migrationPreviewItems = [];
+        return;
+      }
+
+      await this.refreshMigrationPreview();
+    } catch (error) {
+      this.migrationPreviewError =
+        error instanceof Error ? error.message : 'Failed to read migration CSV.';
+      this.migrationPreviewSummary = null;
+      this.migrationPreviewItems = [];
+      this.migrationSourceRows = [];
+      this.selectedMediumRowNumbers.clear();
+    } finally {
+      this.isMigrationPreviewLoading = false;
+      input.value = '';
+    }
+  }
+
+  async importMigrationHighConfidence(): Promise<void> {
+    if (this.isMigrationImporting || this.isMigrationPreviewLoading) return;
+    if (!this.migrationSourceRows.length) {
+      this.migrationPreviewError = 'Upload and preview a CSV first.';
+      return;
+    }
+
+    this.isMigrationImporting = true;
+    this.migrationPreviewError = '';
+    this.uiError = '';
+    this.uiMessage = '';
+
+    try {
+      const selectedMediumRows = [...this.selectedMediumRowNumbers];
+      const editedPayloads = Object.entries(this.migrationEditedPayloadByRow)
+        .map(([rowNumber, payload]) => ({ rowNumber: Number(rowNumber), payload }))
+        .filter((entry) => Number.isFinite(entry.rowNumber) && entry.rowNumber > 0);
+
+      const result = await this.salesOrderService.importDailyReleaseMigration(
+        this.migrationSourceRows,
+        selectedMediumRows,
+        editedPayloads,
+      );
+      if (!result.summary) {
+        this.migrationPreviewError = result.message ?? 'Migration import failed.';
+        return;
+      }
+
+      const failureDetails = (result.items ?? []).filter(
+        (d) => d.status === 'failed' || d.status === 'blocked' || d.status === 'aborted',
+      );
+
+      this.migrationImportSummary = {
+        batchFailed: result.batchFailed ?? !result.success,
+        message: result.message ?? '',
+        total: result.summary.total,
+        created: result.summary.created,
+        failed: result.summary.failed,
+        blocked: result.summary.blocked,
+        aborted: result.summary.aborted,
+        skippedReview: result.summary.skippedReview,
+        failureDetails,
+      };
+
+      if (result.success) {
+        this.uiMessage = `Migration import done: ${result.summary.created} row(s) created.`;
+        await this.loadTabData(this.activeTab);
+      } else {
+        this.uiError = result.message ?? 'Migration batch failed.';
+      }
+    } catch (error) {
+      this.migrationPreviewError = error instanceof Error ? error.message : 'Migration import failed.';
+    } finally {
+      this.isMigrationImporting = false;
+    }
+  }
+
+  toggleMediumRowSelection(rowNumber: number, checked: boolean): void {
+    if (!Number.isFinite(rowNumber) || rowNumber <= 0) return;
+
+    if (checked) {
+      this.selectedMediumRowNumbers.add(rowNumber);
+    } else {
+      this.selectedMediumRowNumbers.delete(rowNumber);
+    }
+  }
+
+  isMediumRowSelected(rowNumber: number): boolean {
+    return this.selectedMediumRowNumbers.has(rowNumber);
+  }
+
+  getImportCandidateCount(): number {
+    const high = this.migrationPreviewSummary?.highConfidence ?? 0;
+    return high + this.selectedMediumRowNumbers.size;
+  }
+
+  private parseMigrationCsv(content: string): Array<Record<string, unknown>> {
+    const lines = String(content ?? '')
+      .split(/\r?\n/)
+      .map((line) => line.trim())
+      .filter((line) => line.length > 0);
+
+    if (lines.length <= 1) return [];
+
+    const headers = this.parseCsvLine(lines[0]);
+    const rows: Array<Record<string, unknown>> = [];
+
+    for (let i = 1; i < lines.length; i++) {
+      const cols = this.parseCsvLine(lines[i]);
+      if (cols.every((col) => !String(col ?? '').trim())) continue;
+
+      const row: Record<string, unknown> = {};
+      for (let c = 0; c < headers.length; c++) {
+        row[String(headers[c] ?? '').trim()] = String(cols[c] ?? '').trim();
+      }
+      rows.push(row);
+    }
+
+    return rows;
+  }
+
+  private parseCsvLine(line: string): string[] {
+    const out: string[] = [];
+    let current = '';
+    let inQuotes = false;
+
+    for (let i = 0; i < line.length; i++) {
+      const ch = line[i];
+      if (ch === '"') {
+        const next = line[i + 1];
+        if (inQuotes && next === '"') {
+          current += '"';
+          i++;
+        } else {
+          inQuotes = !inQuotes;
+        }
+        continue;
+      }
+
+      if (ch === ',' && !inQuotes) {
+        out.push(current);
+        current = '';
+        continue;
+      }
+
+      current += ch;
+    }
+
+    out.push(current);
+    return out;
+  }
+
+  getMigrationConfidenceClass(confidence: string): string {
+    if (confidence === 'high') {
+      return 'bg-success-50 text-success-700 dark:bg-success-500/15 dark:text-success-400';
+    }
+    if (confidence === 'medium') {
+      return 'bg-warning-50 text-warning-700 dark:bg-warning-500/15 dark:text-warning-400';
+    }
+    return 'bg-error-50 text-error-700 dark:bg-error-500/15 dark:text-error-400';
   }
 
   getTabs(): Array<{ key: SalesTab; label: string }> {
@@ -427,6 +901,73 @@ export class SalesOrderComponent implements OnInit, OnDestroy {
     }, 150);
   }
 
+  onProjectSearchChange(value: string): void {
+    this.projectSearchInput = value;
+
+    if (this.projectSearchDebounceTimer) {
+      clearTimeout(this.projectSearchDebounceTimer);
+    }
+
+    if (!value || value.trim().length === 0) {
+      this.projectSearchResults = [];
+      this.projectSearchDebounceTimer = null;
+      return;
+    }
+
+    this.projectSearchDebounceTimer = setTimeout(() => {
+      void this.loadProjectSearchResults(value);
+      this.projectSearchDebounceTimer = null;
+    }, this.searchDebounceMs);
+  }
+
+  private async loadProjectSearchResults(query: string): Promise<void> {
+    try {
+      const response = await this.salesOrderService.searchProjects({
+        search: query,
+        page: 1,
+        limit: 10,
+      });
+      this.projectSearchResults = response.items || [];
+    } catch (error) {
+      console.error('Failed to search projects:', error);
+      this.projectSearchResults = [];
+    }
+  }
+
+  async selectProject(project: any): Promise<void> {
+    if (!project || !project.id) {
+      return;
+    }
+
+    try {
+      // Get full project details with related SOs
+      const projectDetails = await this.salesOrderService.getProjectWithRelatedSOs(project.id);
+      if (!projectDetails) {
+        console.error('Failed to load project details');
+        return;
+      }
+
+      // Update form with selected project
+      this.form.projectId = project.id;
+      this.form.projectCode = project.projectCode;
+      this.form.projectName = project.projectName;
+      this.selectedProjectDetails = projectDetails;
+      this.projectSearchResults = [];
+      this.projectSearchInput = '';
+    } catch (error) {
+      console.error('Failed to select project:', error);
+    }
+  }
+
+  clearProjectSelection(): void {
+    this.form.projectId = undefined;
+    this.form.projectCode = '';
+    this.form.projectName = '';
+    this.selectedProjectDetails = null;
+    this.projectSearchInput = '';
+    this.projectSearchResults = [];
+  }
+
   getFilteredCustomerOptions(): SalesCustomerOption[] {
     const normalizedQuery = String(this.customerSearch ?? '').trim().toLowerCase();
     if (!normalizedQuery) {
@@ -436,6 +977,66 @@ export class SalesOrderComponent implements OnInit, OnDestroy {
     return this.customerOptions.filter((item) =>
       String(item.name ?? '').toLowerCase().includes(normalizedQuery),
     );
+  }
+
+  syncProductSearchQuery(): void {
+    const item = this.form.productItems[this.activeProductTabIndex];
+    if (!item?.productId) {
+      this.productSearchQuery = '';
+      return;
+    }
+    const found = this.catalogProducts.find((p) => String(p.id) === String(item.productId));
+    this.productSearchQuery = found
+      ? `${found.name}${found.brandName ? ' (' + found.brandName + ')' : ''}`
+      : '';
+  }
+
+  onProductSearchFocus(): void {
+    this.isProductDropdownOpen = true;
+  }
+
+  onProductSearchBlur(): void {
+    setTimeout(() => {
+      this.isProductDropdownOpen = false;
+    }, 150);
+  }
+
+  onProductSearchChange(value: string): void {
+    this.productSearchQuery = value;
+    this.isProductDropdownOpen = true;
+    const index = this.activeProductTabIndex;
+    const nextItems = [...this.form.productItems];
+    nextItems[index] = {
+      ...nextItems[index],
+      productId: '',
+      capacityId: '',
+      sellPrice: '',
+      unitPrice: 0,
+    };
+    this.form.productItems = nextItems;
+    this.recalculateTotalAmount();
+  }
+
+  selectProductFromSearch(product: ProductOption, index: number): void {
+    const nextItems = [...this.form.productItems];
+    nextItems[index] = {
+      ...nextItems[index],
+      productId: String(product.id),
+    };
+    this.form.productItems = nextItems;
+    this.productSearchQuery = `${product.name}${product.brandName ? ' (' + product.brandName + ')' : ''}`;
+    this.isProductDropdownOpen = false;
+    this.onProductChanged(index);
+  }
+
+  getFilteredCatalogProducts(): ProductOption[] {
+    const q = String(this.productSearchQuery ?? '').trim().toLowerCase();
+    if (!q) return this.catalogProducts;
+    return this.catalogProducts.filter((p) => {
+      const name = String(p.name ?? '').toLowerCase();
+      const brand = String(p.brandName ?? '').toLowerCase();
+      return name.includes(q) || brand.includes(q) || `${name} (${brand})`.includes(q);
+    });
   }
 
   getRowActionLabel(): 'Edit' {
@@ -452,45 +1053,227 @@ export class SalesOrderComponent implements OnInit, OnDestroy {
       return;
     }
 
-    const rawRemarks = window.prompt('Enter reason for returned units:');
-    if (rawRemarks === null) {
+    this.pendingReturnOrder = order;
+    this.isReturnModalOpen = true;
+    this.isReturnModalLoading = true;
+    this.returnModalError = '';
+    this.returnForm = {
+      remarks: '',
+      isDefective: false,
+    };
+    this.selectedReturnedSerialNumbers = new Set<string>();
+    this.returnSerialGroups = [];
+
+    try {
+      const detail = await this.salesOrderService.getSalesOrderById(order.id);
+      this.returnSerialGroups = this.buildReturnSerialGroups(detail);
+    } catch (error: unknown) {
+      if (axios.isAxiosError(error)) {
+        this.returnModalError =
+          (error.response?.data as { message?: string } | undefined)?.message ??
+          'Failed to load sales order serials';
+      } else {
+        this.returnModalError = 'Failed to load sales order serials';
+      }
+    } finally {
+      this.isReturnModalLoading = false;
+    }
+  }
+
+  closeReturnModal(): void {
+    if (this.isReturnModalLoading || this.returningOrderIds.has(this.pendingReturnOrder?.id ?? -1)) {
       return;
     }
 
-    const remarks = rawRemarks.trim();
+    this.isReturnModalOpen = false;
+    this.pendingReturnOrder = null;
+    this.returnModalError = '';
+    this.returnSerialGroups = [];
+    this.returnForm = {
+      remarks: '',
+      isDefective: false,
+    };
+    this.selectedReturnedSerialNumbers = new Set<string>();
+  }
+
+  onReturnDefectiveChange(value: boolean): void {
+    this.returnForm.isDefective = value;
+    if (!value) {
+      this.selectedReturnedSerialNumbers = new Set<string>();
+    }
+  }
+
+  isReturnedSerialSelected(serialNumber: string): boolean {
+    return this.selectedReturnedSerialNumbers.has(this.normalizeSerial(serialNumber));
+  }
+
+  toggleReturnedSerialSelection(serialNumber: string, checked: boolean): void {
+    const normalizedSerial = this.normalizeSerial(serialNumber);
+    if (!normalizedSerial) {
+      return;
+    }
+
+    const next = new Set(this.selectedReturnedSerialNumbers);
+    if (checked) {
+      next.add(normalizedSerial);
+    } else {
+      next.delete(normalizedSerial);
+    }
+    this.selectedReturnedSerialNumbers = next;
+  }
+
+  async confirmReturnedUnits(): Promise<void> {
+    const order = this.pendingReturnOrder;
+    if (!order || !this.isForDeliveryStatus(order.status)) {
+      return;
+    }
+
+    const remarks = String(this.returnForm.remarks ?? '').trim();
     if (!remarks) {
-      this.uiError = 'Return remarks are required.';
+      this.returnModalError = 'Return remarks are required.';
+      return;
+    }
+
+    if (this.returnForm.isDefective && this.selectedReturnedSerialNumbers.size === 0) {
+      this.returnModalError = 'Select one or more indoor or outdoor serial numbers for defective return.';
       return;
     }
 
     this.returningOrderIds.add(order.id);
     this.uiError = '';
+    this.returnModalError = '';
 
     try {
       const response = await this.salesOrderService.updateSalesOrder(order.id, {
         productItems: [],
         status: 'pending',
         remarks: `Returned Units: ${remarks}`,
+        returnedSerialDetails: {
+          isDefective: this.returnForm.isDefective,
+          defectReason: this.returnForm.isDefective ? remarks : undefined,
+          defectDate: this.returnForm.isDefective ? new Date().toISOString() : null,
+          serialNumbers: this.returnForm.isDefective
+            ? [...this.selectedReturnedSerialNumbers]
+            : undefined,
+        },
       });
 
       if (!response.success) {
-        this.uiError = response.message ?? 'Failed to mark sales order as returned';
+        this.returnModalError = response.message ?? 'Failed to mark sales order as returned';
         return;
       }
 
-      this.uiMessage = 'Returned units has been recorded and status moved back to Pending.';
+      this.uiMessage = this.returnForm.isDefective
+        ? 'Returned units were recorded, linked serials were marked defective, and the SO status moved back to Pending.'
+        : 'Returned units has been recorded and status moved back to Pending.';
+      this.closeReturnModal();
       await this.loadTabData(this.activeTab);
     } catch (error: unknown) {
       if (axios.isAxiosError(error)) {
-        this.uiError =
+        this.returnModalError =
           (error.response?.data as { message?: string } | undefined)?.message ??
           'Failed to mark sales order as returned';
       } else {
-        this.uiError = 'Failed to mark sales order as returned';
+        this.returnModalError = 'Failed to mark sales order as returned';
       }
     } finally {
       this.returningOrderIds.delete(order.id);
     }
+  }
+
+  private buildReturnSerialGroups(detail: SalesOrderDetailItem): SalesReturnSerialOptionGroup[] {
+    const grouped = new Map<string, string[]>();
+
+    for (const item of detail.productItems ?? []) {
+      for (const [unitLabel, serials] of Object.entries(item.serialNumbers ?? {})) {
+        const normalizedUnitLabel = String(unitLabel ?? '').trim();
+        if (!normalizedUnitLabel || !Array.isArray(serials)) {
+          continue;
+        }
+
+        const existing = grouped.get(normalizedUnitLabel) ?? [];
+        const seen = new Set(existing.map((serial) => this.normalizeSerial(serial).toLowerCase()));
+
+        for (const serial of serials) {
+          const normalizedSerial = this.normalizeSerial(serial);
+          const normalizedKey = normalizedSerial.toLowerCase();
+          if (!normalizedSerial || seen.has(normalizedKey)) {
+            continue;
+          }
+
+          seen.add(normalizedKey);
+          existing.push(normalizedSerial);
+        }
+
+        if (existing.length > 0) {
+          grouped.set(normalizedUnitLabel, existing);
+        }
+      }
+    }
+
+    return [...grouped.entries()]
+      .map(([unitLabel, serials]) => ({ unitLabel, serials }))
+      .sort((left, right) => left.unitLabel.localeCompare(right.unitLabel));
+  }
+
+  canSendForDeliveryFromDrawer(): boolean {
+    if (this.drawerMode !== 'edit' || this.isMigrationDrawerMode) {
+      return false;
+    }
+
+    const normalizedStatus = String(this.form.status ?? '').trim().toLowerCase();
+    return !['for-delivery', 'for delivery', 'for_delivery', 'remitted', 'complete', 'completed'].includes(normalizedStatus);
+  }
+
+  private validateProductSerialRequirements(targetStatus?: string): string | null {
+    const salesType = this.form.salesType;
+    const status = String(targetStatus ?? this.form.status ?? '').toLowerCase();
+
+    // Skip serial validation during creation mode - allow saving draft first
+    if (this.drawerMode === 'create') {
+      return null;
+    }
+
+    if (salesType === 'transfer' && ['for-delivery', 'remitted'].includes(status)) {
+      const missingSerials: string[] = [];
+      (this.form.productItems ?? []).forEach((item: any, idx: number) => {
+        (item.unitTypes ?? []).forEach((ut: any) => {
+          if (ut.value > 0 && (!ut.serials || ut.serials.length < ut.value)) {
+            missingSerials.push(`Product #${idx + 1} (${ut.label})`);
+          }
+        });
+      });
+      if (missingSerials.length > 0) {
+        return `All required serial numbers must be scanned before submitting. Missing: ${missingSerials.join(', ')}`;
+      }
+
+      return null;
+    }
+
+    if (salesType === 'transfer') {
+      return null;
+    }
+
+    // For non-transfer types, require serials only when status is for-delivery or remitted
+    const isDeliveryOrRemit = ['for-delivery', 'remitted'].includes(status);
+    if (!isDeliveryOrRemit) {
+      return null;
+    }
+
+    const hasProduct = (this.form.productItems ?? []).length > 0;
+    const hasZeroQty = (this.form.productItems ?? []).some((item: any) => Number(item.totalSetQty) <= 0);
+    const missingSerials = (this.form.productItems ?? []).some((item: any) => {
+      return (item.unitTypes ?? []).some((ut: any) => ut.value > 0 && (!ut.serials || ut.serials.length < ut.value));
+    });
+
+    if (hasProduct && hasZeroQty) {
+      return 'Unit quantity must not be zero.';
+    }
+    if (hasProduct && missingSerials) {
+      return 'All required serial numbers must be scanned before submitting.';
+    }
+
+    return null;
   }
 
   pendingReceiveOrder: SalesOrderRow | null = null;
@@ -1170,6 +1953,7 @@ export class SalesOrderComponent implements OnInit, OnDestroy {
 
   openCreateDrawer(): void {
     this.resetForm();
+    this.closeMigrationRowEdit();
     this.drawerMode = 'create';
     this.editingSalesId = null;
     this.form.salesType = this.getSalesTypeFromActiveTab();
@@ -1201,6 +1985,7 @@ export class SalesOrderComponent implements OnInit, OnDestroy {
       };
 
     this.resetForm();
+    this.closeMigrationRowEdit();
     this.drawerMode = 'edit';
     this.editingSalesId = orderId;
     this.isDrawerOpen = true;
@@ -1236,8 +2021,14 @@ export class SalesOrderComponent implements OnInit, OnDestroy {
       return;
     }
 
+    const shouldReturnToMigrationModal = this.isMigrationDrawerMode;
     this.isDrawerOpen = false;
     this.closeGuardDialog();
+
+    if (shouldReturnToMigrationModal) {
+      this.closeMigrationRowEdit();
+      this.isMigrationModalOpen = true;
+    }
   }
 
   requestCloseDrawer(): void {
@@ -1413,6 +2204,7 @@ export class SalesOrderComponent implements OnInit, OnDestroy {
       scheduleDate: item.scheduleDate ?? '-',
       serialCount: Number(item.serialCount ?? 0),
       createdAt: item.createdAt ?? null,
+      concernStatus: item.concernStatus ?? '',
     }));
   }
 
@@ -1491,6 +2283,8 @@ export class SalesOrderComponent implements OnInit, OnDestroy {
   addProductItem(): void {
     this.form.productItems = [...this.form.productItems, this.createEmptyProductItem()];
     this.activeProductTabIndex = this.form.productItems.length - 1;
+    this.productSearchQuery = '';
+    this.isProductDropdownOpen = false;
     this.ensureSelectedUnitType(this.activeProductTabIndex);
     this.recalculateTotalAmount();
   }
@@ -1695,6 +2489,7 @@ export class SalesOrderComponent implements OnInit, OnDestroy {
 
   setActiveProductTab(index: number): void {
     this.activeProductTabIndex = index;
+    this.syncProductSearchQuery();
     this.ensureSelectedUnitType(index);
     if (this.drawerMode === 'edit') {
       const selectedUnit = this.getSelectedUnitTypeLabel(index);
@@ -1770,14 +2565,77 @@ export class SalesOrderComponent implements OnInit, OnDestroy {
       value: Math.max(0, Math.floor(Number(entry.value) || 0)),
     }));
 
+    item.totalSetQty = item.unitTypes.reduce(
+      (maxQty: number, entry: SalesUnitTypeFormItem) => Math.max(maxQty, Number(entry.value) || 0),
+      0,
+    );
+
     this.recalculateTotalAmount();
+  }
+
+  private syncMigrationDrawerQuantitiesFromSerials(): void {
+    if (!this.isMigrationDrawerMode) {
+      return;
+    }
+
+    this.form.productItems = (this.form.productItems ?? []).map((item: SalesProductFormItem) => {
+      const nextUnitTypes = (item.unitTypes ?? []).map((entry: SalesUnitTypeFormItem) => {
+        const parsed = this.parseSerials(entry.serialInput)
+          .map((serial) => this.normalizeSerial(serial))
+          .filter((serial, index, self) => serial.length > 0 && self.indexOf(serial) === index);
+
+        const mergedSerials = [...new Set([
+          ...((entry.serials ?? []).map((serial) => this.normalizeSerial(serial)).filter((serial) => serial.length > 0)),
+          ...parsed,
+        ])];
+
+        const computedValue = Math.max(
+          0,
+          Math.floor(Number(entry.value) || 0),
+          mergedSerials.length,
+        );
+
+        return {
+          ...entry,
+          serials: mergedSerials,
+          serialInput: mergedSerials.join('\n'),
+          value: computedValue,
+        };
+      });
+
+      const computedTotalSetQty = nextUnitTypes.reduce(
+        (maxQty: number, entry: SalesUnitTypeFormItem) => Math.max(maxQty, Number(entry.value) || 0),
+        0,
+      );
+
+      return {
+        ...item,
+        unitTypes: nextUnitTypes,
+        totalSetQty: computedTotalSetQty,
+      };
+    });
   }
 
   onTotalSetQtyChange(productIndex: number): void {
     const item = this.form.productItems[productIndex];
     if (!item) return;
 
+    // Update totalSetQty
     item.totalSetQty = Math.max(0, Math.floor(Number(item.totalSetQty) || 0));
+
+    // If there are unitTypes, update all their values to match totalSetQty (or distribute as needed)
+    if (Array.isArray(item.unitTypes) && item.unitTypes.length > 0) {
+      item.unitTypes = item.unitTypes.map((entry: SalesUnitTypeFormItem) => ({
+        ...entry,
+        value: item.totalSetQty,
+      }));
+    }
+
+    // Always sync unitTypesQty for backend payload
+    (item as any).unitTypesQty = (item.unitTypes || []).map((entry: any) => ({
+      label: entry.label,
+      value: Number(entry.value) || 0,
+    }));
 
     this.recalculateTotalAmount();
   }
@@ -1997,31 +2855,18 @@ export class SalesOrderComponent implements OnInit, OnDestroy {
   }
 
   async saveDesignForm(): Promise<void> {
-
-    // Only strictly validate serials if product items are being changed or status is being set to for-delivery/remitted
-    const isProductEdit = this.drawerMode === 'create' || this.form.productItems.some((item: any) => item._edited);
-    const isDeliveryOrRemit = ['for-delivery', 'remitted'].includes((this.form.status || '').toLowerCase());
-    if (isProductEdit || isDeliveryOrRemit) {
-      const hasProduct = (this.form.productItems ?? []).length > 0;
-      const hasZeroQty = (this.form.productItems ?? []).some((item: any) => Number(item.totalSetQty) <= 0);
-      const missingSerials = (this.form.productItems ?? []).some((item: any) => {
-        return (item.unitTypes ?? []).some((ut: any) => ut.value > 0 && (!ut.serials || ut.serials.length < ut.value));
-      });
-      if (hasProduct && hasZeroQty) {
-        this.uiError = 'Unit quantity must not be zero.';
-        return;
-      }
-      if (hasProduct && missingSerials) {
-        this.uiError = 'All required serial numbers must be scanned before submitting.';
-        return;
-      }
+    this.syncMigrationDrawerQuantitiesFromSerials();
+    const salesType = this.form.salesType;
+    const validationError = this.validateProductSerialRequirements();
+    if (validationError) {
+      this.uiError = validationError;
+      return;
     }
     if (this.isSubmitting) {
       return;
     }
 
-    const salesType = this.form.salesType;
-
+    // (moved up: salesType already declared above)
     if (salesType === 'transfer') {
       const td = this.form.transferDetails ?? {};
       if (!td.fromBranchId || !td.toBranchId) {
@@ -2034,7 +2879,7 @@ export class SalesOrderComponent implements OnInit, OnDestroy {
       }
     }
 
-    if (['service', 'sales and service'].includes(salesType)) {
+    if (['service', 'sales and service', 'concern'].includes(salesType)) {
       const hasService = (this.form.serviceItems ?? []).some((item: any) =>
         String(item.serviceName ?? '').trim().length > 0 ||
         Number(item.unitPrice) > 0 ||
@@ -2055,6 +2900,22 @@ export class SalesOrderComponent implements OnInit, OnDestroy {
     }
 
     const payload = this.buildPayload();
+
+    if (this.isMigrationDrawerMode) {
+      const rowNumber = Number(this.migrationEditingRowNumber ?? 0);
+      if (!Number.isFinite(rowNumber) || rowNumber <= 0) {
+        this.uiError = 'Invalid migration row reference.';
+        return;
+      }
+
+      this.migrationEditedPayloadByRow[rowNumber] = payload;
+      this.uiError = '';
+      this.uiMessage = `Migration row ${rowNumber} payload updated.`;
+      this.closeDrawer(true);
+      await this.refreshMigrationPreview();
+      return;
+    }
+
     this.uiError = '';
     this.uiMessage = '';
     this.isSubmitting = true;
@@ -2099,23 +2960,13 @@ export class SalesOrderComponent implements OnInit, OnDestroy {
   }
 
   async remitSales(): Promise<void> {
-        // Block if any product item has qty 0 or missing serials
-        const hasProduct = (this.form.productItems ?? []).length > 0;
-        const hasZeroQty = (this.form.productItems ?? []).some((item: any) => Number(item.totalSetQty) <= 0);
-        const missingSerials = (this.form.productItems ?? []).some((item: any) => {
-          return (item.unitTypes ?? []).some((ut: any) => ut.value > 0 && (!ut.serials || ut.serials.length < ut.value));
-        });
-        if (hasProduct && hasZeroQty) {
-          this.uiError = 'Unit quantity must not be zero.';
-          this.isRemitting = false;
-          return;
-        }
-        if (hasProduct && missingSerials) {
-          this.uiError = 'All required serial numbers must be scanned before remitting.';
-          this.isRemitting = false;
-          return;
-        }
     if (this.drawerMode !== 'edit' || this.isRemitting || this.isSubmitting) {
+      return;
+    }
+
+    const validationError = this.validateProductSerialRequirements('remitted');
+    if (validationError) {
+      this.uiError = validationError.replace('submitting', 'remitting');
       return;
     }
 
@@ -2155,6 +3006,56 @@ export class SalesOrderComponent implements OnInit, OnDestroy {
       }
     } finally {
       this.isRemitting = false;
+    }
+  }
+
+  async sendForDelivery(): Promise<void> {
+    if (this.drawerMode !== 'edit' || this.isSendingForDelivery || this.isSubmitting || this.isRemitting) {
+      return;
+    }
+
+    const targetId = Number(this.editingSalesId);
+    if (!Number.isFinite(targetId) || targetId <= 0) {
+      this.uiError = 'Invalid sales order id for delivery';
+      return;
+    }
+
+    this.syncMigrationDrawerQuantitiesFromSerials();
+
+    const validationError = this.validateProductSerialRequirements('for-delivery');
+    if (validationError) {
+      this.uiError = validationError;
+      return;
+    }
+
+    const payload = this.buildPayload();
+    payload.status = 'for-delivery';
+
+    this.uiError = '';
+    this.uiMessage = '';
+    this.isSendingForDelivery = true;
+
+    try {
+      const response = await this.salesOrderService.updateSalesOrder(targetId, payload);
+      if (!response.success) {
+        this.uiError = response.message ?? 'Failed to send sales order for delivery';
+        return;
+      }
+
+      this.uiMessage = response.message ?? 'Sales order sent for delivery successfully';
+      this.closeDrawer(true);
+      this.page = 1;
+      await this.loadTabData(this.activeTab);
+    } catch (error: unknown) {
+      if (axios.isAxiosError(error)) {
+        this.uiError =
+          (error.response?.data as { message?: string } | undefined)?.message ??
+          'Failed to send sales order for delivery';
+      } else {
+        this.uiError = 'Failed to send sales order for delivery';
+      }
+    } finally {
+      this.isSendingForDelivery = false;
     }
   }
 
@@ -2217,7 +3118,9 @@ export class SalesOrderComponent implements OnInit, OnDestroy {
         concernDescription: String(cd.concernDescription ?? '').trim() || undefined,
         concernStatus: String(cd.concernStatus ?? '').trim() || undefined,
         priority: String(cd.priority ?? '').trim() || undefined,
-        resolutionNotes: String(cd.resolutionNotes ?? '').trim() || undefined,
+        resolutionNotes: cd.concernStatus === 'warranty'
+          ? String(cd.warrantySerials ?? '').trim() || undefined
+          : String(cd.resolutionNotes ?? '').trim() || undefined,
         resolvedAt: cd.resolvedAt || undefined,
       };
     })();
@@ -2228,6 +3131,7 @@ export class SalesOrderComponent implements OnInit, OnDestroy {
       totalAmount: Number(this.form.totalAmount) || 0,
       scheduleDate: this.form.scheduleDate || null,
       salesType: this.form.salesType || this.getSalesTypeFromActiveTab(),
+      projectId: this.form.projectId || undefined,
       projectName: this.form.projectName || undefined,
       projectCode: this.form.projectCode || undefined,
       installer: this.form.installer || undefined,
@@ -2264,7 +3168,7 @@ export class SalesOrderComponent implements OnInit, OnDestroy {
           unitPrice: Number(item.unitPrice) || 0,
           sellPrice: item.sellPrice === '' ? '' : Number(item.sellPrice) || 0,
           discountPrice: item.discountPrice === '' ? '' : Number(item.discountPrice) || 0,
-          unitTypesQty: item.unitTypes.map((entry: any) => ({
+          unitTypesQty: (item.unitTypes || []).map((entry: any) => ({
             label: entry.label,
             value: Number(entry.value) || 0,
           })),
@@ -2312,6 +3216,8 @@ export class SalesOrderComponent implements OnInit, OnDestroy {
         actualDeliveryDate: '',
         transferStatus: '',
         transferNotes: '',
+        receiverName: '',
+        receivedBy: undefined as number | undefined,
       },
       concernDetails: {
         concernType: '',
@@ -2321,6 +3227,7 @@ export class SalesOrderComponent implements OnInit, OnDestroy {
         priority: '',
         resolutionNotes: '',
         resolvedAt: '',
+        warrantySerials: '',
       },
       expenseDetails: [this.createEmptyExpenseItem()],
       customer: {
@@ -2334,7 +3241,7 @@ export class SalesOrderComponent implements OnInit, OnDestroy {
       paymentDetails: [this.createEmptyPaymentItem()],
       productItems: [this.createEmptyProductItem()],
       serviceItems: [this.createEmptyServiceItem()],
-      status: 'pending',
+      status: this.getDefaultStatusFromActiveTab(),
     };
 
     this.editingSalesId = null;
@@ -2557,9 +3464,16 @@ export class SalesOrderComponent implements OnInit, OnDestroy {
           ? normalizedLabelsFromSerial
           : ['set'];
 
+    const qtyMap = new Map<string, number>();
+    for (const entry of unitTypesFromPayload) {
+      const label = String(entry.label ?? 'set').trim().toLowerCase() || 'set';
+      qtyMap.set(label, Math.max(0, Math.floor(Number(entry.value) || 0)));
+    }
+
     const unitTypes = labels.map((label) => {
       const serials = Array.isArray(serialNumbers[label]) ? serialNumbers[label] : [];
-      return this.createUnitTypeEntry(label, resolvedSetQty, serials);
+      const value = qtyMap.get(label) ?? (serials.length > 0 ? serials.length : resolvedSetQty);
+      return this.createUnitTypeEntry(label, value, serials);
     });
 
     return {
@@ -2627,7 +3541,16 @@ export class SalesOrderComponent implements OnInit, OnDestroy {
       priority: '',
       resolutionNotes: '',
       resolvedAt: '',
+      warrantySerials: '',
     };
+    // If status is warranty, resolutionNotes holds the warranty serials
+    (concernDetails as any).warrantySerials =
+      concernDetails.concernStatus === 'warranty'
+        ? (concernDetails.resolutionNotes ?? '')
+        : '';
+    if (concernDetails.concernStatus === 'warranty') {
+      (concernDetails as any).resolutionNotes = '';
+    }
 
     const expenseDetails = Array.isArray(detail.expenseDetails) && detail.expenseDetails.length > 0
       ? detail.expenseDetails
@@ -2638,6 +3561,7 @@ export class SalesOrderComponent implements OnInit, OnDestroy {
       totalAmount: Number(detail.totalAmount) || Number(fallbackItem.totalAmount) || 0,
       scheduleDate: this.toDateInputValue(detail.scheduleDate),
       salesType: detail.salesType || this.getSalesTypeFromActiveTab(),
+      projectId: detail.projectId || undefined,
       projectName: detail.projectName ?? '',
       projectCode: detail.projectCode ?? '',
       installer: detail.installer ?? '',
@@ -2676,9 +3600,21 @@ export class SalesOrderComponent implements OnInit, OnDestroy {
     }
 
     this.activeProductTabIndex = 0;
+    this.syncProductSearchQuery();
     this.selectedUnitTypeByProduct = {};
     this.form.productItems.forEach((_: unknown, index: number) => this.ensureSelectedUnitType(index));
     this.recalculateTotalAmount();
+
+    // Load project details if projectId exists
+    if (detail.projectId) {
+      this.salesOrderService.getProjectWithRelatedSOs(detail.projectId).then((projectDetail) => {
+        if (projectDetail) {
+          this.selectedProjectDetails = projectDetail;
+        }
+      }).catch(() => {
+        // Silently fail if project details cannot be loaded
+      });
+    }
   }
 
   private getAutoPaymentStatus(method: SalesPaymentFormItem['method']): string {
@@ -2783,8 +3719,10 @@ export class SalesOrderComponent implements OnInit, OnDestroy {
     try {
       const products = await this.salesOrderService.getProducts();
       this.catalogProducts = Array.isArray(products) ? products : [];
+      this.syncProductSearchQuery();
     } catch {
       this.catalogProducts = [];
+      this.syncProductSearchQuery();
     }
 
     try {
@@ -2812,6 +3750,11 @@ export class SalesOrderComponent implements OnInit, OnDestroy {
     if (this.activeTab === 'sales-receivable') return 'sales';
     if (this.activeTab === 'remitted-sales') return 'sales';
     return 'sales';
+  }
+
+  private getDefaultStatusFromActiveTab(): string {
+    if (this.activeTab === 'services') return 'after_sales';
+    return 'pending';
   }
 
   private normalizeSerial(value: unknown): string {

@@ -61,8 +61,11 @@ export class CreateSalesOrderServiceDetailDto {
 }
 
 export class CreateSalesOrderProjectDetailDto {
+	projectId?: number; // Reference to tblprojects
 	projectName?: string;
 	projectCode?: string;
+	projectType?: string;
+	projectOwner?: string;
 	projectLocation?: string;
 	projectStartDate?: string | null;
 	projectEndDate?: string | null;
@@ -107,6 +110,13 @@ export class CreateSalesOrderConcernDetailDto {
 	resolvedAt?: string | null;
 }
 
+export class CreateSalesOrderReturnedSerialDetailDto {
+	isDefective?: boolean;
+	defectReason?: string;
+	defectDate?: string | null;
+	serialNumbers?: string[];
+}
+
 export class CreateSalesOrderDto {
 	customer_id?: string | null;
 	customer?: CreateSalesCustomerDto;
@@ -118,6 +128,7 @@ export class CreateSalesOrderDto {
 	totalAmount?: number;
 	scheduleDate?: string | null;
 	salesType?: string;
+	projectId?: number; // Reference to tblprojects (new master project)
 	projectName?: string;
 	projectCode?: string;
 	projectDetails?: CreateSalesOrderProjectDetailDto;
@@ -125,5 +136,6 @@ export class CreateSalesOrderDto {
 	remarks?: string;
 	transferDetails?: CreateSalesOrderTransferDetailDto;
 	concernDetails?: CreateSalesOrderConcernDetailDto;
+	returnedSerialDetails?: CreateSalesOrderReturnedSerialDetailDto;
 	status?: string;
 }

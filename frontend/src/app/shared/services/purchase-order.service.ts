@@ -10,6 +10,22 @@ export interface PurchaseOrderItem {
   status: string;
   createdAt: string | null;
   serialCount: number;
+  productItems?: Array<{
+    id: string | number | null;
+    productId: string | null;
+    capacityId: string | null;
+    salesId?: string | null;
+    product?: {
+      id: string | number | null;
+      productName: string | null;
+    } | null;
+    capacity?: {
+      id: string | number | null;
+      capacity: string | null;
+    } | null;
+  }>;
+  isTransferPO?: boolean;
+  originatingSalesOrder?: { id: number } | null;
 }
 
 export interface PurchaseOrderDetailPayment {
@@ -60,7 +76,30 @@ export interface PurchaseOrderDetailItem {
   status: string;
   paymentDetails: PurchaseOrderDetailPayment[];
   productItems: PurchaseOrderDetailProductItem[];
+  serialStatuses?: Record<string, string>;
+  poLinkedSerialNumbers?: Record<string, string[]>;
+  unresolvedLinkedSerialNumbers?: Record<string, string[]>;
   createdAt: string | null;
+  isTransferPO?: boolean;
+  originatingSalesOrder?: {
+    id: number;
+    soNumber: string | null;
+    branchId?: string | null;
+    branchName?: string | null;
+    productItems?: any[];
+    transferDetails?: {
+      id: number;
+      fromBranchId: string | null;
+      fromBranchName: string | null;
+      toBranchId: string | null;
+      toBranchName: string | null;
+      transferDate: string | null;
+      expectedDeliveryDate: string | null;
+      actualDeliveryDate: string | null;
+      transferStatus: string | null;
+      transferNotes: string | null;
+    } | null;
+  } | null;
 }
 
 interface PurchaseOrderDetailResponse {
@@ -101,6 +140,13 @@ export interface PurchaseListMeta {
   limit: number;
   total: number;
   totalPages: number;
+}
+
+interface VendorListResponse {
+  success: boolean;
+  items?: VendorDetail[];
+  meta?: PurchaseListMeta;
+  message?: string;
 }
 
 export interface PurchaseQueryParams {
@@ -207,6 +253,27 @@ export interface VendorOption {
   contact_number?: string;
 }
 
+export interface VendorDetail {
+  id: string;
+  name: string;
+  address?: string;
+  contact_person?: string;
+  contact_number?: string;
+  email?: string;
+  tin_number?: string;
+  created_at?: string | null;
+  updated_at?: string | null;
+}
+
+export interface VendorPayload {
+  name: string;
+  address?: string;
+  contactPerson?: string;
+  contactNumber?: string;
+  email?: string;
+  tinNumber?: string;
+}
+
 export interface ProductCapacityOption {
   id: number;
   name: string;
@@ -272,12 +339,28 @@ export class PurchaseOrderService {
     return response.data;
   }
 
-  async getPurchaseById(id: number): Promise<PurchaseOrderDetailItem | null> {
-    const response = await apiClient.get<PurchaseOrderDetailResponse>(`/purchase/${id}`);
+  async verifyAndReceivePurchase(id: number): Promise<PurchaseActionResponse> {
+    const response = await apiClient.patch<PurchaseActionResponse>(`/purchase/${id}/verify-receive`, {});
+    return response.data;
+  }
+
+  async getPurchaseById(
+    id: number,
+    options?: {
+      includeInstalled?: boolean;
+      preferPoLinkedSerials?: boolean;
+    },
+  ): Promise<PurchaseOrderDetailItem | null> {
+    const response = await apiClient.get<PurchaseOrderDetailResponse>(`/purchase/${id}`, {
+      params: {
+        includeInstalled: options?.includeInstalled === true ? 'true' : undefined,
+        preferPoLinkedSerials: options?.preferPoLinkedSerials === true ? 'true' : undefined,
+      },
+    });
     if (!response.data.success) {
       return null;
     }
-
+    // Pass through isTransferPO and originatingSalesOrder if present
     return response.data.item ?? null;
   }
 
@@ -289,6 +372,56 @@ export class PurchaseOrderService {
     });
 
     return response.data.items ?? [];
+  }
+
+  async listVendorStakeholders(
+    params: { page?: number; limit?: number; search?: string },
+  ): Promise<{ items: VendorDetail[]; meta: PurchaseListMeta }> {
+    const response = await apiClient.get<VendorListResponse>('/vendor', { params });
+    if (!response.data.success) {
+      throw new Error(response.data.message || 'Failed to load vendors');
+    }
+    return {
+      items: response.data.items ?? [],
+      meta: response.data.meta ?? {
+        page: params.page ?? 1,
+        limit: params.limit ?? 20,
+        total: 0,
+        totalPages: 1,
+      },
+    };
+  }
+
+  async getVendorById(id: string): Promise<VendorDetail> {
+    const response = await apiClient.get<{ success: boolean; data?: VendorDetail; message?: string }>(`/vendor/${id}`);
+    if (!response.data.success || !response.data.data) {
+      throw new Error(response.data.message || 'Failed to load vendor');
+    }
+    return response.data.data;
+  }
+
+  async createVendor(payload: VendorPayload): Promise<{ success: boolean; message?: string; data?: { id?: string } }> {
+    const response = await apiClient.post<{ success: boolean; message?: string; data?: { id?: string } }>('/vendor', payload);
+    if (!response.data.success) {
+      throw new Error(response.data.message || 'Failed to create vendor');
+    }
+    return response.data;
+  }
+
+  async updateVendor(id: string, payload: VendorPayload): Promise<{ success: boolean; message?: string }> {
+    const response = await apiClient.patch<{ success: boolean; message?: string }>(`/vendor/${id}`, payload);
+    if (!response.data.success) {
+      throw new Error(response.data.message || 'Failed to update vendor');
+    }
+    return response.data;
+  }
+
+  async deleteVendor(id: string): Promise<{ success: boolean; message?: string }> {
+    const response = await apiClient.delete<{ success: boolean; message?: string }>(`/vendor/${id}`);
+    if (!response.data.success) {
+      throw new Error(response.data.message || 'Failed to delete vendor');
+    }
+    return response.data;
   }
 
   async getProducts(): Promise<ProductOption[]> {

@@ -7,15 +7,24 @@
         <h3 class="text-base font-semibold text-gray-800 dark:text-white/90">Sales Orders</h3>
         <p class="mt-1 text-sm text-gray-500 dark:text-gray-400">PO-style drawer workflow with customer, split payment, and multiple product sections.</p>
       </div>
-      @if (canCreateSalesOrder()) {
+      <div class="flex flex-wrap items-center gap-2">
         <button
           type="button"
-          (click)="openCreateDrawer()"
-          class="inline-flex items-center justify-center rounded-lg bg-brand-500 px-4 py-2.5 text-sm font-medium text-white transition hover:bg-brand-600"
+          (click)="openMigrationModal()"
+          class="inline-flex items-center justify-center rounded-lg border border-brand-300 px-4 py-2.5 text-sm font-medium text-brand-700 transition hover:bg-brand-50 dark:border-brand-700 dark:text-brand-300 dark:hover:bg-brand-500/10"
         >
-          Create SO
+          Migrate Daily Release
         </button>
-      }
+        @if (canCreateSalesOrder()) {
+          <button
+            type="button"
+            (click)="openCreateDrawer()"
+            class="inline-flex items-center justify-center rounded-lg bg-brand-500 px-4 py-2.5 text-sm font-medium text-white transition hover:bg-brand-600"
+          >
+            Create SO
+          </button>
+        }
+      </div>
     </div>
 
     @if (uiMessage) {
@@ -92,15 +101,28 @@
                 <td class="px-4 py-3 text-sm text-gray-700 dark:text-gray-300">{{ formatAmount(order.totalAmount) }}</td>
                 <td class="px-4 py-3 text-sm text-gray-700 dark:text-gray-300">{{ order.paymentMethod || '-' }}</td>
                 <td class="px-4 py-3">
-                  <span class="rounded-full px-2 py-0.5 text-xs font-medium"
-                    [ngClass]="{
-                      'bg-warning-50 text-warning-700 dark:bg-warning-500/15 dark:text-warning-500': order.status.toLowerCase() === 'pending',
-                      'bg-brand-50 text-brand-700 dark:bg-brand-500/15 dark:text-brand-400': order.status.toLowerCase() === 'in-progress',
-                      'bg-success-50 text-success-700 dark:bg-success-500/15 dark:text-success-500': order.status.toLowerCase().includes('approval'),
-                      'bg-gray-100 text-gray-700 dark:bg-gray-800 dark:text-gray-300': !['pending','in-progress'].includes(order.status.toLowerCase()) && !order.status.toLowerCase().includes('approval')
-                    }">
-                    {{ order.status }}
-                  </span>
+                  @if (activeTab === 'services' && order.concernStatus) {
+                    <span class="rounded-full px-2 py-0.5 text-xs font-medium"
+                      [ngClass]="{
+                        'bg-warning-50 text-warning-700 dark:bg-warning-500/15 dark:text-warning-500': order.concernStatus === 'in-progress' || order.concernStatus === 'reschedule',
+                        'bg-yellow-50 text-yellow-700 dark:bg-yellow-500/15 dark:text-yellow-400': order.concernStatus === 'warranty',
+                        'bg-error-50 text-error-700 dark:bg-error-500/15 dark:text-error-400': order.concernStatus === 'pulled-out' || order.concernStatus === 'void-warranty',
+                        'bg-success-50 text-success-700 dark:bg-success-500/15 dark:text-success-500': order.concernStatus === 'complete',
+                        'bg-gray-100 text-gray-700 dark:bg-gray-800 dark:text-gray-300': !['in-progress','reschedule','warranty','pulled-out','void-warranty','complete'].includes(order.concernStatus)
+                      }">
+                      {{ order.concernStatus }}
+                    </span>
+                  } @else {
+                    <span class="rounded-full px-2 py-0.5 text-xs font-medium"
+                      [ngClass]="{
+                        'bg-warning-50 text-warning-700 dark:bg-warning-500/15 dark:text-warning-500': order.status.toLowerCase() === 'pending',
+                        'bg-brand-50 text-brand-700 dark:bg-brand-500/15 dark:text-brand-400': order.status.toLowerCase() === 'in-progress',
+                        'bg-success-50 text-success-700 dark:bg-success-500/15 dark:text-success-500': order.status.toLowerCase().includes('approval'),
+                        'bg-gray-100 text-gray-700 dark:bg-gray-800 dark:text-gray-300': !['pending','in-progress'].includes(order.status.toLowerCase()) && !order.status.toLowerCase().includes('approval')
+                      }">
+                      {{ order.status }}
+                    </span>
+                  }
                 </td>
                 <td class="px-4 py-3 text-sm text-gray-700 dark:text-gray-300">{{ order.salesType || '-' }}</td>
                 <td class="px-4 py-3 text-sm text-gray-700 dark:text-gray-300">{{ order.projectCode || '-' }}</td>
@@ -176,6 +198,194 @@
     }
   </div>
 
+  @if (isMigrationModalOpen) {
+    <div class="fixed inset-0 z-100000 bg-gray-900/50" (click)="closeMigrationModal()"></div>
+    <div class="fixed inset-0 z-100001 flex items-center justify-center p-4">
+      <div class="flex max-h-[90vh] w-full max-w-6xl flex-col overflow-hidden rounded-2xl border border-gray-200 bg-white shadow-2xl dark:border-gray-800 dark:bg-gray-900">
+        <div class="flex items-center justify-between border-b border-gray-200 px-6 py-4 dark:border-gray-800">
+          <div>
+            <h3 class="text-base font-semibold text-gray-800 dark:text-white/90">Sales Order Migration Preview</h3>
+            <p class="mt-1 text-xs text-gray-500 dark:text-gray-400">Upload the client daily release CSV format and review auto-mapped SO rows.</p>
+          </div>
+          <button type="button" (click)="closeMigrationModal()" class="rounded-lg border border-gray-300 px-3 py-1.5 text-sm text-gray-700 hover:bg-gray-50 dark:border-gray-700 dark:text-gray-300 dark:hover:bg-gray-800">Close</button>
+        </div>
+
+        <div class="px-6 py-4">
+          <div class="flex flex-wrap items-center gap-3">
+            <label class="inline-flex cursor-pointer items-center justify-center rounded-lg bg-brand-500 px-4 py-2 text-sm font-medium text-white transition hover:bg-brand-600">
+              {{ isMigrationPreviewLoading ? 'Parsing...' : 'Choose CSV File' }}
+              <input type="file" accept=".csv,text/csv" class="hidden" (change)="onMigrationFileSelected($event)" [disabled]="isMigrationPreviewLoading" />
+            </label>
+            <a
+              href="/docs/sales_order_daily_release_migration_sample.csv"
+              download="sales_order_daily_release_migration_sample.csv"
+              class="inline-flex items-center justify-center rounded-lg border border-gray-300 bg-white px-4 py-2 text-sm font-medium text-gray-700 transition hover:bg-gray-50 dark:border-gray-700 dark:bg-gray-900 dark:text-gray-200 dark:hover:bg-gray-800"
+            >
+              Download Template
+            </a>
+            @if (migrationPreviewFileName) {
+              <span class="text-xs text-gray-500 dark:text-gray-400">Selected: {{ migrationPreviewFileName }}</span>
+            }
+          </div>
+
+          @if (migrationPreviewError) {
+            <div class="mt-3 rounded-lg border border-error-300 bg-error-50 px-3 py-2 text-xs text-error-700 dark:border-error-500/30 dark:bg-error-500/10 dark:text-error-400">
+              {{ migrationPreviewError }}
+            </div>
+          }
+
+          @if (migrationPreviewSummary) {
+            <div class="mt-4 grid grid-cols-2 gap-2 text-xs sm:grid-cols-3 lg:grid-cols-6">
+              <div class="rounded-lg bg-gray-100 px-3 py-2 dark:bg-gray-800"><span class="font-semibold">Total:</span> {{ migrationPreviewSummary.total }}</div>
+              <div class="rounded-lg bg-success-50 px-3 py-2 text-success-700 dark:bg-success-500/15 dark:text-success-400"><span class="font-semibold">High:</span> {{ migrationPreviewSummary.highConfidence }}</div>
+              <div class="rounded-lg bg-warning-50 px-3 py-2 text-warning-700 dark:bg-warning-500/15 dark:text-warning-400"><span class="font-semibold">Review:</span> {{ migrationPreviewSummary.reviewNeeded }}</div>
+              <div class="rounded-lg bg-error-50 px-3 py-2 text-error-700 dark:bg-error-500/15 dark:text-error-400"><span class="font-semibold">Rejected:</span> {{ migrationPreviewSummary.rejected }}</div>
+              <div class="rounded-lg bg-brand-50 px-3 py-2 text-brand-700 dark:bg-brand-500/15 dark:text-brand-300"><span class="font-semibold">Matched Customers:</span> {{ migrationPreviewSummary.matchedCustomers }}</div>
+              <div class="rounded-lg bg-gray-100 px-3 py-2 dark:bg-gray-800"><span class="font-semibold">New Customers:</span> {{ migrationPreviewSummary.newCustomers }}</div>
+            </div>
+          }
+
+          @if (migrationImportSummary) {
+            @if (!migrationImportSummary.batchFailed) {
+              <div class="mt-3 rounded-lg border border-success-300 bg-success-50 px-3 py-2 text-xs text-success-700 dark:border-success-500/30 dark:bg-success-500/10 dark:text-success-400">
+                Import successful: {{ migrationImportSummary.created }} row(s) created.
+              </div>
+            } @else {
+              <div class="mt-3 rounded-lg border border-error-300 bg-error-50 px-3 py-2 text-xs dark:border-error-500/30 dark:bg-error-500/10">
+                <p class="font-semibold text-error-700 dark:text-error-400">{{ migrationImportSummary.message }}</p>
+                <p class="mt-0.5 text-error-600 dark:text-error-300">
+                  Failed: {{ migrationImportSummary.failed }}
+                  @if (migrationImportSummary.blocked > 0) { &nbsp;· Blocked: {{ migrationImportSummary.blocked }} }
+                  @if (migrationImportSummary.aborted > 0) { &nbsp;· Aborted: {{ migrationImportSummary.aborted }} }
+                  @if (migrationImportSummary.created > 0) {
+                    &nbsp;· <span class="font-semibold text-warning-600 dark:text-warning-400">Already committed: {{ migrationImportSummary.created }}</span>
+                  }
+                </p>
+                @if (migrationImportSummary.failureDetails.length > 0) {
+                  <ul class="mt-2 space-y-0.5 border-t border-error-200 pt-2 dark:border-error-500/20">
+                    @for (detail of migrationImportSummary.failureDetails; track detail.rowNumber) {
+                      <li class="text-error-700 dark:text-error-300">
+                        <span class="font-medium">Row {{ detail.rowNumber }}</span>
+                        <span class="mx-1 text-error-400">·</span>
+                        <span class="capitalize text-gray-600 dark:text-gray-400">[{{ detail.status }}]</span>
+                        {{ detail.message }}
+                      </li>
+                    }
+                  </ul>
+                }
+              </div>
+            }
+          }
+        </div>
+
+        <div class="min-h-0 flex-1 overflow-auto border-t border-gray-200 dark:border-gray-800">
+          <table class="w-full min-w-270">
+            <thead class="sticky top-0 bg-gray-50 dark:bg-gray-900">
+              <tr class="border-b border-gray-200 dark:border-gray-800">
+                <th class="px-3 py-2 text-left text-xs font-semibold text-gray-500 dark:text-gray-400">Select</th>
+                <th class="px-3 py-2 text-left text-xs font-semibold text-gray-500 dark:text-gray-400">Row</th>
+                <th class="px-3 py-2 text-left text-xs font-semibold text-gray-500 dark:text-gray-400">Action</th>
+                <th class="px-3 py-2 text-left text-xs font-semibold text-gray-500 dark:text-gray-400">Customer</th>
+                <th class="px-3 py-2 text-left text-xs font-semibold text-gray-500 dark:text-gray-400">Unit/HP</th>
+                <th class="px-3 py-2 text-left text-xs font-semibold text-gray-500 dark:text-gray-400">Matched Product</th>
+                <th class="px-3 py-2 text-left text-xs font-semibold text-gray-500 dark:text-gray-400">Capacity</th>
+                <th class="px-3 py-2 text-left text-xs font-semibold text-gray-500 dark:text-gray-400">Serials</th>
+                <th class="px-3 py-2 text-left text-xs font-semibold text-gray-500 dark:text-gray-400">Confidence</th>
+                <th class="px-3 py-2 text-left text-xs font-semibold text-gray-500 dark:text-gray-400">Issues</th>
+              </tr>
+            </thead>
+            <tbody>
+              @for (item of migrationPreviewItems; track item.rowNumber) {
+                <tr class="border-b border-gray-100 dark:border-gray-800/70">
+                  <td class="px-3 py-2 text-xs text-gray-700 dark:text-gray-300">
+                    @if (item.confidence === 'high') {
+                      <span class="rounded bg-success-50 px-2 py-0.5 text-[11px] text-success-700 dark:bg-success-500/15 dark:text-success-400">Auto</span>
+                    } @else if (item.confidence === 'medium') {
+                      <input
+                        type="checkbox"
+                        [checked]="isMediumRowSelected(item.rowNumber)"
+                        (change)="toggleMediumRowSelection(item.rowNumber, $any($event.target).checked)"
+                      />
+                    } @else {
+                      <span class="text-gray-400">-</span>
+                    }
+                  </td>
+                  <td class="px-3 py-2 text-xs text-gray-700 dark:text-gray-300">
+                    {{ (item.mergedRowNumbers?.length ?? 0) > 1 ? item.mergedRowNumbers?.join(', ') : item.rowNumber }}
+                  </td>
+                  <td class="px-3 py-2 text-xs text-gray-700 dark:text-gray-300">
+                    <button
+                      type="button"
+                      (click)="openMigrationRowEdit(item)"
+                      [disabled]="isMigrationBranchAssignmentRow(item)"
+                      class="rounded-md border border-brand-300 px-2 py-1 text-[11px] font-medium text-brand-700 hover:bg-brand-50 disabled:cursor-not-allowed disabled:opacity-50 dark:border-brand-500/40 dark:text-brand-300 dark:hover:bg-brand-500/10"
+                    >
+                      {{ isMigrationBranchAssignmentRow(item) ? 'Branch Auto' : (isMigrationRowEdited(item.rowNumber) ? 'Edit (Updated)' : 'Edit') }}
+                    </button>
+                  </td>
+                  <td class="px-3 py-2 text-xs text-gray-700 dark:text-gray-300">{{ $any(item.raw)['customerName'] || $any(item.raw)['CUSTOMER NAME'] || '-' }}</td>
+                  <td class="px-3 py-2 text-xs text-gray-700 dark:text-gray-300">{{ $any(item.raw)['unitHp'] || $any(item.raw)['UNIT/HP'] || '-' }}</td>
+                  <td class="px-3 py-2 text-xs text-gray-700 dark:text-gray-300">
+                    @if ((item.matchedCatalogs?.length ?? 0) > 1) {
+                      @for (cat of item.matchedCatalogs!; track cat.productId) {
+                        <div>{{ cat.productName }}</div>
+                      }
+                    } @else {
+                      {{ item.matchedCatalog?.productName || '-' }}
+                    }
+                  </td>
+                  <td class="px-3 py-2 text-xs text-gray-700 dark:text-gray-300">
+                    @if ((item.matchedCatalogs?.length ?? 0) > 1) {
+                      @for (cat of item.matchedCatalogs!; track cat.productId) {
+                        <div>{{ cat.capacity }}</div>
+                      }
+                    } @else {
+                      {{ item.matchedCatalog?.capacity || '-' }}
+                    }
+                  </td>
+                  <td class="px-3 py-2 text-xs text-gray-700 dark:text-gray-300">
+                    IN: {{ $any(item.raw)['indoorSerial'] || $any(item.raw)['INDOOR SERIAL'] || '-' }}<br />
+                    OUT: {{ $any(item.raw)['outdoorSerial'] || $any(item.raw)['OUTDOOR SERIAL'] || '-' }}
+                  </td>
+                  <td class="px-3 py-2 text-xs">
+                    <span class="rounded-full px-2 py-0.5" [ngClass]="getMigrationConfidenceClass(item.confidence)">{{ item.confidence }}</span>
+                  </td>
+                  <td class="px-3 py-2 text-xs text-gray-700 dark:text-gray-300">
+                    @if (item.issues.length > 0) {
+                      <div class="space-y-1">
+                        @for (issue of item.issues; track $index) {
+                          <div class="leading-4">{{ issue }}</div>
+                        }
+                      </div>
+                    } @else {
+                      -
+                    }
+                  </td>
+                </tr>
+              } @empty {
+                <tr>
+                  <td colspan="10" class="px-3 py-8 text-center text-sm text-gray-500 dark:text-gray-400">Upload a CSV file to preview migration mapping results.</td>
+                </tr>
+              }
+            </tbody>
+          </table>
+        </div>
+
+        <div class="flex items-center justify-end border-t border-gray-200 px-6 py-3 dark:border-gray-800">
+          <button
+            type="button"
+            (click)="importMigrationHighConfidence()"
+            [disabled]="isMigrationImporting || isMigrationPreviewLoading || !migrationPreviewSummary || getImportCandidateCount() === 0"
+            class="rounded-lg border border-success-300 bg-success-500 px-4 py-2 text-sm font-medium text-white transition hover:bg-success-600 disabled:opacity-60"
+          >
+            {{ isMigrationImporting ? 'Importing...' : 'Import ' + getImportCandidateCount() + ' Row(s)' }}
+          </button>
+        </div>
+      </div>
+    </div>
+
+  }
+
   @if (isDrawerOpen) {
     <div class="fixed inset-0 z-100000 bg-gray-900/40" (click)="requestCloseDrawer()"></div>
   }
@@ -185,326 +395,413 @@
     <form class="flex h-full flex-col" (ngSubmit)="saveDesignForm()">
       <div class="flex items-center justify-between border-b border-gray-200 px-6 py-4 dark:border-gray-800">
         <div>
-          <h3 class="text-lg font-semibold text-gray-800 dark:text-white/90">{{ drawerMode === 'create' ? 'Create Sales Order' : 'Update Sales Order' }}</h3>
-          <p class="text-sm text-gray-500 dark:text-gray-400">Standardized layout matching Purchase Order flow.</p>
+          <h3 class="text-lg font-semibold text-gray-800 dark:text-white/90">{{ isMigrationDrawerMode ? 'Edit Migration Payload' : (drawerMode === 'create' ? 'Create Sales Order' : 'Update Sales Order') }}</h3>
+          <p class="text-sm text-gray-500 dark:text-gray-400">{{ isMigrationDrawerMode ? 'Use the standard SO form to correct this migration row payload.' : 'Standardized layout matching Purchase Order flow.' }}</p>
         </div>
         <button type="button" (click)="requestCloseDrawer()" class="rounded-lg border border-gray-300 px-3 py-1.5 text-sm text-gray-600 hover:bg-gray-50 dark:border-gray-700 dark:text-gray-300 dark:hover:bg-gray-800">Close</button>
       </div>
 
       <div class="flex-1 space-y-5 overflow-y-auto px-6 py-5">
+        @if (uiError) {
+          <div class="rounded-lg border border-error-300 bg-error-50 px-4 py-3 text-sm text-error-600 dark:border-error-500/30 dark:bg-error-500/10 dark:text-error-400">
+            {{ uiError }}
+          </div>
+        }
+
         <section class="rounded-xl border border-gray-200 p-4 dark:border-gray-800">
           <h4 class="mb-3 text-sm font-semibold text-gray-700 dark:text-gray-200">Sales Order</h4>
           <div class="grid grid-cols-1 gap-3 md:grid-cols-2">
             <div>
               <label class="mb-1 block text-xs font-medium text-gray-600 dark:text-gray-300">Schedule Date</label>
-              <input type="date" [(ngModel)]="form.scheduleDate" name="scheduleDate" (focus)="openDatePicker($event)" (click)="openDatePicker($event)" class="w-full rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm dark:border-gray-700 dark:bg-gray-900" />
+              <input type="date" [(ngModel)]="form.scheduleDate" name="scheduleDate" [readonly]="form.salesType === 'transfer' && drawerMode === 'edit'" (focus)="openDatePicker($event)" (click)="openDatePicker($event)" class="w-full rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm dark:border-gray-700 dark:bg-gray-900" />
             </div>
             <div>
               <label class="mb-1 block text-xs font-medium text-gray-600 dark:text-gray-300">Sales Type</label>
-              <select [(ngModel)]="form.salesType" name="salesType" class="w-full rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm dark:border-gray-700 dark:bg-gray-900">
-                @for (salesType of salesTypeOptions; track salesType) {
-                  <option [value]="salesType">{{ salesType }}</option>
-                }
-              </select>
+              @if (form.salesType === 'transfer' && drawerMode === 'edit') {
+                <div class="w-full rounded-lg border border-gray-200 bg-gray-50 px-3 py-2 text-sm text-gray-700 dark:border-gray-700 dark:bg-gray-800 dark:text-gray-300">{{ form.salesType }}</div>
+              } @else {
+                <select [(ngModel)]="form.salesType" name="salesType" class="w-full rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm dark:border-gray-700 dark:bg-gray-900">
+                  @for (salesType of salesTypeOptions; track salesType) {
+                    <option [value]="salesType">{{ salesType }}</option>
+                  }
+                </select>
+              }
             </div>
             @if (form.salesType === 'project') {
-              <div>
-                <label class="mb-1 block text-xs font-medium text-gray-600 dark:text-gray-300">Project Code</label>
-                <input type="text" [(ngModel)]="form.projectCode" name="projectCode" placeholder="Enter project code" class="w-full rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm dark:border-gray-700 dark:bg-gray-900" />
-              </div>
-              <div>
-                <label class="mb-1 block text-xs font-medium text-gray-600 dark:text-gray-300">Project Name</label>
-                <input type="text" [(ngModel)]="form.projectName" name="projectName" placeholder="Enter project name" class="w-full rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm dark:border-gray-700 dark:bg-gray-900" />
-              </div>
-            }
-            <div>
-              <label class="mb-1 block text-xs font-medium text-gray-600 dark:text-gray-300">Installer</label>
-              <input type="text" [(ngModel)]="form.installer" name="installer" placeholder="Enter installer" class="w-full rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm dark:border-gray-700 dark:bg-gray-900" />
-            </div>
-            <div class="md:col-span-2">
-              <label class="mb-1 block text-xs font-medium text-gray-600 dark:text-gray-300">Remarks</label>
-              <textarea [(ngModel)]="form.remarks" name="remarks" placeholder="Enter remarks" rows="3" class="w-full rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm dark:border-gray-700 dark:bg-gray-900"></textarea>
-            </div>
-          </div>
-        </section>
-
-        <section class="rounded-xl border border-gray-200 p-4 dark:border-gray-800">
-          <h4 class="mb-3 text-sm font-semibold text-gray-700 dark:text-gray-200">Customer</h4>
-          <div class="mb-3 flex gap-5 text-sm">
-            <label class="inline-flex items-center gap-2 text-gray-700 dark:text-gray-300">
-              <input type="radio" name="customerMode" [value]="'existing'" [(ngModel)]="customerMode" />
-              Existing Customer
-            </label>
-            <label class="inline-flex items-center gap-2 text-gray-700 dark:text-gray-300">
-              <input type="radio" name="customerMode" [value]="'new'" [(ngModel)]="customerMode" />
-              New Customer
-            </label>
-          </div>
-
-          @if (customerMode === 'existing') {
-            <div>
-              <label class="mb-1 block text-xs font-medium text-gray-600 dark:text-gray-300">Existing Customer</label>
-              <div class="relative">
-                <input
-                  type="text"
-                  [ngModel]="customerSearch"
-                  (ngModelChange)="onCustomerSearchChange($event)"
-                  name="customerSearch"
-                  placeholder="Search and select customer"
-                  autocomplete="off"
-                  (focus)="onCustomerComboboxFocus()"
-                  (blur)="onCustomerComboboxBlur()"
-                  class="w-full rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm dark:border-gray-700 dark:bg-gray-900"
-                />
-
-                <input type="hidden" [(ngModel)]="form.customer_id" name="customer_id" required />
-
-                @if (isCustomerDropdownOpen) {
-                  <div class="absolute z-40 mt-1 max-h-56 w-full overflow-y-auto rounded-lg border border-gray-200 bg-white shadow-lg dark:border-gray-700 dark:bg-gray-900">
-                    @if (getFilteredCustomerOptions().length === 0) {
-                      <p class="px-3 py-2 text-xs text-gray-500 dark:text-gray-400">No customers found.</p>
-                    } @else {
-                      @for (customer of getFilteredCustomerOptions(); track customer.id) {
+              <div class="md:col-span-2">
+                <label class="mb-1 block text-xs font-medium text-gray-600 dark:text-gray-300">Select Project</label>
+                <div class="relative">
+                  <input
+                    type="text"
+                    [(ngModel)]="projectSearchInput"
+                    name="projectSearch"
+                    (ngModelChange)="onProjectSearchChange($event)"
+                    placeholder="Search by project code or name..."
+                    [readonly]="!!form.projectId"
+                    class="w-full rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm dark:border-gray-700 dark:bg-gray-900"
+                  />
+                  @if (projectSearchResults.length > 0 && !form.projectId) {
+                    <div class="absolute top-full left-0 right-0 z-10 mt-1 max-h-64 overflow-y-auto rounded-lg border border-gray-300 bg-white shadow-lg dark:border-gray-700 dark:bg-gray-800">
+                      @for (project of projectSearchResults; track project.id) {
                         <button
                           type="button"
-                          (mousedown)="$event.preventDefault()"
-                          (click)="selectCustomer(customer.id)"
-                          class="flex w-full items-center justify-between px-3 py-2 text-left text-sm text-gray-700 hover:bg-gray-50 dark:text-gray-200 dark:hover:bg-gray-800"
+                          (click)="selectProject(project)"
+                          class="w-full px-3 py-2 text-left text-sm hover:bg-blue-50 dark:hover:bg-blue-900"
                         >
-                          <span>{{ customer.name }}</span>
+                          <div class="font-medium text-gray-900 dark:text-white">{{ project.projectCode }} - {{ project.projectName }}</div>
+                          <div class="text-xs text-gray-600 dark:text-gray-400">{{ project.projectType }} | Owner: {{ project.projectOwner }} | SOs: {{ project.relatedSOCount }}</div>
                         </button>
                       }
-                    }
-                  </div>
-                }
+                    </div>
+                  }
+                </div>
               </div>
-              <p class="mt-1 text-xs text-gray-500 dark:text-gray-400">Type customer name and pick one from the list.</p>
-
-              @if (form.customer_id) {
-                <div class="mt-3 grid grid-cols-1 gap-3 md:grid-cols-2">
+              @if (form.projectId) {
+                <div class="md:col-span-2 rounded-lg border border-blue-200 bg-blue-50 p-3 dark:border-blue-900 dark:bg-blue-900/20">
+                  <div class="flex items-center justify-between mb-2">
+                    <h4 class="font-medium text-blue-900 dark:text-blue-100">Selected Project: {{ form.projectCode }}</h4>
+                    <button type="button" (click)="clearProjectSelection()" class="text-xs px-2 py-1 text-blue-600 hover:bg-blue-100 rounded dark:text-blue-400 dark:hover:bg-blue-800">
+                      Change
+                    </button>
+                  </div>
+                  <div class="grid grid-cols-2 gap-2 text-sm mb-3">
+                    <div>
+                      <span class="text-gray-600 dark:text-gray-400">Name:</span>
+                      <span class="ml-1 text-gray-900 dark:text-white">{{ form.projectName }}</span>
+                    </div>
+                    <div>
+                      <span class="text-gray-600 dark:text-gray-400">Type:</span>
+                      <span class="ml-1 text-gray-900 dark:text-white">{{ selectedProjectDetails?.projectType }}</span>
+                    </div>
+                    <div>
+                      <span class="text-gray-600 dark:text-gray-400">Owner:</span>
+                      <span class="ml-1 text-gray-900 dark:text-white">{{ selectedProjectDetails?.projectOwner }}</span>
+                    </div>
+                    <div>
+                      <span class="text-gray-600 dark:text-gray-400">Status:</span>
+                      <span class="ml-1 text-gray-900 dark:text-white">{{ selectedProjectDetails?.projectStatus }}</span>
+                    </div>
+                  </div>
+                  @if (selectedProjectDetails?.relatedSalesOrders && selectedProjectDetails.relatedSalesOrders.length > 0) {
+                    <div class="mt-2 border-t border-blue-200 pt-2 dark:border-blue-800">
+                      <p class="text-xs font-medium text-gray-700 dark:text-gray-300 mb-2">Related Sales Orders ({{ selectedProjectDetails.relatedSalesOrders.length }})</p>
+                      <div class="max-h-32 overflow-y-auto space-y-1">
+                        @for (so of selectedProjectDetails.relatedSalesOrders; track so.id) {
+                          <div class="text-xs p-1 bg-white dark:bg-gray-700 rounded">
+                            <span class="font-medium">{{ so.soNumber }}</span> -
+                            <span>{{ so.customerName }}</span> -
+                            <span class="text-gray-600 dark:text-gray-400">{{ so.status }}</span>
+                          </div>
+                        }
+                      </div>
+                    </div>
+                  }
+                </div>
+              } @else {
+                <div class="md:col-span-2 grid grid-cols-2 gap-3">
                   <div>
-                    <label class="mb-1 block text-xs font-medium text-gray-600 dark:text-gray-300">Customer Name</label>
-                    <input
-                      type="text"
-                      [(ngModel)]="form.customer.name"
-                      name="existing_customer_name"
-                      readonly
-                      class="w-full rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm dark:border-gray-700 dark:bg-gray-900"
-                    />
+                    <label class="mb-1 block text-xs font-medium text-gray-600 dark:text-gray-300">Project Code</label>
+                    <input type="text" [(ngModel)]="form.projectCode" name="projectCode" placeholder="Enter project code" class="w-full rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm dark:border-gray-700 dark:bg-gray-900" />
                   </div>
                   <div>
-                    <label class="mb-1 block text-xs font-medium text-gray-600 dark:text-gray-300">Address</label>
-                    <input
-                      type="text"
-                      [(ngModel)]="form.customer.address"
-                      name="existing_customer_address"
-                      class="w-full rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm dark:border-gray-700 dark:bg-gray-900"
-                    />
-                  </div>
-                  <div>
-                    <label class="mb-1 block text-xs font-medium text-gray-600 dark:text-gray-300">Contact Person</label>
-                    <input
-                      type="text"
-                      [(ngModel)]="form.customer.contact_person"
-                      name="existing_customer_contact_person"
-                      class="w-full rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm dark:border-gray-700 dark:bg-gray-900"
-                    />
-                  </div>
-                  <div>
-                    <label class="mb-1 block text-xs font-medium text-gray-600 dark:text-gray-300">Contact Number</label>
-                    <input
-                      type="text"
-                      [(ngModel)]="form.customer.contact_number"
-                      name="existing_customer_contact_number"
-                      class="w-full rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm dark:border-gray-700 dark:bg-gray-900"
-                    />
-                  </div>
-                  <div>
-                    <label class="mb-1 block text-xs font-medium text-gray-600 dark:text-gray-300">Email</label>
-                    <input
-                      type="email"
-                      [(ngModel)]="form.customer.email"
-                      name="existing_customer_email"
-                      class="w-full rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm dark:border-gray-700 dark:bg-gray-900"
-                    />
-                  </div>
-                  <div>
-                    <label class="mb-1 block text-xs font-medium text-gray-600 dark:text-gray-300">TIN Number</label>
-                    <input
-                      type="text"
-                      [(ngModel)]="form.customer.tin_number"
-                      name="existing_customer_tin_number"
-                      class="w-full rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm dark:border-gray-700 dark:bg-gray-900"
-                    />
+                    <label class="mb-1 block text-xs font-medium text-gray-600 dark:text-gray-300">Project Name</label>
+                    <input type="text" [(ngModel)]="form.projectName" name="projectName" placeholder="Enter project name" class="w-full rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm dark:border-gray-700 dark:bg-gray-900" />
                   </div>
                 </div>
               }
+            }
+            <div>
+              <label class="mb-1 block text-xs font-medium text-gray-600 dark:text-gray-300">Installer</label>
+              <input type="text" [(ngModel)]="form.installer" name="installer" placeholder="Enter installer" [readonly]="form.salesType === 'transfer' && drawerMode === 'edit'" class="w-full rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm dark:border-gray-700 dark:bg-gray-900" />
             </div>
-          } @else {
-            <div class="grid grid-cols-1 gap-3 md:grid-cols-2">
-              <div>
-                <label class="mb-1 block text-xs font-medium text-gray-600 dark:text-gray-300">Customer Name</label>
-                <input type="text" [(ngModel)]="form.customer.name" name="customer_name" placeholder="Enter customer name" class="w-full rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm dark:border-gray-700 dark:bg-gray-900" required />
-              </div>
-              <div>
-                <label class="mb-1 block text-xs font-medium text-gray-600 dark:text-gray-300">Address</label>
-                <input type="text" [(ngModel)]="form.customer.address" name="customer_address" placeholder="Enter address" class="w-full rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm dark:border-gray-700 dark:bg-gray-900" />
-              </div>
-              <div>
-                <label class="mb-1 block text-xs font-medium text-gray-600 dark:text-gray-300">Contact Person</label>
-                <input type="text" [(ngModel)]="form.customer.contact_person" name="customer_contact_person" placeholder="Enter contact person" class="w-full rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm dark:border-gray-700 dark:bg-gray-900" />
-              </div>
-              <div>
-                <label class="mb-1 block text-xs font-medium text-gray-600 dark:text-gray-300">Contact Number</label>
-                <input type="text" [(ngModel)]="form.customer.contact_number" name="customer_contact_number" placeholder="Enter contact number" class="w-full rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm dark:border-gray-700 dark:bg-gray-900" />
-              </div>
-              <div>
-                <label class="mb-1 block text-xs font-medium text-gray-600 dark:text-gray-300">Email</label>
-                <input type="email" [(ngModel)]="form.customer.email" name="customer_email" placeholder="Enter email" class="w-full rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm dark:border-gray-700 dark:bg-gray-900" />
-              </div>
-              <div>
-                <label class="mb-1 block text-xs font-medium text-gray-600 dark:text-gray-300">TIN Number</label>
-                <input type="text" [(ngModel)]="form.customer.tin_number" name="customer_tin_number" placeholder="Enter TIN number" class="w-full rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm dark:border-gray-700 dark:bg-gray-900" />
-              </div>
+            <div class="md:col-span-2">
+              <label class="mb-1 block text-xs font-medium text-gray-600 dark:text-gray-300">Remarks</label>
+              <textarea [(ngModel)]="form.remarks" name="remarks" placeholder="Enter remarks" rows="3" [readonly]="form.salesType === 'transfer' && drawerMode === 'edit'" class="w-full rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm dark:border-gray-700 dark:bg-gray-900"></textarea>
             </div>
-          }
+          </div>
         </section>
 
-        <section class="rounded-xl border border-gray-200 p-4 dark:border-gray-800">
-          <div class="mb-3 flex items-center justify-between">
-            <h4 class="text-sm font-semibold text-gray-700 dark:text-gray-200">Payment Details (Split Payment)</h4>
-            <button type="button" (click)="addPaymentDetail()" class="rounded-lg border border-brand-300 px-3 py-1.5 text-xs font-medium text-brand-700 dark:border-brand-500/40 dark:text-brand-300">
-              Add Payment
-            </button>
-          </div>
+        @if (!(form.salesType === 'transfer' && drawerMode === 'create') && !(form.salesType === 'transfer' && drawerMode === 'edit')) {
+          <section class="rounded-xl border border-gray-200 p-4 dark:border-gray-800">
+            <h4 class="mb-3 text-sm font-semibold text-gray-700 dark:text-gray-200">Customer</h4>
+            <div class="mb-3 flex gap-5 text-sm">
+              <label class="inline-flex items-center gap-2 text-gray-700 dark:text-gray-300">
+                <input type="radio" name="customerMode" [value]="'existing'" [(ngModel)]="customerMode" />
+                Existing Customer
+              </label>
+              <label class="inline-flex items-center gap-2 text-gray-700 dark:text-gray-300">
+                <input type="radio" name="customerMode" [value]="'new'" [(ngModel)]="customerMode" />
+                New Customer
+              </label>
+            </div>
 
-          <div class="space-y-4">
-            @for (payment of form.paymentDetails; track $index; let pIndex = $index) {
-              <div class="rounded-lg border border-gray-200 p-3 dark:border-gray-800">
-                <div class="mb-3 flex items-center justify-between">
-                  <p class="text-xs font-medium uppercase tracking-wide text-gray-500 dark:text-gray-400">Payment {{ pIndex + 1 }}</p>
-                  <button type="button" (click)="removePaymentDetail(pIndex)" [disabled]="form.paymentDetails.length === 1" class="rounded-lg border border-gray-300 px-2 py-1 text-xs text-gray-600 disabled:opacity-50 dark:border-gray-700 dark:text-gray-300">
-                    Remove
-                  </button>
-                </div>
+            @if (customerMode === 'existing') {
+              <div>
+                <label class="mb-1 block text-xs font-medium text-gray-600 dark:text-gray-300">Existing Customer</label>
+                <div class="relative">
+                  <input
+                    type="text"
+                    [ngModel]="customerSearch"
+                    (ngModelChange)="onCustomerSearchChange($event)"
+                    name="customerSearch"
+                    placeholder="Search and select customer"
+                    autocomplete="off"
+                    (focus)="onCustomerComboboxFocus()"
+                    (blur)="onCustomerComboboxBlur()"
+                    class="w-full rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm dark:border-gray-700 dark:bg-gray-900"
+                  />
 
-                <div class="grid grid-cols-1 gap-3 md:grid-cols-2">
-                  <div>
-                    <label class="mb-1 block text-xs font-medium text-gray-600 dark:text-gray-300">Method</label>
-                    <select [(ngModel)]="payment.method" [name]="'payment_method_' + pIndex" (ngModelChange)="onPaymentMethodChange(pIndex)" class="w-full rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm dark:border-gray-700 dark:bg-gray-900">
-                      @for (method of paymentMethodOptions; track method) {
-                        <option [value]="method">{{ method }}</option>
+                  <input type="hidden" [(ngModel)]="form.customer_id" name="customer_id" required />
+
+                  @if (isCustomerDropdownOpen) {
+                    <div class="absolute z-40 mt-1 max-h-56 w-full overflow-y-auto rounded-lg border border-gray-200 bg-white shadow-lg dark:border-gray-700 dark:bg-gray-900">
+                      @if (getFilteredCustomerOptions().length === 0) {
+                        <p class="px-3 py-2 text-xs text-gray-500 dark:text-gray-400">No customers found.</p>
+                      } @else {
+                        @for (customer of getFilteredCustomerOptions(); track customer.id) {
+                          <button
+                            type="button"
+                            (mousedown)="$event.preventDefault()"
+                            (click)="selectCustomer(customer.id)"
+                            class="flex w-full items-center justify-between px-3 py-2 text-left text-sm text-gray-700 hover:bg-gray-50 dark:text-gray-200 dark:hover:bg-gray-800"
+                          >
+                            <span>{{ customer.name }}</span>
+                          </button>
+                        }
                       }
-                    </select>
-                  </div>
-                  <div>
-                    <label class="mb-1 block text-xs font-medium text-gray-600 dark:text-gray-300">Status</label>
-                    <div class="w-full rounded-lg border border-gray-300 bg-gray-50 px-3 py-2 text-sm dark:border-gray-700 dark:bg-gray-800">
-                      <span
-                        class="inline-flex rounded-full px-2.5 py-1 text-xs font-semibold"
-                        [ngClass]="{
-                          'bg-success-50 text-success-700 dark:bg-success-500/15 dark:text-success-400': (payment.status || '').toLowerCase() === 'paid',
-                          'bg-error-50 text-error-700 dark:bg-error-500/15 dark:text-error-400': (payment.status || '').toLowerCase() === 'overdue',
-                          'bg-warning-50 text-warning-700 dark:bg-warning-500/15 dark:text-warning-400': (payment.status || '').toLowerCase() === 'unpaid',
-                          'bg-gray-100 text-gray-700 dark:bg-gray-700 dark:text-gray-300': !['paid', 'unpaid', 'overdue'].includes((payment.status || '').toLowerCase())
-                        }"
-                      >
-                        {{ (payment.status || 'unpaid') | uppercase }}
-                      </span>
-                    </div>
-                  </div>
-                  <div>
-                    <label class="mb-1 block text-xs font-medium text-gray-600 dark:text-gray-300">Amount</label>
-                    <input type="number" [(ngModel)]="payment.amount" [name]="'payment_amount_' + pIndex" placeholder="0.00" readonly class="w-full rounded-lg border border-gray-300 bg-gray-50 px-3 py-2 text-sm dark:border-gray-700 dark:bg-gray-800" />
-                  </div>
-                  @if (shouldShowPaymentField(payment.method, 'terms')) {
-                    <div>
-                      <label class="mb-1 block text-xs font-medium text-gray-600 dark:text-gray-300">Terms (Days)</label>
-                      <input type="number" [(ngModel)]="payment.terms" (ngModelChange)="onTermsChanged(pIndex)" [name]="'payment_terms_' + pIndex" placeholder="30" class="w-full rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm dark:border-gray-700 dark:bg-gray-900" />
                     </div>
                   }
-                  @if (shouldShowPaymentField(payment.method, 'termsDueDate')) {
+                </div>
+                <p class="mt-1 text-xs text-gray-500 dark:text-gray-400">Type customer name and pick one from the list.</p>
+
+                @if (form.customer_id) {
+                  <div class="mt-3 grid grid-cols-1 gap-3 md:grid-cols-2">
                     <div>
-                      <div class="mb-1 flex items-center justify-between">
-                        <label class="block text-xs font-medium text-gray-600 dark:text-gray-300">Terms Due Date</label>
-                        <button
-                          type="button"
-                          (click)="toggleAutoTermsDueDate(pIndex)"
-                          class="rounded border border-gray-300 px-2 py-0.5 text-[11px] text-gray-600 dark:border-gray-700 dark:text-gray-300"
-                        >
-                          {{ isAutoTermsDueDate(pIndex) ? 'Auto' : 'Manual' }}
-                        </button>
-                      </div>
+                      <label class="mb-1 block text-xs font-medium text-gray-600 dark:text-gray-300">Customer Name</label>
                       <input
-                        type="date"
-                        [(ngModel)]="payment.termsDueDate"
-                        (ngModelChange)="onPaymentDateFieldChange()"
-                        [name]="'payment_terms_due_' + pIndex"
-                        (focus)="openDatePicker($event)"
-                        (click)="openDatePicker($event)"
+                        type="text"
+                        [(ngModel)]="form.customer.name"
+                        name="existing_customer_name"
+                        readonly
                         class="w-full rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm dark:border-gray-700 dark:bg-gray-900"
                       />
                     </div>
-                  }
-                  @if (shouldShowPaymentField(payment.method, 'referenceNo')) {
                     <div>
-                      <label class="mb-1 block text-xs font-medium text-gray-600 dark:text-gray-300">Reference No</label>
-                      <input type="text" [(ngModel)]="payment.referenceNo" [name]="'payment_reference_' + pIndex" placeholder="Reference number" class="w-full rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm dark:border-gray-700 dark:bg-gray-900" />
+                      <label class="mb-1 block text-xs font-medium text-gray-600 dark:text-gray-300">Address</label>
+                      <input
+                        type="text"
+                        [(ngModel)]="form.customer.address"
+                        name="existing_customer_address"
+                        class="w-full rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm dark:border-gray-700 dark:bg-gray-900"
+                      />
                     </div>
-                  }
-                  @if (shouldShowPaymentField(payment.method, 'paymentDate')) {
                     <div>
-                      <label class="mb-1 block text-xs font-medium text-gray-600 dark:text-gray-300">Payment Date</label>
-                      <input type="date" [(ngModel)]="payment.paymentDate" (ngModelChange)="onPaymentDateFieldChange()" [name]="'payment_date_' + pIndex" (focus)="openDatePicker($event)" (click)="openDatePicker($event)" class="w-full rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm dark:border-gray-700 dark:bg-gray-900" />
+                      <label class="mb-1 block text-xs font-medium text-gray-600 dark:text-gray-300">Contact Person</label>
+                      <input
+                        type="text"
+                        [(ngModel)]="form.customer.contact_person"
+                        name="existing_customer_contact_person"
+                        class="w-full rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm dark:border-gray-700 dark:bg-gray-900"
+                      />
                     </div>
-                  }
-                  @if (shouldShowPaymentField(payment.method, 'issuedBy')) {
                     <div>
-                      <label class="mb-1 block text-xs font-medium text-gray-600 dark:text-gray-300">Issued By</label>
-                      <input type="text" [(ngModel)]="payment.issuedBy" [name]="'payment_issued_by_' + pIndex" placeholder="Issuer" class="w-full rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm dark:border-gray-700 dark:bg-gray-900" />
+                      <label class="mb-1 block text-xs font-medium text-gray-600 dark:text-gray-300">Contact Number</label>
+                      <input
+                        type="text"
+                        [(ngModel)]="form.customer.contact_number"
+                        name="existing_customer_contact_number"
+                        class="w-full rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm dark:border-gray-700 dark:bg-gray-900"
+                      />
                     </div>
-                  }
-                  @if (shouldShowPaymentField(payment.method, 'ccCharge')) {
                     <div>
-                      <label class="mb-1 block text-xs font-medium text-gray-600 dark:text-gray-300">CC Charge</label>
-                      <input type="text" [(ngModel)]="payment.ccCharge" [name]="'payment_cc_charge_' + pIndex" placeholder="Card charge" class="w-full rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm dark:border-gray-700 dark:bg-gray-900" />
+                      <label class="mb-1 block text-xs font-medium text-gray-600 dark:text-gray-300">Email</label>
+                      <input
+                        type="email"
+                        [(ngModel)]="form.customer.email"
+                        name="existing_customer_email"
+                        class="w-full rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm dark:border-gray-700 dark:bg-gray-900"
+                      />
                     </div>
-                  }
-                  @if (shouldShowPaymentField(payment.method, 'checkNo')) {
                     <div>
-                      <label class="mb-1 block text-xs font-medium text-gray-600 dark:text-gray-300">Check No</label>
-                      <input type="text" [(ngModel)]="payment.checkNo" [name]="'payment_check_no_' + pIndex" placeholder="Check number" class="w-full rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm dark:border-gray-700 dark:bg-gray-900" />
+                      <label class="mb-1 block text-xs font-medium text-gray-600 dark:text-gray-300">TIN Number</label>
+                      <input
+                        type="text"
+                        [(ngModel)]="form.customer.tin_number"
+                        name="existing_customer_tin_number"
+                        class="w-full rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm dark:border-gray-700 dark:bg-gray-900"
+                      />
                     </div>
-                  }
-                  @if (shouldShowPaymentField(payment.method, 'bankName')) {
-                    <div>
-                      <label class="mb-1 block text-xs font-medium text-gray-600 dark:text-gray-300">Bank Name</label>
-                      <input type="text" [(ngModel)]="payment.bankName" [name]="'payment_bank_name_' + pIndex" placeholder="Bank" class="w-full rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm dark:border-gray-700 dark:bg-gray-900" />
-                    </div>
-                  }
-                  @if (shouldShowPaymentField(payment.method, 'bankAccount')) {
-                    <div>
-                      <label class="mb-1 block text-xs font-medium text-gray-600 dark:text-gray-300">Bank Account</label>
-                      <input type="text" [(ngModel)]="payment.bankAccount" [name]="'payment_bank_account_' + pIndex" placeholder="Account number" class="w-full rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm dark:border-gray-700 dark:bg-gray-900" />
-                    </div>
-                  }
-                  @if (shouldShowPaymentField(payment.method, 'postDated')) {
-                    <div>
-                      <label class="mb-1 block text-xs font-medium text-gray-600 dark:text-gray-300">Post Dated</label>
-                      <input type="date" [(ngModel)]="payment.postDated" (ngModelChange)="onPaymentDateFieldChange()" [name]="'payment_post_dated_' + pIndex" (focus)="openDatePicker($event)" (click)="openDatePicker($event)" class="w-full rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm dark:border-gray-700 dark:bg-gray-900" />
-                    </div>
-                  }
-                  @if (shouldShowPaymentField(payment.method, 'downPayment')) {
-                    <div>
-                      <label class="mb-1 block text-xs font-medium text-gray-600 dark:text-gray-300">Down Payment</label>
-                      <input type="number" [(ngModel)]="payment.downPayment" [name]="'payment_down_payment_' + pIndex" placeholder="0.00" class="w-full rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm dark:border-gray-700 dark:bg-gray-900" />
-                    </div>
-                  }
                   </div>
+                }
+              </div>
+            } @else {
+              <div class="grid grid-cols-1 gap-3 md:grid-cols-2">
+                <div>
+                  <label class="mb-1 block text-xs font-medium text-gray-600 dark:text-gray-300">Customer Name</label>
+                  <input type="text" [(ngModel)]="form.customer.name" name="customer_name" placeholder="Enter customer name" class="w-full rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm dark:border-gray-700 dark:bg-gray-900" required />
                 </div>
+                <div>
+                  <label class="mb-1 block text-xs font-medium text-gray-600 dark:text-gray-300">Address</label>
+                  <input type="text" [(ngModel)]="form.customer.address" name="customer_address" placeholder="Enter address" class="w-full rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm dark:border-gray-700 dark:bg-gray-900" />
+                </div>
+                <div>
+                  <label class="mb-1 block text-xs font-medium text-gray-600 dark:text-gray-300">Contact Person</label>
+                  <input type="text" [(ngModel)]="form.customer.contact_person" name="customer_contact_person" placeholder="Enter contact person" class="w-full rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm dark:border-gray-700 dark:bg-gray-900" />
+                </div>
+                <div>
+                  <label class="mb-1 block text-xs font-medium text-gray-600 dark:text-gray-300">Contact Number</label>
+                  <input type="text" [(ngModel)]="form.customer.contact_number" name="customer_contact_number" placeholder="Enter contact number" class="w-full rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm dark:border-gray-700 dark:bg-gray-900" />
+                </div>
+                <div>
+                  <label class="mb-1 block text-xs font-medium text-gray-600 dark:text-gray-300">Email</label>
+                  <input type="email" [(ngModel)]="form.customer.email" name="customer_email" placeholder="Enter email" class="w-full rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm dark:border-gray-700 dark:bg-gray-900" />
+                </div>
+                <div>
+                  <label class="mb-1 block text-xs font-medium text-gray-600 dark:text-gray-300">TIN Number</label>
+                  <input type="text" [(ngModel)]="form.customer.tin_number" name="customer_tin_number" placeholder="Enter TIN number" class="w-full rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm dark:border-gray-700 dark:bg-gray-900" />
+                </div>
+              </div>
             }
-          </div>
-        </section>
+          </section>
+        }
+
+        @if (!(form.salesType === 'transfer' && drawerMode === 'create') && !(form.salesType === 'transfer' && drawerMode === 'edit')) {
+          <section class="rounded-xl border border-gray-200 p-4 dark:border-gray-800">
+            <div class="mb-3 flex items-center justify-between">
+              <h4 class="text-sm font-semibold text-gray-700 dark:text-gray-200">Payment Details (Split Payment)</h4>
+              <button type="button" (click)="addPaymentDetail()" class="rounded-lg border border-brand-300 px-3 py-1.5 text-xs font-medium text-brand-700 dark:border-brand-500/40 dark:text-brand-300">
+                Add Payment
+              </button>
+            </div>
+
+            <div class="space-y-4">
+              @for (payment of form.paymentDetails; track $index; let pIndex = $index) {
+                <div class="rounded-lg border border-gray-200 p-3 dark:border-gray-800">
+                  <div class="mb-3 flex items-center justify-between">
+                    <p class="text-xs font-medium uppercase tracking-wide text-gray-500 dark:text-gray-400">Payment {{ pIndex + 1 }}</p>
+                    <button type="button" (click)="removePaymentDetail(pIndex)" [disabled]="form.paymentDetails.length === 1" class="rounded-lg border border-gray-300 px-2 py-1 text-xs text-gray-600 disabled:opacity-50 dark:border-gray-700 dark:text-gray-300">
+                      Remove
+                    </button>
+                  </div>
+
+                  <div class="grid grid-cols-1 gap-3 md:grid-cols-2">
+                    <div>
+                      <label class="mb-1 block text-xs font-medium text-gray-600 dark:text-gray-300">Method</label>
+                      <select [(ngModel)]="payment.method" [name]="'payment_method_' + pIndex" (ngModelChange)="onPaymentMethodChange(pIndex)" class="w-full rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm dark:border-gray-700 dark:bg-gray-900">
+                        @for (method of paymentMethodOptions; track method) {
+                          <option [value]="method">{{ method }}</option>
+                        }
+                      </select>
+                    </div>
+                    <div>
+                      <label class="mb-1 block text-xs font-medium text-gray-600 dark:text-gray-300">Status</label>
+                      <div class="w-full rounded-lg border border-gray-300 bg-gray-50 px-3 py-2 text-sm dark:border-gray-700 dark:bg-gray-800">
+                        <span
+                          class="inline-flex rounded-full px-2.5 py-1 text-xs font-semibold"
+                          [ngClass]="{
+                            'bg-success-50 text-success-700 dark:bg-success-500/15 dark:text-success-400': (payment.status || '').toLowerCase() === 'paid',
+                            'bg-error-50 text-error-700 dark:bg-error-500/15 dark:text-error-400': (payment.status || '').toLowerCase() === 'overdue',
+                            'bg-warning-50 text-warning-700 dark:bg-warning-500/15 dark:text-warning-400': (payment.status || '').toLowerCase() === 'unpaid',
+                            'bg-gray-100 text-gray-700 dark:bg-gray-700 dark:text-gray-300': !['paid', 'unpaid', 'overdue'].includes((payment.status || '').toLowerCase())
+                          }"
+                        >
+                          {{ (payment.status || 'unpaid') | uppercase }}
+                        </span>
+                      </div>
+                    </div>
+                    <div>
+                      <label class="mb-1 block text-xs font-medium text-gray-600 dark:text-gray-300">Amount</label>
+                      <input type="number" [(ngModel)]="payment.amount" [name]="'payment_amount_' + pIndex" placeholder="0.00" readonly class="w-full rounded-lg border border-gray-300 bg-gray-50 px-3 py-2 text-sm dark:border-gray-700 dark:bg-gray-800" />
+                    </div>
+                    @if (shouldShowPaymentField(payment.method, 'terms')) {
+                      <div>
+                        <label class="mb-1 block text-xs font-medium text-gray-600 dark:text-gray-300">Terms (Days)</label>
+                        <input type="number" [(ngModel)]="payment.terms" (ngModelChange)="onTermsChanged(pIndex)" [name]="'payment_terms_' + pIndex" placeholder="30" class="w-full rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm dark:border-gray-700 dark:bg-gray-900" />
+                      </div>
+                    }
+                    @if (shouldShowPaymentField(payment.method, 'termsDueDate')) {
+                      <div>
+                        <div class="mb-1 flex items-center justify-between">
+                          <label class="block text-xs font-medium text-gray-600 dark:text-gray-300">Terms Due Date</label>
+                          <button
+                            type="button"
+                            (click)="toggleAutoTermsDueDate(pIndex)"
+                            class="rounded border border-gray-300 px-2 py-0.5 text-[11px] text-gray-600 dark:border-gray-700 dark:text-gray-300"
+                          >
+                            {{ isAutoTermsDueDate(pIndex) ? 'Auto' : 'Manual' }}
+                          </button>
+                        </div>
+                        <input
+                          type="date"
+                          [(ngModel)]="payment.termsDueDate"
+                          (ngModelChange)="onPaymentDateFieldChange()"
+                          [name]="'payment_terms_due_' + pIndex"
+                          (focus)="openDatePicker($event)"
+                          (click)="openDatePicker($event)"
+                          class="w-full rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm dark:border-gray-700 dark:bg-gray-900"
+                        />
+                      </div>
+                    }
+                    @if (shouldShowPaymentField(payment.method, 'referenceNo')) {
+                      <div>
+                        <label class="mb-1 block text-xs font-medium text-gray-600 dark:text-gray-300">Reference No</label>
+                        <input type="text" [(ngModel)]="payment.referenceNo" [name]="'payment_reference_' + pIndex" placeholder="Reference number" class="w-full rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm dark:border-gray-700 dark:bg-gray-900" />
+                      </div>
+                    }
+                    @if (shouldShowPaymentField(payment.method, 'paymentDate')) {
+                      <div>
+                        <label class="mb-1 block text-xs font-medium text-gray-600 dark:text-gray-300">Payment Date</label>
+                        <input type="date" [(ngModel)]="payment.paymentDate" (ngModelChange)="onPaymentDateFieldChange()" [name]="'payment_date_' + pIndex" (focus)="openDatePicker($event)" (click)="openDatePicker($event)" class="w-full rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm dark:border-gray-700 dark:bg-gray-900" />
+                      </div>
+                    }
+                    @if (shouldShowPaymentField(payment.method, 'issuedBy')) {
+                      <div>
+                        <label class="mb-1 block text-xs font-medium text-gray-600 dark:text-gray-300">Issued By</label>
+                        <input type="text" [(ngModel)]="payment.issuedBy" [name]="'payment_issued_by_' + pIndex" placeholder="Issuer" class="w-full rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm dark:border-gray-700 dark:bg-gray-900" />
+                      </div>
+                    }
+                    @if (shouldShowPaymentField(payment.method, 'ccCharge')) {
+                      <div>
+                        <label class="mb-1 block text-xs font-medium text-gray-600 dark:text-gray-300">CC Charge</label>
+                        <input type="text" [(ngModel)]="payment.ccCharge" [name]="'payment_cc_charge_' + pIndex" placeholder="Card charge" class="w-full rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm dark:border-gray-700 dark:bg-gray-900" />
+                      </div>
+                    }
+                    @if (shouldShowPaymentField(payment.method, 'checkNo')) {
+                      <div>
+                        <label class="mb-1 block text-xs font-medium text-gray-600 dark:text-gray-300">Check No</label>
+                        <input type="text" [(ngModel)]="payment.checkNo" [name]="'payment_check_no_' + pIndex" placeholder="Check number" class="w-full rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm dark:border-gray-700 dark:bg-gray-900" />
+                      </div>
+                    }
+                    @if (shouldShowPaymentField(payment.method, 'bankName')) {
+                      <div>
+                        <label class="mb-1 block text-xs font-medium text-gray-600 dark:text-gray-300">Bank Name</label>
+                        <input type="text" [(ngModel)]="payment.bankName" [name]="'payment_bank_name_' + pIndex" placeholder="Bank" class="w-full rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm dark:border-gray-700 dark:bg-gray-900" />
+                      </div>
+                    }
+                    @if (shouldShowPaymentField(payment.method, 'bankAccount')) {
+                      <div>
+                        <label class="mb-1 block text-xs font-medium text-gray-600 dark:text-gray-300">Bank Account</label>
+                        <input type="text" [(ngModel)]="payment.bankAccount" [name]="'payment_bank_account_' + pIndex" placeholder="Account number" class="w-full rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm dark:border-gray-700 dark:bg-gray-900" />
+                      </div>
+                    }
+                    @if (shouldShowPaymentField(payment.method, 'postDated')) {
+                      <div>
+                        <label class="mb-1 block text-xs font-medium text-gray-600 dark:text-gray-300">Post Dated</label>
+                        <input type="date" [(ngModel)]="payment.postDated" (ngModelChange)="onPaymentDateFieldChange()" [name]="'payment_post_dated_' + pIndex" (focus)="openDatePicker($event)" (click)="openDatePicker($event)" class="w-full rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm dark:border-gray-700 dark:bg-gray-900" />
+                      </div>
+                    }
+                    @if (shouldShowPaymentField(payment.method, 'downPayment')) {
+                      <div>
+                        <label class="mb-1 block text-xs font-medium text-gray-600 dark:text-gray-300">Down Payment</label>
+                        <input type="number" [(ngModel)]="payment.downPayment" [name]="'payment_down_payment_' + pIndex" placeholder="0.00" class="w-full rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm dark:border-gray-700 dark:bg-gray-900" />
+                      </div>
+                    }
+                    </div>
+                  </div>
+              }
+            </div>
+          </section>
+        }
 
         @if (!['service', 'concern'].includes(form.salesType)) {
           <section class="rounded-xl border border-gray-200 p-4 dark:border-gray-800">
@@ -542,12 +839,40 @@
               <div class="grid grid-cols-1 gap-3 md:grid-cols-2">
                 <div>
                   <label class="mb-1 block text-xs font-medium text-gray-600 dark:text-gray-300">Product Name</label>
-                  <select [(ngModel)]="activeItem.productId" [name]="'productId_' + activeProductTabIndex" (ngModelChange)="onProductChanged(activeProductTabIndex)" class="w-full rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm dark:border-gray-700 dark:bg-gray-900" required>
-                    <option value="">Select Product</option>
-                    @for (product of catalogProducts; track product.id) {
-                      <option [value]="product.id">{{ product.name }}{{ product.brandName ? ' (' + product.brandName + ')' : '' }}</option>
+                  <div class="relative">
+                    <input
+                      type="text"
+                      [ngModel]="productSearchQuery"
+                      (ngModelChange)="onProductSearchChange($event)"
+                      [name]="'productSearch_' + activeProductTabIndex"
+                      placeholder="Search product..."
+                      autocomplete="off"
+                      (focus)="onProductSearchFocus()"
+                      (blur)="onProductSearchBlur()"
+                      class="w-full rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm dark:border-gray-700 dark:bg-gray-900"
+                      required
+                    />
+                    <input type="hidden" [(ngModel)]="activeItem.productId" [name]="'productId_' + activeProductTabIndex" required />
+
+                    @if (isProductDropdownOpen) {
+                      <div class="absolute z-40 mt-1 max-h-56 w-full overflow-y-auto rounded-lg border border-gray-200 bg-white shadow-lg dark:border-gray-700 dark:bg-gray-900">
+                        @if (getFilteredCatalogProducts().length === 0) {
+                          <p class="px-3 py-2 text-xs text-gray-500 dark:text-gray-400">No products found.</p>
+                        } @else {
+                          @for (product of getFilteredCatalogProducts(); track product.id) {
+                            <button
+                              type="button"
+                              (mousedown)="$event.preventDefault()"
+                              (click)="selectProductFromSearch(product, activeProductTabIndex)"
+                              class="flex w-full items-center px-3 py-2 text-left text-sm text-gray-700 hover:bg-gray-50 dark:text-gray-200 dark:hover:bg-gray-800"
+                            >
+                              <span>{{ product.name }}{{ product.brandName ? ' (' + product.brandName + ')' : '' }}</span>
+                            </button>
+                          }
+                        }
+                      </div>
                     }
-                  </select>
+                  </div>
                 </div>
 
                 <div>
@@ -705,6 +1030,7 @@
             <input type="number" [(ngModel)]="form.totalAmount" name="computedTotalAmount" readonly class="w-full rounded-lg border border-gray-300 bg-gray-50 px-3 py-2 text-sm dark:border-gray-700 dark:bg-gray-800" />
           </div>
         </section>
+        }
 
         @if (form.salesType === 'transfer') {
           <section class="rounded-xl border border-gray-200 p-4 dark:border-gray-800">
@@ -733,17 +1059,26 @@
               </div>
               <div>
                 <label class="mb-1 block text-xs font-medium text-gray-600 dark:text-gray-300">Transfer Date</label>
-                <input type="date" [(ngModel)]="form.transferDetails.transferDate" name="transferDate" class="w-full rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm dark:border-gray-700 dark:bg-gray-900" />
+                <input type="date" [(ngModel)]="form.transferDetails.transferDate" name="transferDate" (focus)="openDatePicker($event)" (click)="openDatePicker($event)" class="w-full rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm dark:border-gray-700 dark:bg-gray-900" />
               </div>
               <div>
                 <label class="mb-1 block text-xs font-medium text-gray-600 dark:text-gray-300">Expected Delivery</label>
-                <input type="date" [(ngModel)]="form.transferDetails.expectedDeliveryDate" name="expectedDeliveryDate" class="w-full rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm dark:border-gray-700 dark:bg-gray-900" />
+                <input type="date" [(ngModel)]="form.transferDetails.expectedDeliveryDate" name="expectedDeliveryDate" (focus)="openDatePicker($event)" (click)="openDatePicker($event)" class="w-full rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm dark:border-gray-700 dark:bg-gray-900" />
               </div>
               <div>
                 <label class="mb-1 block text-xs font-medium text-gray-600 dark:text-gray-300">Actual Delivery</label>
-                <input type="date" [(ngModel)]="form.transferDetails.actualDeliveryDate" name="actualDeliveryDate" class="w-full rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm dark:border-gray-700 dark:bg-gray-900" />
+                <input type="date" [(ngModel)]="form.transferDetails.actualDeliveryDate" name="actualDeliveryDate" (focus)="openDatePicker($event)" (click)="openDatePicker($event)" class="w-full rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm dark:border-gray-700 dark:bg-gray-900" />
               </div>
               <div>
+                <label class="mb-1 block text-xs font-medium text-gray-600 dark:text-gray-300">Receiver Name</label>
+                <select [(ngModel)]="form.transferDetails.receiverName" name="receiverName" class="w-full rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm dark:border-gray-700 dark:bg-gray-900">
+                  <option value="">Select receiver</option>
+                  @for (user of receiverOptions; track user.id) {
+                    <option [value]="user.fullname">{{ user.fullname }}</option>
+                  }
+                </select>
+              </div>
+              <div class="md:col-span-2">
                 <label class="mb-1 block text-xs font-medium text-gray-600 dark:text-gray-300">Transfer Notes</label>
                 <textarea [(ngModel)]="form.transferDetails.transferNotes" name="transferNotes" rows="3" class="w-full rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm dark:border-gray-700 dark:bg-gray-900"></textarea>
               </div>
@@ -821,13 +1156,33 @@
                 <textarea [(ngModel)]="form.concernDetails.concernDescription" name="concernDescription" rows="3" class="w-full rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm dark:border-gray-700 dark:bg-gray-900"></textarea>
               </div>
               <div>
-                <label class="mb-1 block text-xs font-medium text-gray-600 dark:text-gray-300">Status</label>
-                <input type="text" [(ngModel)]="form.concernDetails.concernStatus" name="concernStatus" class="w-full rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm dark:border-gray-700 dark:bg-gray-900" />
+                <label class="mb-1 block text-xs font-medium text-gray-600 dark:text-gray-300">Service/Concern Status</label>
+                <select [(ngModel)]="form.concernDetails.concernStatus" name="concernStatus" class="w-full rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm dark:border-gray-700 dark:bg-gray-900">
+                  <option value="">Select Status</option>
+                  <option value="in-progress">In Progress</option>
+                  <option value="reschedule">Reschedule</option>
+                  <option value="pulled-out">Pulled Out</option>
+                  <option value="warranty">Warranty</option>
+                  <option value="void-warranty">Void Warranty</option>
+                  <option value="complete">Complete</option>
+                </select>
               </div>
               <div>
                 <label class="mb-1 block text-xs font-medium text-gray-600 dark:text-gray-300">Priority</label>
-                <input type="text" [(ngModel)]="form.concernDetails.priority" name="priority" class="w-full rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm dark:border-gray-700 dark:bg-gray-900" />
+                <select [(ngModel)]="form.concernDetails.priority" name="priority" class="w-full rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm dark:border-gray-700 dark:bg-gray-900">
+                  <option value="">Select Priority</option>
+                  <option value="low">Low</option>
+                  <option value="medium">Medium</option>
+                  <option value="high">High</option>
+                  <option value="urgent">Urgent</option>
+                </select>
               </div>
+              @if (form.concernDetails.concernStatus === 'warranty') {
+                <div class="md:col-span-2">
+                  <label class="mb-1 block text-xs font-medium text-yellow-600 dark:text-yellow-400">âš  Warranty Serial Numbers <span class="text-gray-400 font-normal">(one per line â€” flagged yellow in costing reports)</span></label>
+                  <textarea [(ngModel)]="form.concernDetails.warrantySerials" name="warrantySerials" rows="3" placeholder="Enter serial numbers under warranty, one per line" class="w-full rounded-lg border border-yellow-400 bg-yellow-50 px-3 py-2 text-sm dark:border-yellow-600 dark:bg-yellow-900/20"></textarea>
+                </div>
+              }
               <div class="md:col-span-2">
                 <label class="mb-1 block text-xs font-medium text-gray-600 dark:text-gray-300">Resolution Notes</label>
                 <textarea [(ngModel)]="form.concernDetails.resolutionNotes" name="resolutionNotes" rows="2" class="w-full rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm dark:border-gray-700 dark:bg-gray-900"></textarea>
@@ -839,8 +1194,6 @@
             </div>
           </section>
         }
-
-      }
 
         @if (drawerMode === 'edit') {
           <section class="rounded-xl border border-gray-200 p-4 dark:border-gray-800">
@@ -879,7 +1232,7 @@
           </section>
         }
 
-        @if (['sales and service', 'service'].includes(form.salesType)) {
+        @if (['sales and service', 'service', 'concern'].includes(form.salesType)) {
           <section class="rounded-xl border border-gray-200 p-4 dark:border-gray-800">
             <div class="mb-3 flex items-center justify-between">
               <h4 class="text-sm font-semibold text-gray-700 dark:text-gray-200">Sevice Details</h4>
@@ -965,32 +1318,154 @@
 
       <div class="flex items-center justify-end gap-3 border-t border-gray-200 px-6 py-4 dark:border-gray-800">
         <button type="button" (click)="requestCloseDrawer()" class="rounded-lg border border-gray-300 px-4 py-2 text-sm text-gray-700 dark:border-gray-700 dark:text-gray-300">Cancel</button>
-        @if (drawerMode === 'edit') {
+        @if (drawerMode === 'edit' && !isMigrationDrawerMode) {
           <button
             type="button"
             (click)="printDeliveryReceiptFromDrawer()"
-              [disabled]="isSubmitting || isRemitting || !editingSalesId || printingOrderIds.has(editingSalesId)"
+              [disabled]="isSubmitting || isRemitting || isSendingForDelivery || !editingSalesId || printingOrderIds.has(editingSalesId)"
             class="rounded-lg border border-brand-300 px-4 py-2 text-sm font-medium text-brand-700 transition hover:bg-brand-50 disabled:opacity-60 dark:border-brand-500/40 dark:text-brand-300 dark:hover:bg-brand-500/10"
           >
               {{ editingSalesId && printingOrderIds.has(editingSalesId) ? 'Printing...' : 'Print DR' }}
           </button>
+          @if (canSendForDeliveryFromDrawer()) {
+            <button
+              type="button"
+              (click)="sendForDelivery()"
+              [disabled]="isSendingForDelivery || isSubmitting || isRemitting"
+              class="rounded-lg border border-warning-300 px-4 py-2 text-sm font-medium text-warning-700 transition hover:bg-warning-50 disabled:opacity-60 dark:border-warning-700 dark:text-warning-400 dark:hover:bg-warning-500/10"
+            >
+              {{ isSendingForDelivery ? 'Sending...' : 'Send for Delivery' }}
+            </button>
+          }
           @if (activeTab !== 'sales-receivable' && activeTab !== 'remitted-sales') {
             <button
               type="button"
               (click)="remitSales()"
-              [disabled]="isRemitting || isSubmitting"
+              [disabled]="isRemitting || isSubmitting || isSendingForDelivery"
               class="rounded-lg border border-success-300 px-4 py-2 text-sm font-medium text-success-700 transition hover:bg-success-50 disabled:opacity-60 dark:border-success-700 dark:text-success-400 dark:hover:bg-success-500/10"
             >
               {{ isRemitting ? 'Remitting...' : 'Remit Sales' }}
             </button>
           }
         }
-        <button type="submit" [disabled]="isSubmitting" class="rounded-lg bg-brand-500 px-4 py-2 text-sm font-medium text-white disabled:opacity-60">
-          {{ isSubmitting ? 'Saving...' : (drawerMode === 'create' ? 'Create Sales Order' : 'Update Sales Order') }}
+        <button type="submit" [disabled]="isSubmitting || isSendingForDelivery" class="rounded-lg bg-brand-500 px-4 py-2 text-sm font-medium text-white disabled:opacity-60">
+          {{ isSubmitting ? 'Saving...' : (isMigrationDrawerMode ? 'Use This Payload For Migration' : (drawerMode === 'create' ? 'Create Sales Order' : 'Update Sales Order')) }}
         </button>
       </div>
     </form>
   </aside>
+
+  @if (isReturnModalOpen) {
+    <div class="fixed inset-0 z-100006 bg-gray-950/55 backdrop-blur-sm" (click)="closeReturnModal()"></div>
+    <div class="fixed inset-0 z-100007 flex items-center justify-center p-4">
+      <div class="w-full max-w-2xl overflow-hidden rounded-[28px] border border-gray-200 bg-white shadow-2xl dark:border-gray-800 dark:bg-gray-900" (click)="$event.stopPropagation()">
+        <div class="border-b border-gray-200 bg-linear-to-r from-warning-50 via-white to-rose-50 px-6 py-5 dark:border-gray-800 dark:from-warning-500/10 dark:via-gray-900 dark:to-rose-500/10">
+          <p class="text-[11px] font-semibold uppercase tracking-[0.22em] text-warning-700 dark:text-warning-300">Return Units</p>
+          <h3 class="mt-2 text-xl font-semibold text-gray-900 dark:text-white">
+            Return SO {{ pendingReturnOrder?.soNumber || pendingReturnOrder?.id }}
+          </h3>
+          <p class="mt-2 text-sm text-gray-600 dark:text-gray-300">
+            If this is a defective return, select one or more affected indoor or outdoor serial numbers.
+          </p>
+        </div>
+
+        <div class="space-y-5 px-6 py-5">
+          @if (returnModalError) {
+            <div class="rounded-2xl border border-error-200 bg-error-50/80 px-4 py-3 text-sm text-error-700 dark:border-error-500/20 dark:bg-error-500/10 dark:text-error-200">
+              {{ returnModalError }}
+            </div>
+          }
+
+          <div>
+            <label class="mb-1 block text-xs font-medium text-gray-600 dark:text-gray-300">Return Reason</label>
+            <textarea
+              [(ngModel)]="returnForm.remarks"
+              name="returnRemarks"
+              rows="3"
+              placeholder="Describe why the units were returned"
+              class="w-full rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm dark:border-gray-700 dark:bg-gray-900"
+            ></textarea>
+          </div>
+
+          <label class="flex items-start gap-3 rounded-2xl border border-warning-200 bg-warning-50/60 px-4 py-3 text-sm text-warning-900 dark:border-warning-500/20 dark:bg-warning-500/10 dark:text-warning-100">
+            <input
+              type="checkbox"
+              [ngModel]="returnForm.isDefective"
+              (ngModelChange)="onReturnDefectiveChange($event)"
+              name="returnIsDefective"
+              class="mt-1 h-4 w-4 rounded border-warning-400 text-warning-600 focus:ring-warning-500"
+            />
+            <span>
+              Mark selected returned serials as defective. You can choose multiple serial numbers.
+            </span>
+          </label>
+
+          @if (isReturnModalLoading) {
+            <div class="rounded-2xl border border-gray-200 bg-gray-50 px-4 py-4 text-sm text-gray-600 dark:border-gray-800 dark:bg-gray-800/60 dark:text-gray-300">
+              Loading linked serial numbers...
+            </div>
+          } @else if (returnForm.isDefective) {
+            <div class="space-y-4">
+              <div class="flex items-center justify-between">
+                <h4 class="text-sm font-semibold text-gray-900 dark:text-white">Select Defective Serial Numbers</h4>
+                <span class="text-xs text-gray-500 dark:text-gray-400">Selected: {{ selectedReturnedSerialNumbers.size }} serial(s)</span>
+              </div>
+
+              @if (returnSerialGroups.length > 0) {
+                <div class="max-h-80 space-y-4 overflow-y-auto pr-1">
+                  @for (group of returnSerialGroups; track group.unitLabel) {
+                    <section class="rounded-2xl border border-gray-200 bg-gray-50/80 p-4 dark:border-gray-800 dark:bg-gray-800/40">
+                      <div class="mb-3 flex items-center gap-2">
+                        <span class="rounded-full border border-warning-300 bg-white px-2.5 py-1 text-[11px] font-semibold uppercase tracking-wide text-warning-700 dark:border-warning-500/30 dark:bg-warning-500/10 dark:text-warning-300">
+                          {{ group.unitLabel }}
+                        </span>
+                      </div>
+
+                      <div class="grid gap-2 sm:grid-cols-2">
+                        @for (serial of group.serials; track serial) {
+                          <label class="flex items-center gap-3 rounded-xl border border-gray-200 bg-white px-3 py-2 text-sm text-gray-700 dark:border-gray-700 dark:bg-gray-900 dark:text-gray-200">
+                            <input
+                              type="checkbox"
+                              [checked]="isReturnedSerialSelected(serial)"
+                              (change)="toggleReturnedSerialSelection(serial, $any($event.target).checked)"
+                              class="h-4 w-4 rounded border-warning-400 text-warning-600 focus:ring-warning-500"
+                            />
+                            <span class="font-mono text-xs">{{ serial }}</span>
+                          </label>
+                        }
+                      </div>
+                    </section>
+                  }
+                </div>
+              } @else {
+                <div class="rounded-2xl border border-amber-200 bg-amber-50/80 px-4 py-3 text-sm text-amber-800 dark:border-amber-500/20 dark:bg-amber-500/10 dark:text-amber-100">
+                  No linked indoor or outdoor serial numbers were found for this sales order.
+                </div>
+              }
+            </div>
+          }
+        </div>
+
+        <div class="flex flex-wrap items-center justify-end gap-3 border-t border-gray-200 px-6 py-4 dark:border-gray-800">
+          <button
+            type="button"
+            (click)="closeReturnModal()"
+            class="rounded-lg border border-gray-300 px-4 py-2 text-sm font-medium text-gray-700 transition hover:bg-gray-50 dark:border-gray-700 dark:text-gray-300 dark:hover:bg-gray-800"
+          >
+            Cancel
+          </button>
+          <button
+            type="button"
+            (click)="confirmReturnedUnits()"
+            [disabled]="isReturnModalLoading || returningOrderIds.has(pendingReturnOrder?.id ?? -1)"
+            class="rounded-lg border border-warning-300 bg-warning-500 px-4 py-2 text-sm font-medium text-white transition hover:bg-warning-600 disabled:opacity-60 dark:border-warning-500/40 dark:bg-warning-500 dark:hover:bg-warning-600"
+          >
+            {{ returningOrderIds.has(pendingReturnOrder?.id ?? -1) ? 'Processing...' : 'Confirm Return' }}
+          </button>
+        </div>
+      </div>
+    </div>
+  }
 
   @if (isGuardDialogOpen) {
     <div class="fixed inset-0 z-100010 bg-gray-950/55 backdrop-blur-sm" (click)="cancelGuardDialog()"></div>

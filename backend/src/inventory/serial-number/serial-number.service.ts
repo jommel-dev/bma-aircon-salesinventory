@@ -1,4 +1,4 @@
-import { Injectable } from '@nestjs/common';
+﻿import { Injectable } from '@nestjs/common';
 import { CreateSerialNumberDto } from './dto/create-serial-number.dto';
 import { UpdateSerialNumberDto } from './dto/update-serial-number.dto';
 import { DatabaseService } from 'src/database/database.service';
@@ -258,6 +258,37 @@ export class SerialNumberService {
     return normalized;
   }
 
+  private resolveLandCostingUnitBucket(
+    unitType: unknown,
+    configuredLabels: string[],
+  ): 'indoor' | 'outdoor' | 'other' {
+    const normalized = this.normalizeUnitType(unitType);
+    if (!normalized) {
+      return 'other';
+    }
+
+    if (normalized.includes('indoor')) {
+      return 'indoor';
+    }
+
+    if (normalized.includes('outdoor')) {
+      return 'outdoor';
+    }
+
+    const configuredIndoorLabel = this.remapLegacyUnitTypeLabel('indoor', configuredLabels);
+    const configuredOutdoorLabel = this.remapLegacyUnitTypeLabel('outdoor', configuredLabels);
+
+    if (configuredIndoorLabel && normalized === configuredIndoorLabel) {
+      return 'indoor';
+    }
+
+    if (configuredOutdoorLabel && normalized === configuredOutdoorLabel) {
+      return 'outdoor';
+    }
+
+    return 'other';
+  }
+
   private async getProductDisplayName(productId: number | null): Promise<string | null> {
     if (!Number.isFinite(productId) || (productId as number) <= 0) {
       return null;
@@ -350,6 +381,52 @@ export class SerialNumberService {
     }
 
     return `purchase order #${normalizedPurchaseId}`;
+  }
+
+  private async getSalesOrderReference(
+    salesId: number | string | null | undefined,
+  ): Promise<string | null> {
+    const normalizedSalesId = String(salesId ?? '').trim();
+    if (!normalizedSalesId) {
+      return null;
+    }
+
+    for (const tableName of ['tblsales_order', 'tblsales_orders']) {
+      try {
+        const result = await this.databaseService.query<{ soNumber: string | null }>(
+          `SELECT COALESCE(
+             to_jsonb(so)->>'so_number',
+             to_jsonb(so)->>'soNumber',
+             to_jsonb(so)->>'so_no',
+             to_jsonb(so)->>'soNo'
+           ) AS "soNumber"
+           FROM ${tableName} so
+           WHERE so.id::text = $1
+           LIMIT 1`,
+          [normalizedSalesId],
+        );
+
+        if (result.rowCount === 0) {
+          continue;
+        }
+
+        const soNumber = String(result.rows[0]?.soNumber ?? '').trim();
+        return soNumber ? `SO ${soNumber}` : `sales order #${normalizedSalesId}`;
+      } catch (error: unknown) {
+        const errorCode =
+          typeof error === 'object' && error !== null && 'code' in error
+            ? String((error as { code?: unknown }).code ?? '')
+            : '';
+
+        if (errorCode === '42P01') {
+          continue;
+        }
+
+        throw error;
+      }
+    }
+
+    return `sales order #${normalizedSalesId}`;
   }
 
   private async buildProductMismatchMessage(input: {
@@ -1077,6 +1154,34 @@ export class SerialNumberService {
       return { success: false, message: 'branchId must be a valid number' };
     }
 
+    const productUnitTypesResult = await this.databaseService.query<{
+      id: string | null;
+      unitTypes: string | null;
+    }>(
+      `SELECT
+         p.id::text AS id,
+         COALESCE(
+           to_jsonb(p)->>'unitTypes',
+           to_jsonb(p)->>'unit_types',
+           to_jsonb(p)->>'unittypes',
+           ''
+         ) AS "unitTypes"
+       FROM tblproducts p`,
+    );
+
+    const productUnitTypeMap = new Map<string, string[]>();
+    for (const row of productUnitTypesResult.rows) {
+      const currentProductId = String(row.id ?? '').trim();
+      if (!currentProductId) {
+        continue;
+      }
+
+      productUnitTypeMap.set(
+        currentProductId,
+        this.parseConfiguredProductUnitTypes(row.unitTypes),
+      );
+    }
+
     const rowsResult = await this.databaseService.query<LandCostingRow>(
       `WITH serial_scope AS (
          SELECT
@@ -1119,18 +1224,94 @@ export class SerialNumberService {
              ''
            ) AS branch_id
          FROM tblserial_numbers sn
+       ),
+       purchase_items AS (
+         SELECT
+           COALESCE(
+             to_jsonb(tpi)->>'purchaseId',
+             to_jsonb(tpi)->>'purchase_id',
+             to_jsonb(tpi)->>'po_id',
+             ''
+           ) AS purchase_id,
+           COALESCE(
+             to_jsonb(tpi)->>'productId',
+             to_jsonb(tpi)->>'product_id',
+             ''
+           ) AS product_id,
+           COALESCE(
+             to_jsonb(tpi)->>'capacityId',
+             to_jsonb(tpi)->>'capacity_id',
+             ''
+           ) AS capacity_id,
+           COALESCE(
+             to_jsonb(tpi)->>'unitPrice',
+             to_jsonb(tpi)->>'unit_price',
+             ''
+           ) AS unit_price
+         FROM tbltransaction_product_items tpi
+         WHERE LOWER(COALESCE(
+           to_jsonb(tpi)->>'transType',
+           to_jsonb(tpi)->>'trans_type',
+           'purchase'
+         )) = 'purchase'
+       ),
+       purchase_product_item_counts AS (
+         SELECT
+           pi.purchase_id,
+           pi.product_id,
+           COUNT(*)::int AS item_count
+         FROM purchase_items pi
+         WHERE pi.purchase_id <> ''
+           AND pi.product_id <> ''
+         GROUP BY pi.purchase_id, pi.product_id
+       ),
+       resolved_serial_scope AS (
+         SELECT
+           ss.serial_number,
+           ss.status,
+           ss.unit_type,
+           ss.product_id,
+           COALESCE(exact_item.capacity_id, fallback_item.capacity_id, ss.capacity_id) AS capacity_id,
+           ss.purchase_id,
+           ss.branch_id,
+           COALESCE(exact_item.unit_price, fallback_item.unit_price, '') AS unit_price
+         FROM serial_scope ss
+         LEFT JOIN LATERAL (
+           SELECT
+             pi.capacity_id,
+             pi.unit_price
+           FROM purchase_items pi
+           WHERE pi.purchase_id = ss.purchase_id
+             AND pi.product_id = ss.product_id
+             AND pi.capacity_id = ss.capacity_id
+           LIMIT 1
+         ) exact_item ON true
+         LEFT JOIN purchase_product_item_counts ppic
+           ON ppic.purchase_id = ss.purchase_id
+          AND ppic.product_id = ss.product_id
+         LEFT JOIN LATERAL (
+           SELECT
+             pi.capacity_id,
+             pi.unit_price
+           FROM purchase_items pi
+           WHERE pi.purchase_id = ss.purchase_id
+             AND pi.product_id = ss.product_id
+           LIMIT 1
+         ) fallback_item
+           ON exact_item.capacity_id IS NULL
+          AND COALESCE(ppic.item_count, 0) = 1
        )
        SELECT
-         ss.serial_number AS "serialNumber",
-         ss.unit_type AS "unitType",
-         ss.product_id AS "productId",
+         rss.serial_number AS "serialNumber",
+         rss.unit_type AS "unitType",
+         rss.product_id AS "productId",
          COALESCE(
            to_jsonb(p)->>'productName',
            to_jsonb(p)->>'product_name',
            to_jsonb(p)->>'productname',
            ''
          ) AS "productName",
-         ss.capacity_id AS "capacityId",
+         rss.capacity_id AS "capacityId",
          COALESCE(
            to_jsonb(c)->>'capacity',
            to_jsonb(c)->>'capacityValue',
@@ -1138,7 +1319,7 @@ export class SerialNumberService {
            to_jsonb(c)->>'name',
            ''
          ) AS "capacityName",
-         ss.purchase_id AS "purchaseId",
+         rss.purchase_id AS "purchaseId",
          COALESCE(
            to_jsonb(po)->>'po_number',
            to_jsonb(po)->>'poNumber',
@@ -1152,11 +1333,7 @@ export class SerialNumberService {
          ) AS "vendorName",
          COALESCE(
            NULLIF(
-             COALESCE(
-               to_jsonb(tpi)->>'unitPrice',
-               to_jsonb(tpi)->>'unit_price',
-               ''
-             ),
+             rss.unit_price,
              ''
            )::numeric,
            0
@@ -1172,7 +1349,7 @@ export class SerialNumberService {
            )::numeric,
            0
          )::text AS srp,
-         ss.status AS "status",
+         rss.status AS "status",
          CASE
            WHEN sn."isDefective" IS NOT NULL THEN sn."isDefective"
            ELSE false
@@ -1181,56 +1358,34 @@ export class SerialNumberService {
            WHEN sn."isReturned" IS NOT NULL THEN sn."isReturned"
            ELSE false
          END AS "isReturned"
-       FROM serial_scope ss
+       FROM resolved_serial_scope rss
        LEFT JOIN tblserial_numbers sn
-         ON sn."serialNumber" = ss.serial_number
+         ON sn."serialNumber" = rss.serial_number
        LEFT JOIN tblproducts p
-         ON p.id::text = ss.product_id
+         ON p.id::text = rss.product_id
        LEFT JOIN tblcapacity c
-         ON c.id::text = ss.capacity_id
+         ON c.id::text = rss.capacity_id
        LEFT JOIN tblpurchase_orders po
-         ON po.id::text = ss.purchase_id
+         ON po.id::text = rss.purchase_id
        LEFT JOIN tblvendors v
          ON v.id::text = COALESCE(
            to_jsonb(po)->>'vendor_id',
            to_jsonb(po)->>'vendorId',
            ''
          )
-       LEFT JOIN tbltransaction_product_items tpi
-         ON COALESCE(
-           to_jsonb(tpi)->>'purchaseId',
-           to_jsonb(tpi)->>'purchase_id',
-           to_jsonb(tpi)->>'po_id',
-           ''
-         ) = ss.purchase_id
-         AND COALESCE(
-           to_jsonb(tpi)->>'productId',
-           to_jsonb(tpi)->>'product_id',
-           ''
-         ) = ss.product_id
-         AND COALESCE(
-           to_jsonb(tpi)->>'capacityId',
-           to_jsonb(tpi)->>'capacity_id',
-           ''
-         ) = ss.capacity_id
-         AND LOWER(COALESCE(
-           to_jsonb(tpi)->>'transType',
-           to_jsonb(tpi)->>'trans_type',
-           'purchase'
-         )) = 'purchase'
-       WHERE ss.serial_number <> ''
-         AND ss.purchase_id <> ''
+       WHERE rss.serial_number <> ''
+         AND rss.purchase_id <> ''
          AND (
            $1::text IS NULL
-           OR ss.branch_id = $1::text
+           OR rss.branch_id = $1::text
          )
          AND (
            $2::text IS NULL
-           OR ss.product_id = $2::text
+           OR rss.product_id = $2::text
          )
          AND (
            $3::text IS NULL
-           OR ss.capacity_id = $3::text
+           OR rss.capacity_id = $3::text
          )
          AND (
              po.created_at::date >= $4::date
@@ -1241,7 +1396,7 @@ export class SerialNumberService {
            COALESCE(to_jsonb(c)->>'capacity', to_jsonb(c)->>'capacityValue', to_jsonb(c)->>'capacity_value', to_jsonb(c)->>'name', '') ASC,
            COALESCE(to_jsonb(v)->>'name', '') ASC,
            po.created_at ASC NULLS LAST,
-           ss.serial_number ASC`,
+           rss.serial_number ASC`,
       [
         branchId !== null ? String(branchId) : null,
         productId !== null ? String(productId) : null,
@@ -1255,10 +1410,12 @@ export class SerialNumberService {
         const landedCost = this.toOptionalNumber(row.landedCost) ?? 0;
         const srp = this.toOptionalNumber(row.srp) ?? 0;
         const marginAmount = srp - landedCost;
+        const normalizedProductId = String(row.productId ?? '').trim();
 
         return {
           serialNumber: String(row.serialNumber ?? '').trim(),
           unitType: this.normalizeUnitType(row.unitType),
+          productId: normalizedProductId,
           productName: String(row.productName ?? '').trim(),
           capacityName: String(row.capacityName ?? '').trim(),
           purchaseId: this.toOptionalNumber(row.purchaseId),
@@ -1315,7 +1472,10 @@ export class SerialNumberService {
         }
 
         const group = groupMap.get(groupKey)!;
-        if (row.unitType.includes('indoor')) {
+        const configuredLabels = productUnitTypeMap.get(row.productId) ?? [];
+        const unitBucket = this.resolveLandCostingUnitBucket(row.unitType, configuredLabels);
+
+        if (unitBucket === 'indoor') {
           group.indoorSerials.push({
             serial: row.serialNumber,
             status: row.status,
@@ -1325,7 +1485,7 @@ export class SerialNumberService {
           continue;
         }
 
-        if (row.unitType.includes('outdoor')) {
+        if (unitBucket === 'outdoor') {
           group.outdoorSerials.push({
             serial: row.serialNumber,
             status: row.status,
@@ -1395,6 +1555,8 @@ export class SerialNumberService {
         }
 
         const groupMarginTotal = rows.reduce((total, row) => total + row.marginAmount, 0);
+        const serialCount =
+          group.indoorSerials.length + group.outdoorSerials.length + group.others.length;
 
         return {
           productName: group.productName,
@@ -1404,7 +1566,7 @@ export class SerialNumberService {
           poDate: group.poDate,
           rows,
           totals: {
-            serialCount: rows.length,
+            serialCount,
             landedCost: rows.reduce((total, row) => total + row.landedCost, 0),
             srp: rows.reduce((total, row) => total + row.srp, 0),
             marginAmount: groupMarginTotal,
@@ -1450,6 +1612,315 @@ export class SerialNumberService {
     };
   }
 
+  async insertBulk(serials: Array<{ serialNumber: string; unitType?: string; status?: string; productId?: number; capacityId?: number }>) {
+    if (!serials || serials.length === 0) {
+      return { success: false, message: 'No serials provided' };
+    }
+
+    const serialColumns = await this.getTableColumns('tblserial_numbers');
+    const serialNumberColumn = this.pickColumn(serialColumns, ['serialNumber', 'serial_number']);
+    const serialStatusColumn = this.pickColumn(serialColumns, ['status']);
+    const serialUnitTypeColumn = this.pickColumn(serialColumns, ['unitType', 'unit_type']);
+    const serialProductIdColumn = this.pickColumn(serialColumns, ['productId', 'product_id']);
+    const serialCapacityIdColumn = this.pickColumn(serialColumns, ['capacityId', 'capacity_id']);
+
+    if (!serialNumberColumn) {
+      return { success: false, message: 'Serial number column not found' };
+    }
+
+    const requestedProductIds = [...new Set(
+      (serials ?? [])
+        .map((serial) => Number(serial.productId))
+        .filter((value) => Number.isFinite(value) && value > 0),
+    )];
+
+    const requestedCapacityIds = [...new Set(
+      (serials ?? [])
+        .map((serial) => Number(serial.capacityId))
+        .filter((value) => Number.isFinite(value) && value > 0),
+    )];
+
+    if (requestedProductIds.length > 0) {
+      const existingProducts = await this.databaseService.query<{ id: string }>(
+        `SELECT id::text AS id FROM tblproducts WHERE id = ANY($1::int[])`,
+        [requestedProductIds],
+      );
+      const existingProductIds = new Set(existingProducts.rows.map((row) => Number(row.id)));
+      const missingProductId = requestedProductIds.find((value) => !existingProductIds.has(value));
+      if (missingProductId !== undefined) {
+        return { success: false, message: `Product ID ${missingProductId} does not exist` };
+      }
+    }
+
+    if (requestedCapacityIds.length > 0) {
+      const existingCapacities = await this.databaseService.query<{ id: string }>(
+        `SELECT id::text AS id FROM tblcapacity WHERE id = ANY($1::int[])`,
+        [requestedCapacityIds],
+      );
+      const existingCapacityIds = new Set(existingCapacities.rows.map((row) => Number(row.id)));
+      const missingCapacityId = requestedCapacityIds.find((value) => !existingCapacityIds.has(value));
+      if (missingCapacityId !== undefined) {
+        return { success: false, message: `Capacity ID ${missingCapacityId} does not exist` };
+      }
+    }
+
+    const requestedProductCapacityPairs = [...new Set(
+      (serials ?? [])
+        .map((serial) => ({
+          productId: Number(serial.productId),
+          capacityId: Number(serial.capacityId),
+        }))
+        .filter((entry) => Number.isFinite(entry.productId) && entry.productId > 0 && Number.isFinite(entry.capacityId) && entry.capacityId > 0)
+        .map((entry) => `${entry.productId}::${entry.capacityId}`),
+    )];
+
+    if (requestedProductCapacityPairs.length > 0) {
+      const capacityProductRows = await this.databaseService.query<{ id: string; productId: string | null }>(
+        `SELECT
+           c.id::text AS id,
+           COALESCE(
+             to_jsonb(c)->>'productId',
+             to_jsonb(c)->>'product_id',
+             to_jsonb(c)->>'prodId',
+             to_jsonb(c)->>'prod_id',
+             null
+           ) AS "productId"
+         FROM tblcapacity c
+         WHERE c.id = ANY($1::int[])`,
+        [requestedCapacityIds],
+      );
+
+      const capacityToProductMap = new Map<number, number>();
+      for (const row of capacityProductRows.rows) {
+        const capacityId = Number(row.id);
+        const productId = Number(row.productId);
+        if (Number.isFinite(capacityId) && capacityId > 0 && Number.isFinite(productId) && productId > 0) {
+          capacityToProductMap.set(capacityId, productId);
+        }
+      }
+
+      for (const pair of requestedProductCapacityPairs) {
+        const [productIdText, capacityIdText] = pair.split('::');
+        const productId = Number(productIdText);
+        const capacityId = Number(capacityIdText);
+        const linkedProductId = capacityToProductMap.get(capacityId);
+
+        if (!linkedProductId) {
+          return { success: false, message: `Capacity ID ${capacityId} is missing its linked product` };
+        }
+
+        if (linkedProductId !== productId) {
+          return { success: false, message: `Capacity ID ${capacityId} does not belong to Product ID ${productId}` };
+        }
+      }
+    }
+
+    let inserted = 0;
+    let skipped = 0;
+
+    for (const s of serials) {
+      const sn = this.normalizeSerialNumber(s.serialNumber);
+      if (!sn) { skipped++; continue; }
+
+      const productId = Number(s.productId);
+      const capacityId = Number(s.capacityId);
+      const hasProductId = Number.isFinite(productId) && productId > 0;
+      const hasCapacityId = Number.isFinite(capacityId) && capacityId > 0;
+
+      if (hasProductId !== hasCapacityId) {
+        skipped++;
+        continue;
+      }
+
+      // Check if already exists
+      const existing = await this.databaseService.query<{ id: number }>(
+        `SELECT id FROM tblserial_numbers
+         WHERE LOWER(regexp_replace(BTRIM(COALESCE("serialNumber", '')), '\\s+', ' ', 'g')) = LOWER($1)
+         LIMIT 1`,
+        [sn],
+      );
+      if (existing.rowCount > 0) { skipped++; continue; }
+
+      const record: Record<string, unknown> = { [serialNumberColumn]: sn };
+      if (serialStatusColumn) record[serialStatusColumn] = 'in-stock';
+      if (serialUnitTypeColumn) record[serialUnitTypeColumn] = this.normalizeUnitType(s.unitType ?? '');
+      if (serialProductIdColumn && hasProductId) record[serialProductIdColumn] = productId;
+      if (serialCapacityIdColumn && hasCapacityId) record[serialCapacityIdColumn] = capacityId;
+
+      await this.runInsert('tblserial_numbers', record);
+      inserted++;
+    }
+
+    return {
+      success: true,
+      message: `Inserted ${inserted} serial(s). Skipped ${skipped} (already exist or invalid).`,
+      inserted,
+      skipped,
+    };
+  }
+
+  async csvPreview(rows: Array<{ serialNumber: string; unitType?: string; status: string }>) {
+    const normalized = (rows ?? [])
+      .map((r) => ({
+        serialNumber: this.normalizeSerialNumber(r.serialNumber),
+        csvUnitType: this.normalizeUnitType(r.unitType ?? ''),
+        csvStatus: String(r.status ?? '').trim().toLowerCase(),
+      }))
+      .filter((r) => r.serialNumber.length > 0);
+
+    if (normalized.length === 0) {
+      return { success: false, message: 'No serial numbers provided' };
+    }
+
+    const seen = new Set<string>();
+    const unique = normalized.filter((r) => {
+      const key = r.serialNumber.toLowerCase();
+      if (seen.has(key)) return false;
+      seen.add(key);
+      return true;
+    });
+
+    const serialList = unique.map((r) => r.serialNumber);
+
+    const result = await this.databaseService.query<{
+      serialNumber: string;
+      status: string | null;
+      unitType: string | null;
+      productName: string | null;
+      capacityName: string | null;
+    }>(
+      `SELECT
+         COALESCE(to_jsonb(sn)->>'serialNumber', to_jsonb(sn)->>'serial_number', '') AS "serialNumber",
+         COALESCE(to_jsonb(sn)->>'status', '') AS status,
+         COALESCE(to_jsonb(sn)->>'unitType', to_jsonb(sn)->>'unit_type', '') AS "unitType",
+         COALESCE(to_jsonb(p)->>'productName', to_jsonb(p)->>'product_name', '') AS "productName",
+         COALESCE(to_jsonb(c)->>'capacity', '') AS "capacityName"
+       FROM tblserial_numbers sn
+       LEFT JOIN tblproducts p ON p.id::text = COALESCE(to_jsonb(sn)->>'productId', to_jsonb(sn)->>'product_id')
+       LEFT JOIN tblcapacity c ON c.id::text = COALESCE(to_jsonb(sn)->>'capacityId', to_jsonb(sn)->>'capacity_id')
+       WHERE LOWER(regexp_replace(BTRIM(COALESCE(to_jsonb(sn)->>'serialNumber', to_jsonb(sn)->>'serial_number', '')), '\\s+', ' ', 'g'))
+         = ANY(SELECT LOWER(regexp_replace(BTRIM(s), '\\s+', ' ', 'g')) FROM unnest($1::text[]) s)`,
+      [serialList],
+    );
+
+    const foundMap = new Map<string, { serialNumber: string; dbStatus: string; unitType: string; productName: string; capacityName: string }>();
+    for (const row of result.rows) {
+      foundMap.set(row.serialNumber.toLowerCase().trim(), {
+        serialNumber: row.serialNumber,
+        dbStatus: String(row.status ?? '').toLowerCase().trim(),
+        unitType: String(row.unitType ?? '').trim().toUpperCase(),
+        productName: String(row.productName ?? '').trim(),
+        capacityName: String(row.capacityName ?? '').trim(),
+      });
+    }
+
+    const toInstall: Array<{ serialNumber: string; csvStatus: string; csvUnitType: string; unitType: string; productName: string; capacityName: string }> = [];
+    const alreadyInstalled: Array<{ serialNumber: string; unitType: string; productName: string; capacityName: string }> = [];
+    const notFound: Array<{ serialNumber: string; csvStatus: string; csvUnitType: string }> = [];
+    const otherStatus: Array<{ serialNumber: string; csvStatus: string; dbStatus: string; unitType: string; productName: string; capacityName: string }> = [];
+
+    // Unit type counts across all found serials
+    const unitTypeCounts: Record<string, number> = {};
+
+    for (const row of unique) {
+      const found = foundMap.get(row.serialNumber.toLowerCase());
+
+      if (!found) {
+        notFound.push({ serialNumber: row.serialNumber, csvStatus: row.csvStatus, csvUnitType: row.csvUnitType });
+        continue;
+      }
+
+      const ut = found.unitType || row.csvUnitType.toUpperCase() || 'UNKNOWN';
+      unitTypeCounts[ut] = (unitTypeCounts[ut] ?? 0) + 1;
+
+      if (found.dbStatus === 'installed') {
+        alreadyInstalled.push({ serialNumber: found.serialNumber, unitType: found.unitType, productName: found.productName, capacityName: found.capacityName });
+        continue;
+      }
+
+      if (row.csvStatus === 'installed') {
+        toInstall.push({ serialNumber: found.serialNumber, csvStatus: row.csvStatus, csvUnitType: row.csvUnitType, unitType: found.unitType, productName: found.productName, capacityName: found.capacityName });
+        continue;
+      }
+
+      otherStatus.push({ serialNumber: found.serialNumber, csvStatus: row.csvStatus, dbStatus: found.dbStatus, unitType: found.unitType, productName: found.productName, capacityName: found.capacityName });
+    }
+
+    // Total sets = total found serials / unit types per set (approximate: count distinct unitType labels)
+    const unitTypeLabels = Object.keys(unitTypeCounts);
+    const unitTypeCount = unitTypeLabels.length || 1;
+    const totalFoundSerials = toInstall.length + alreadyInstalled.length + otherStatus.length;
+    const totalSets = unitTypeCount > 1 ? Math.floor(totalFoundSerials / unitTypeCount) : totalFoundSerials;
+
+    // Remaining stocks = serials that are NOT installed (in-stock, reserved, etc.)
+    const remainingStocks = otherStatus.length + toInstall.length;
+
+    return {
+      success: true,
+      summary: {
+        total: unique.length,
+        toInstall: toInstall.length,
+        alreadyInstalled: alreadyInstalled.length,
+        notFound: notFound.length,
+        otherStatus: otherStatus.length,
+        totalSets,
+        unitTypeCounts,
+        remainingStocks,
+      },
+      toInstall,
+      alreadyInstalled,
+      notFound,
+      otherStatus,
+    };
+  }
+  async bulkUpdateStatus(serialNumbers: string[], status: string, userId?: number) {
+    const allowedStatuses = ['installed', 'in-stock', 'reserved', 'for-delivery'];
+    const normalizedStatus = String(status ?? '').trim().toLowerCase();
+    if (!allowedStatuses.includes(normalizedStatus)) {
+      return { success: false, message: `Invalid status. Allowed: ${allowedStatuses.join(', ')}` };
+    }
+
+    const normalized = (serialNumbers ?? [])
+      .map((s) => this.normalizeSerialNumber(s))
+      .filter((s) => s.length > 0);
+
+    if (normalized.length === 0) {
+      return { success: false, message: 'No serial numbers provided' };
+    }
+
+    const serialColumns = await this.getTableColumns('tblserial_numbers');
+    const serialStatusColumn = this.pickColumn(serialColumns, ['status']);
+    const serialCreatedByColumn = this.pickColumn(serialColumns, ['created_by', 'createdBy', 'createdby']);
+
+    if (!serialStatusColumn) {
+      return { success: false, message: 'Status column not found in tblserial_numbers' };
+    }
+
+    const setClauses = [`"${serialStatusColumn}" = $1`];
+    const params: unknown[] = [normalizedStatus];
+
+    if (serialCreatedByColumn && userId !== undefined) {
+      params.push(userId);
+      setClauses.push(`"${serialCreatedByColumn}" = $${params.length}`);
+    }
+
+    params.push(normalized);
+    const result = await this.databaseService.query(
+      `UPDATE tblserial_numbers
+       SET ${setClauses.join(', ')}
+       WHERE LOWER(regexp_replace(BTRIM(COALESCE("serialNumber", '')), '\\s+', ' ', 'g')) = ANY(
+         SELECT LOWER(regexp_replace(BTRIM(s), '\\s+', ' ', 'g')) FROM unnest($${params.length}::text[]) s
+       )`,
+      params,
+    );
+
+    return {
+      success: true,
+      message: `Updated ${result.rowCount ?? 0} serial number(s) to '${normalizedStatus}'`,
+      updated: result.rowCount ?? 0,
+    };
+  }
+
   async scanSalesOrder(dto: ScanSalesOrderDto, userId?: number) {
     const serialNumber = this.normalizeSerialNumber(dto.serialNumber);
     const salesId = Number(dto.salesId);
@@ -1471,6 +1942,10 @@ export class SerialNumberService {
         : Number(dto.expectedCapacityId);
     const expectedUnitType = this.normalizeUnitType(dto.expectedUnitType);
 
+    // Pick previousSalesId column if available
+    const serialColumns = await this.getTableColumns('tblserial_numbers');
+    const serialPreviousSalesIdColumn = this.pickColumn(serialColumns, ['previousSalesId', 'previous_sales_id']);
+
     if (!serialNumber) {
       return { success: false, message: 'serialNumber is required' };
     }
@@ -1481,7 +1956,6 @@ export class SerialNumberService {
       return { success: false, message: 'branchId must be a valid number' };
     }
 
-    const serialColumns = await this.getTableColumns('tblserial_numbers');
     const serialNumberColumn = this.pickColumn(serialColumns, [
       'serialNumber',
       'serial_number',
@@ -1614,10 +2088,14 @@ export class SerialNumberService {
       }
     }
 
+    // If serial is already assigned to a different SO, block
     if (Number.isFinite(currentSalesId) && currentSalesId > 0 && currentSalesId !== salesId) {
+      const salesReference = await this.getSalesOrderReference(currentSalesId);
       return {
         success: false,
-        message: `Serial number already assigned to salesId ${currentSalesId}`,
+        message: salesReference
+          ? `Serial number is already assigned to ${salesReference}`
+          : `Serial number is already assigned to sales order #${currentSalesId}`,
       };
     }
 
@@ -1629,18 +2107,19 @@ export class SerialNumberService {
       };
     }
 
+    // If serial is being reassigned to a new SO (after transfer), set previousSalesId
     const updateRecord: Record<string, unknown> = {
       [serialSalesIdColumn]: salesId,
     };
-
+    if (serialPreviousSalesIdColumn && Number.isFinite(currentSalesId) && currentSalesId > 0 && currentSalesId !== salesId) {
+      updateRecord[serialPreviousSalesIdColumn] = currentSalesId;
+    }
     if (serialBranchIdColumn && branchId !== null) {
       updateRecord[serialBranchIdColumn] = branchId;
     }
-
     if (serialStatusColumn) {
       updateRecord[serialStatusColumn] = 'reserved';
     }
-
     if (serialCreatedByColumn && userId !== undefined) {
       updateRecord[serialCreatedByColumn] = userId;
     }
@@ -2107,9 +2586,12 @@ export class SerialNumberService {
     }
 
     if (Number.isFinite(currentSalesId) && currentSalesId > 0) {
+      const salesReference = await this.getSalesOrderReference(currentSalesId);
       return {
         success: false,
-        message: `Serial number already assigned to salesId ${currentSalesId}`,
+        message: salesReference
+          ? `Serial number is already assigned to ${salesReference}`
+          : `Serial number is already assigned to sales order #${currentSalesId}`,
       };
     }
 
@@ -2118,9 +2600,12 @@ export class SerialNumberService {
       currentPurchaseId > 0 &&
       currentPurchaseId !== purchaseId
     ) {
+      const purchaseReference = await this.getPurchaseOrderReference(currentPurchaseId);
       return {
         success: false,
-        message: `Serial number already linked to purchaseId ${currentPurchaseId}`,
+        message: purchaseReference
+          ? `Serial number is already linked to ${purchaseReference}`
+          : `Serial number is already linked to purchase order #${currentPurchaseId}`,
       };
     }
 

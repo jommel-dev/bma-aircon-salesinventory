@@ -1,3 +1,4 @@
+// Removed accidental top-level getter definition. The correct getter is inside the class.
 import { CommonModule } from '@angular/common';
 import { Component, HostListener, OnDestroy, OnInit } from '@angular/core';
 import { FormsModule } from '@angular/forms';
@@ -30,6 +31,11 @@ type PendingSerialRemoval = {
   productIndex: number;
   unitLabel: string;
   serialNumber: string;
+};
+
+type ManualSerialDialogState = {
+  productIndex: number;
+  unitLabel: string;
 };
 
 interface PurchaseProductFormItem {
@@ -87,10 +93,33 @@ interface QueuedPurchaseSerialScan {
 export class PurchaseOrderComponent implements OnInit, OnDestroy {
   activeTab: PurchaseTab = 'deliveries';
   isFormDrawerOpen = false;
-  drawerMode: 'create' | 'edit' = 'create';
+  drawerMode: 'create' | 'edit' | 'view' = 'create';
   editingPurchaseId: number | null = null;
   editingPoNumber = '';
   editingPurchaseStatus = '';
+  isTransferPO: boolean = false;
+  serialStatusByNumber: Record<string, string> = {};
+  poLinkedSerialNumbersByUnitType: Record<string, string[]> = {};
+  unresolvedLinkedSerialNumbersByUnitType: Record<string, string[]> = {};
+  originatingSalesOrder: {
+    id: number;
+    soNumber: string | null;
+    branchId?: string | null;
+    branchName?: string | null;
+    productItems?: any[];
+    transferDetails?: {
+      id: number;
+      fromBranchId: string | null;
+      fromBranchName: string | null;
+      toBranchId: string | null;
+      toBranchName: string | null;
+      transferDate: string | null;
+      expectedDeliveryDate: string | null;
+      actualDeliveryDate: string | null;
+      transferStatus: string | null;
+      transferNotes: string | null;
+    } | null;
+  } | null = null;
   vendorMode: 'existing' | 'new' = 'existing';
   isLoading = false;
   errorMessage = '';
@@ -102,6 +131,7 @@ export class PurchaseOrderComponent implements OnInit, OnDestroy {
   totalPages = 1;
   isCreating = false;
   isProcessingApprovalAction = false;
+  isVerifyingReceive = false;
   createError = '';
   createSuccess = '';
   isExportingSerials = false;
@@ -109,6 +139,9 @@ export class PurchaseOrderComponent implements OnInit, OnDestroy {
   poGuardDialogMode: PurchaseOrderGuardDialogMode | null = null;
   poIdleCountdownSeconds = 0;
   pendingSerialRemoval: PendingSerialRemoval | null = null;
+  manualSerialDialogState: ManualSerialDialogState | null = null;
+  manualSerialInput = '';
+  manualSerialError = '';
   sendingForApprovalIds = new Set<number>();
   approvingPurchaseIds = new Set<number>();
   cancellingPurchaseIds = new Set<number>();
@@ -121,6 +154,8 @@ export class PurchaseOrderComponent implements OnInit, OnDestroy {
   vendorOptions: VendorOption[] = [];
   vendorSearch = '';
   isVendorDropdownOpen = false;
+  productSearchByItem: Record<number, string> = {};
+  isProductDropdownOpenByItem: Record<number, boolean> = {};
   activeProductTabIndex = 0;
   selectedUnitTypeByProduct: Record<number, string> = {};
   scannedSerialTablePageByKey: Record<string, number> = {};
@@ -170,10 +205,10 @@ export class PurchaseOrderComponent implements OnInit, OnDestroy {
   private suppressBeforeUnloadPrompt = false;
   private drawerInitialStateSnapshot = '';
   private readonly purchaseTabPermissionKeyMap: Record<PurchaseTab, string[]> = {
-    deliveries: ['purchase-order.tab.deliveries', 'purchase-order.tab.local'],
-    approvals: ['purchase-order.tab.approvals'],
-    'master-data': ['purchase-order.tab.master-data', 'purchase-order.tab.imported'],
-  };
+      deliveries: ['purchase-order.tab.deliveries', 'purchase-order.tab.local'],
+      approvals: ['purchase-order.tab.approvals'],
+      'master-data': ['purchase-order.tab.master-data', 'purchase-order.tab.imported'],
+    };
 
   constructor(
     private readonly purchaseOrderService: PurchaseOrderService,
@@ -277,6 +312,14 @@ export class PurchaseOrderComponent implements OnInit, OnDestroy {
 
   get isPoGuardDialogOpen(): boolean {
     return this.poGuardDialogMode !== null;
+  }
+
+  get isManualSerialDialogOpen(): boolean {
+    return this.manualSerialDialogState !== null;
+  }
+
+  get manualSerialDialogUnitLabel(): string {
+    return this.manualSerialDialogState?.unitLabel ?? '';
   }
 
   get poGuardDialogTitle(): string {
@@ -389,6 +432,76 @@ export class PurchaseOrderComponent implements OnInit, OnDestroy {
     setTimeout(() => {
       this.isVendorDropdownOpen = false;
     }, 150);
+  }
+
+  onProductComboboxFocus(index: number): void {
+    if (this.isMasterDataDrawerMode() || this.isTransferPOViewOnly) {
+      return;
+    }
+
+    this.isProductDropdownOpenByItem[index] = true;
+    this.productSearchByItem[index] = this.getProductSearchValue(index);
+  }
+
+  onProductComboboxBlur(index: number): void {
+    setTimeout(() => {
+      this.isProductDropdownOpenByItem[index] = false;
+      this.productSearchByItem[index] = this.getProductSearchValue(index);
+    }, 150);
+  }
+
+  onProductSearchChange(index: number, value: string): void {
+    this.productSearchByItem[index] = String(value ?? '');
+    this.isProductDropdownOpenByItem[index] = true;
+  }
+
+  selectProduct(index: number, productId: string | number): void {
+    const item = this.createForm.productItems[index];
+    if (!item) {
+      return;
+    }
+
+    item.productId = String(productId ?? '').trim();
+    this.productSearchByItem[index] = this.getProductDisplayLabel(item.productId);
+    this.isProductDropdownOpenByItem[index] = false;
+    this.onProductChanged(index);
+  }
+
+  getProductSearchValue(index: number): string {
+    const typedValue = this.productSearchByItem[index];
+    if (typedValue !== undefined) {
+      return typedValue;
+    }
+
+    const item = this.createForm.productItems[index];
+    if (!item?.productId) {
+      return '';
+    }
+
+    return this.getProductDisplayLabel(item.productId);
+  }
+
+  getFilteredProductOptions(index: number): ProductOption[] {
+    const normalizedQuery = String(this.productSearchByItem[index] ?? '').trim().toLowerCase();
+    if (!normalizedQuery) {
+      return this.catalogProducts;
+    }
+
+    return this.catalogProducts.filter((item) => {
+      const name = String(item.name ?? '').trim().toLowerCase();
+      const brandName = String(item.brandName ?? '').trim().toLowerCase();
+      const combined = `${name} ${brandName}`.trim();
+      return name.includes(normalizedQuery) || brandName.includes(normalizedQuery) || combined.includes(normalizedQuery);
+    });
+  }
+
+  getProductDisplayLabel(productId: string): string {
+    const product = this.catalogProducts.find((item) => String(item.id) === String(productId));
+    if (!product) {
+      return '';
+    }
+
+    return `${product.name}${product.brandName ? ` (${product.brandName})` : ''}`;
   }
 
   getFilteredVendorOptions(): VendorOption[] {
@@ -506,7 +619,7 @@ export class PurchaseOrderComponent implements OnInit, OnDestroy {
     }
   }
 
-  private async loadTabData(tab: PurchaseTab): Promise<void> {
+  async loadTabData(tab: PurchaseTab): Promise<void> {
     if (!this.canAccessPurchaseTab(tab)) {
       this.purchaseOrders = [];
       this.total = 0;
@@ -570,11 +683,48 @@ export class PurchaseOrderComponent implements OnInit, OnDestroy {
     }).format(value ?? 0);
   }
 
+  getPurchaseTableProductLabels(item: PurchaseOrderItem): string[] {
+    const productItems = Array.isArray(item.productItems) ? item.productItems : [];
+    const seen = new Set<string>();
+    const labels: string[] = [];
+
+    for (const productItem of productItems) {
+      const label = String(productItem?.product?.productName ?? '').trim();
+      if (!label) {
+        continue;
+      }
+
+      const key = label.toLowerCase();
+      if (seen.has(key)) {
+        continue;
+      }
+
+      seen.add(key);
+      labels.push(label);
+    }
+
+    return labels;
+  }
+
+  getPurchaseTableVisibleProductLabels(item: PurchaseOrderItem, limit = 2): string[] {
+    return this.getPurchaseTableProductLabels(item).slice(0, limit);
+  }
+
+  getPurchaseTableHiddenProductCount(item: PurchaseOrderItem, limit = 2): number {
+    return Math.max(0, this.getPurchaseTableProductLabels(item).length - limit);
+  }
+
+  getPurchaseTableHiddenProductTooltip(item: PurchaseOrderItem, limit = 2): string {
+    const hidden = this.getPurchaseTableProductLabels(item).slice(limit);
+    return hidden.join(', ');
+  }
+
   isMasterDataDrawerMode(): boolean {
     return this.activeTab === 'master-data' && this.drawerMode === 'edit';
   }
 
-  getRowActionLabel(): 'View' | 'Edit' {
+  getRowActionLabel(item?: PurchaseOrderItem): 'View' | 'Edit' {
+    if (item && item.isTransferPO) return 'View';
     return this.activeTab === 'approvals' || this.activeTab === 'master-data'
       ? 'View'
       : 'Edit';
@@ -943,6 +1093,38 @@ export class PurchaseOrderComponent implements OnInit, OnDestroy {
     }
   }
 
+  async verifyAndReceive(): Promise<void> {
+    if (!this.editingPurchaseId || this.isVerifyingReceive || this.isCreating) {
+      return;
+    }
+
+    this.isVerifyingReceive = true;
+    this.createError = '';
+    this.createSuccess = '';
+
+    try {
+      const response = await this.purchaseOrderService.verifyAndReceivePurchase(this.editingPurchaseId);
+      if (!response.success) {
+        this.createError = response.message ?? 'Failed to verify and receive transfer PO';
+        return;
+      }
+
+      this.createSuccess = response.message ?? 'Transfer PO verified and received successfully';
+      await this.closeCreateDrawer();
+      await this.loadTabData(this.activeTab);
+    } catch (error: unknown) {
+      if (axios.isAxiosError(error)) {
+        this.createError =
+          (error.response?.data as { message?: string } | undefined)?.message ??
+          'Failed to verify and receive transfer PO';
+      } else {
+        this.createError = 'Failed to verify and receive transfer PO';
+      }
+    } finally {
+      this.isVerifyingReceive = false;
+    }
+  }
+
   // ── Cancel / Delete ────────────────────────────────────────────────
 
   canCancelPurchase(status: string | null | undefined): boolean {
@@ -1117,7 +1299,6 @@ export class PurchaseOrderComponent implements OnInit, OnDestroy {
     }
 
     this.resetCreateForm();
-    this.drawerMode = 'edit';
     this.editingPurchaseId = item.id;
     this.isFormDrawerOpen = true;
     this.createError = '';
@@ -1126,12 +1307,21 @@ export class PurchaseOrderComponent implements OnInit, OnDestroy {
     this.startPoSessionGuard();
 
     try {
-      const detail = await this.purchaseOrderService.getPurchaseById(item.id);
+      const detail = await this.purchaseOrderService.getPurchaseById(item.id, {
+        includeInstalled: this.activeTab === 'master-data',
+        preferPoLinkedSerials: this.activeTab === 'master-data',
+      });
 
       if (!detail) {
         this.createError = 'Failed to load purchase order details';
         return;
       }
+
+      this.isTransferPO = !!detail.isTransferPO;
+      this.originatingSalesOrder = detail.originatingSalesOrder || null;
+
+      // Set drawerMode after isTransferPO is known
+      this.drawerMode = this.isTransferPO ? 'view' : 'edit';
 
       this.applyDetailToForm(detail, item);
       this.editingPoNumber = String(detail.poNumber ?? item.poNumber ?? '').trim();
@@ -1146,6 +1336,284 @@ export class PurchaseOrderComponent implements OnInit, OnDestroy {
         this.createError = 'Failed to load purchase order details';
       }
     }
+  }
+
+  /**
+   * Returns true if this PO is a transfer PO and should be view-only in the receiver branch.
+   * You may want to enhance this logic to check if the current user is in the receiver branch.
+   */
+
+  get isTransferPOViewOnly(): boolean {
+    return this.isTransferPO;
+    // Optionally: check if user branch matches receiver branch
+    // return this.isTransferPO && this.rbacService.getPayload()?.branchId === this.editingBranchId;
+  }
+
+  get isDrawerViewMode(): boolean {
+    return this.drawerMode === 'view';
+  }
+
+  /**
+   * For transfer POs, get serials from originatingSalesOrder if present.
+   */
+  getDisplayUnitTypeSerials(unitType: any): string[] {
+    if (this.isMasterDataDrawerMode() && this.createForm.productItems.length === 1) {
+      const normalizedLabel = String(unitType?.label ?? '').trim().toLowerCase();
+      const allocations = this.getAllocatedFallbackSerialsByProductKey();
+      const allocated = allocations[`0::${normalizedLabel}`] ?? [];
+      for (const [entryLabel, serials] of Object.entries(this.poLinkedSerialNumbersByUnitType)) {
+        if (String(entryLabel ?? '').trim().toLowerCase() === normalizedLabel) {
+          const baseSerials = Array.isArray(serials) ? serials : [];
+          const merged = [...baseSerials];
+          const seen = new Set(merged.map((serial) => this.normalizeSerial(serial).toLowerCase()));
+
+          for (const serial of allocated) {
+            const normalizedSerial = this.normalizeSerial(serial).toLowerCase();
+            if (!normalizedSerial || seen.has(normalizedSerial)) {
+              continue;
+            }
+
+            seen.add(normalizedSerial);
+            merged.push(serial);
+          }
+
+          return merged;
+        }
+      }
+
+      return allocated;
+    }
+
+    if (this.isMasterDataDrawerMode()) {
+      const normalizedLabel = String(unitType?.label ?? '').trim().toLowerCase();
+      const allocations = this.getAllocatedFallbackSerialsByProductKey();
+      const allocated = allocations[`${this.activeProductTabIndex}::${normalizedLabel}`] ?? [];
+      if (allocated.length > 0) {
+        const baseSerials = Array.isArray(unitType?.serials) ? unitType.serials : [];
+        const merged = [...baseSerials];
+        const seen = new Set(merged.map((serial) => this.normalizeSerial(serial).toLowerCase()));
+
+        for (const serial of allocated) {
+          const normalizedSerial = this.normalizeSerial(serial).toLowerCase();
+          if (!normalizedSerial || seen.has(normalizedSerial)) {
+            continue;
+          }
+
+          seen.add(normalizedSerial);
+          merged.push(serial);
+        }
+
+        return merged;
+      }
+    }
+
+    if (this.isTransferPOViewOnly && this.originatingSalesOrder && Array.isArray(this.originatingSalesOrder.productItems)) {
+      const poProduct = this.createForm.productItems[this.activeProductTabIndex];
+      // Try to match by productId/capacityId and check both salesId and previousSalesId
+      const soProduct = this.originatingSalesOrder.productItems.find((p: any) => {
+        // Match by productId/capacityId
+        const matchProduct = String(p.productId) === String(poProduct.productId) && String(p.capacityId) === String(poProduct.capacityId);
+        if (!matchProduct) return false;
+        // If SO product has previousSalesId, prefer that
+        if (p.previousSalesId) {
+          // If PO has a reference to previousSalesId, you could add logic here if needed
+          return true;
+        }
+        // Otherwise, match on salesId if present
+        if (p.salesId) {
+          return true;
+        }
+        // Fallback: match if no salesId/previousSalesId info
+        return true;
+      });
+      if (soProduct && soProduct.serialNumbers && unitType.label in soProduct.serialNumbers) {
+        return soProduct.serialNumbers[unitType.label] || [];
+      }
+    }
+    return unitType.serials;
+  }
+
+  private getBaseUnresolvedLinkedSerialEntries(): Array<{ unitType: string; serials: string[] }> {
+    return Object.entries(this.unresolvedLinkedSerialNumbersByUnitType)
+      .filter(([_, serials]) => Array.isArray(serials) && serials.length > 0)
+      .map(([unitType, serials]) => ({ unitType, serials: [...serials] }));
+  }
+
+  private getFallbackPoolEntries(): Array<{ unitType: string; serials: string[] }> {
+    const merged = new Map<string, string[]>();
+
+    for (const entry of this.getBaseUnresolvedLinkedSerialEntries()) {
+      merged.set(entry.unitType, [...entry.serials]);
+    }
+
+    for (const entry of this.additionalPoLinkedSerialEntries) {
+      const existing = merged.get(entry.unitType) ?? [];
+      const seen = new Set(existing.map((serial) => this.normalizeSerial(serial).toLowerCase()));
+
+      for (const serial of entry.serials) {
+        const normalizedSerial = this.normalizeSerial(serial).toLowerCase();
+        if (!normalizedSerial || seen.has(normalizedSerial)) {
+          continue;
+        }
+
+        seen.add(normalizedSerial);
+        existing.push(serial);
+      }
+
+      if (existing.length > 0) {
+        merged.set(entry.unitType, existing);
+      }
+    }
+
+    return [...merged.entries()].map(([unitType, serials]) => ({ unitType, serials }));
+  }
+
+  private getAllocatedFallbackSerialsByProductKey(): Record<string, string[]> {
+    const pools = new Map<string, string[]>();
+    for (const entry of this.getFallbackPoolEntries()) {
+      pools.set(String(entry.unitType ?? '').trim().toLowerCase(), [...entry.serials]);
+    }
+
+    const allocations: Record<string, string[]> = {};
+
+    this.createForm.productItems.forEach((item, productIndex) => {
+      for (const unitType of item.unitTypes) {
+        const unitLabel = String(unitType.label ?? '').trim().toLowerCase();
+        if (!unitLabel) {
+          continue;
+        }
+
+        const pool = pools.get(unitLabel) ?? [];
+        if (pool.length === 0) {
+          continue;
+        }
+
+        const expectedQty = Math.max(0, Number(unitType.value) || 0);
+        const currentQty = Array.isArray(unitType.serials) ? unitType.serials.length : 0;
+        const missingQty = Math.max(0, expectedQty - currentQty);
+        if (missingQty <= 0) {
+          continue;
+        }
+
+        const allocated = pool.splice(0, missingQty);
+        if (allocated.length > 0) {
+          allocations[`${productIndex}::${unitLabel}`] = allocated;
+        }
+
+        pools.set(unitLabel, pool);
+      }
+    });
+
+    return allocations;
+  }
+
+  get unresolvedLinkedSerialEntries(): Array<{ unitType: string; serials: string[] }> {
+    const allocations = this.getAllocatedFallbackSerialsByProductKey();
+
+    return this.getFallbackPoolEntries()
+      .map((entry) => {
+        const unitLabel = String(entry.unitType ?? '').trim().toLowerCase();
+        const allocatedSerials = Object.entries(allocations)
+          .filter(([key]) => key.endsWith(`::${unitLabel}`))
+          .flatMap(([, serials]) => serials);
+        const allocatedSet = new Set(
+          allocatedSerials.map((serial) => this.normalizeSerial(serial).toLowerCase()),
+        );
+        const remaining = entry.serials.filter((serial) => {
+          const normalizedSerial = this.normalizeSerial(serial).toLowerCase();
+          return normalizedSerial && !allocatedSet.has(normalizedSerial);
+        });
+
+        return { unitType: entry.unitType, serials: remaining };
+      })
+      .filter((entry) => entry.serials.length > 0);
+  }
+
+  get poLinkedSerialEntries(): Array<{ unitType: string; serials: string[] }> {
+    return Object.entries(this.poLinkedSerialNumbersByUnitType)
+      .filter(([_, serials]) => Array.isArray(serials) && serials.length > 0)
+      .map(([unitType, serials]) => ({ unitType, serials }));
+  }
+
+  getSerialStatus(serialNumber: string): string {
+    const normalizedSerial = this.normalizeSerial(serialNumber).toLowerCase();
+    if (!normalizedSerial) {
+      return 'in_stock';
+    }
+
+    return String(this.serialStatusByNumber[normalizedSerial] ?? 'in_stock').trim().toLowerCase() || 'in_stock';
+  }
+
+  isInstalledSerial(serialNumber: string): boolean {
+    return this.getSerialStatus(serialNumber) === 'installed';
+  }
+
+  get additionalPoLinkedSerialEntries(): Array<{ unitType: string; serials: string[] }> {
+    const displayedSerialsByUnitType = new Map<string, Set<string>>();
+
+    for (const item of this.createForm.productItems) {
+      for (const unitType of item.unitTypes) {
+        const unitLabel = String(unitType.label ?? '').trim().toLowerCase();
+        if (!unitLabel) {
+          continue;
+        }
+
+        const existing = displayedSerialsByUnitType.get(unitLabel) ?? new Set<string>();
+        for (const serial of unitType.serials) {
+          const normalizedSerial = this.normalizeSerial(serial).toLowerCase();
+          if (normalizedSerial) {
+            existing.add(normalizedSerial);
+          }
+        }
+        displayedSerialsByUnitType.set(unitLabel, existing);
+      }
+    }
+
+    for (const entry of this.getBaseUnresolvedLinkedSerialEntries()) {
+      const unitLabel = String(entry.unitType ?? '').trim().toLowerCase();
+      if (!unitLabel) {
+        continue;
+      }
+
+      const existing = displayedSerialsByUnitType.get(unitLabel) ?? new Set<string>();
+      for (const serial of entry.serials) {
+        const normalizedSerial = this.normalizeSerial(serial).toLowerCase();
+        if (normalizedSerial) {
+          existing.add(normalizedSerial);
+        }
+      }
+      displayedSerialsByUnitType.set(unitLabel, existing);
+    }
+
+    return this.poLinkedSerialEntries
+      .map((entry) => {
+        const unitLabel = String(entry.unitType ?? '').trim().toLowerCase();
+        const displayed = displayedSerialsByUnitType.get(unitLabel) ?? new Set<string>();
+        const remaining = entry.serials.filter((serial) => {
+          const normalizedSerial = this.normalizeSerial(serial).toLowerCase();
+          return normalizedSerial && !displayed.has(normalizedSerial);
+        });
+
+        return {
+          unitType: entry.unitType,
+          serials: remaining,
+        };
+      })
+      .filter((entry) => entry.serials.length > 0);
+  }
+
+  get totalPoLinkedSerialCount(): number {
+    return this.poLinkedSerialEntries.reduce(
+      (total, entry) => total + entry.serials.length,
+      0,
+    );
+  }
+
+  get totalUnresolvedLinkedSerialCount(): number {
+    return this.unresolvedLinkedSerialEntries.reduce(
+      (total, entry) => total + entry.serials.length,
+      0,
+    );
   }
 
   async closeCreateDrawer(): Promise<void> {
@@ -1222,6 +1690,61 @@ export class PurchaseOrderComponent implements OnInit, OnDestroy {
     this.poGuardDialogMode = 'remove-serial-confirm';
   }
 
+  openManualSerialDialog(productIndex: number, unitLabel: string): void {
+    if (this.isFormDrawerBusy || this.drawerMode !== 'edit') {
+      return;
+    }
+
+    const unitEntry = this.getUnitEntry(productIndex, unitLabel);
+    if (!unitEntry) {
+      return;
+    }
+
+    this.manualSerialDialogState = {
+      productIndex,
+      unitLabel,
+    };
+    this.manualSerialInput = '';
+    this.manualSerialError = '';
+  }
+
+  closeManualSerialDialog(focusScanInput = true): void {
+    const dialogState = this.manualSerialDialogState;
+
+    this.manualSerialDialogState = null;
+    this.manualSerialInput = '';
+    this.manualSerialError = '';
+
+    if (focusScanInput && dialogState) {
+      this.focusSerialScanInput(dialogState.productIndex, dialogState.unitLabel);
+    }
+  }
+
+  async confirmManualSerialDialog(): Promise<void> {
+    const dialogState = this.manualSerialDialogState;
+    if (!dialogState) {
+      return;
+    }
+
+    const unitEntry = this.getUnitEntry(dialogState.productIndex, dialogState.unitLabel);
+    if (!unitEntry) {
+      this.closeManualSerialDialog(false);
+      return;
+    }
+
+    unitEntry.scanError = '';
+    unitEntry.scanSuccess = '';
+    const manualSerialValue = this.manualSerialInput;
+    this.closeManualSerialDialog(false);
+    this.processSerialForUnit(
+      dialogState.productIndex,
+      dialogState.unitLabel,
+      manualSerialValue,
+      'Enter serial number before adding',
+      false,
+    );
+  }
+
   async confirmRemoveScannedSerial(): Promise<void> {
     const pendingRemoval = this.pendingSerialRemoval;
     this.poGuardDialogMode = null;
@@ -1255,12 +1778,7 @@ export class PurchaseOrderComponent implements OnInit, OnDestroy {
   }
 
   hasAnyScannedSerials(): boolean {
-    const activeItem = this.getActiveProductItem();
-    if (!activeItem) {
-      return false;
-    }
-
-    return activeItem.unitTypes.some((unitType) => unitType.serials.length > 0);
+    return this.buildScannedSerialExportRows().length > 0;
   }
 
   async exportScannedSerialsAsExcel(): Promise<void> {
@@ -1429,7 +1947,6 @@ export class PurchaseOrderComponent implements OnInit, OnDestroy {
     const allTabs: PurchaseTab[] = ['deliveries', 'approvals', 'master-data'];
     return allTabs.filter((tab) => this.canAccessPurchaseTab(tab));
   }
-
   private applyMeta(meta?: { page: number; limit: number; total: number; totalPages: number }): void {
     if (!meta) {
       this.total = this.purchaseOrders.length;
@@ -1459,10 +1976,18 @@ export class PurchaseOrderComponent implements OnInit, OnDestroy {
       productItems: [this.createEmptyProductItem()],
       totalAmount: 0,
     };
+    this.serialStatusByNumber = {};
+    this.unresolvedLinkedSerialNumbersByUnitType = {};
+    this.poLinkedSerialNumbersByUnitType = {};
     this.vendorSearch = '';
+    this.productSearchByItem = {};
+    this.isProductDropdownOpenByItem = {};
     this.activeProductTabIndex = 0;
     this.selectedUnitTypeByProduct = {};
     this.scannedSerialTablePageByKey = {};
+    this.manualSerialDialogState = null;
+    this.manualSerialInput = '';
+    this.manualSerialError = '';
     this.queuedSerialScans = [];
     this.activeSerialFlushCount = 0;
     this.serialFlushFailureCount = 0;
@@ -1475,6 +2000,12 @@ export class PurchaseOrderComponent implements OnInit, OnDestroy {
     this.stopPoSessionGuard();
     this.stopQueuedSerialAutoFlush();
     this.clearQueuedSerialFlushTimer();
+    this.manualSerialDialogState = null;
+    this.manualSerialInput = '';
+    this.manualSerialError = '';
+    this.serialStatusByNumber = {};
+    this.unresolvedLinkedSerialNumbersByUnitType = {};
+    this.poLinkedSerialNumbersByUnitType = {};
     this.queuedSerialScans = [];
     this.activeSerialFlushCount = 0;
     this.serialFlushFailureCount = 0;
@@ -1658,11 +2189,38 @@ export class PurchaseOrderComponent implements OnInit, OnDestroy {
     }> = [];
 
     for (const unitType of activeItem.unitTypes) {
-      for (const serialNumber of unitType.serials) {
+      const serials = this.isMasterDataDrawerMode()
+        ? this.getDisplayUnitTypeSerials(unitType)
+        : unitType.serials;
+      for (const serialNumber of serials) {
         rows.push({
           unitType: unitType.label,
           serialNumber,
         });
+      }
+    }
+
+    if (this.isMasterDataDrawerMode()) {
+      if (this.createForm.productItems.length === 1) {
+        for (const entry of this.poLinkedSerialEntries) {
+          for (const serialNumber of entry.serials) {
+            const normalizedSerial = this.normalizeSerial(serialNumber).toLowerCase();
+            if (rows.some((row) => this.normalizeSerial(row.serialNumber).toLowerCase() === normalizedSerial)) {
+              continue;
+            }
+
+            rows.push({ unitType: entry.unitType, serialNumber });
+          }
+        }
+      }
+
+      for (const entry of this.unresolvedLinkedSerialEntries) {
+        for (const serialNumber of entry.serials) {
+          rows.push({
+            unitType: `Unmapped - ${entry.unitType}`,
+            serialNumber,
+          });
+        }
       }
     }
 
@@ -1924,6 +2482,7 @@ export class PurchaseOrderComponent implements OnInit, OnDestroy {
   addProductItem(): void {
     this.createForm.productItems = [...this.createForm.productItems, this.createEmptyProductItem()];
     this.activeProductTabIndex = this.createForm.productItems.length - 1;
+    this.syncProductComboboxState();
     this.ensureSelectedUnitType(this.activeProductTabIndex);
     this.recalculateTotalAmount();
   }
@@ -1945,6 +2504,7 @@ export class PurchaseOrderComponent implements OnInit, OnDestroy {
         return [itemIndex, label];
       }),
     );
+    this.syncProductComboboxState();
     this.scannedSerialTablePageByKey = {};
     this.activeProductTabIndex = Math.max(0, Math.min(this.activeProductTabIndex, this.createForm.productItems.length - 1));
     this.ensureSelectedUnitType(this.activeProductTabIndex);
@@ -1965,6 +2525,7 @@ export class PurchaseOrderComponent implements OnInit, OnDestroy {
       unitTypes: nextUnitTypes,
     };
     this.createForm.productItems = nextItems;
+    this.syncProductComboboxState();
     this.scannedSerialTablePageByKey = {};
     this.ensureSelectedUnitType(index);
     this.recalculateTotalAmount();
@@ -2264,14 +2825,44 @@ export class PurchaseOrderComponent implements OnInit, OnDestroy {
       delete this.serialScanTimers[timerKey];
     }
 
-    const serialNumber = this.normalizeSerial(unitEntry.scanInput);
+    this.processSerialForUnit(
+      productIndex,
+      unitLabel,
+      unitEntry.scanInput,
+      'Enter serial number before scanning',
+      showEmptyError,
+    );
+  }
+
+  private processSerialForUnit(
+    productIndex: number,
+    unitLabel: string,
+    rawSerialInput: string,
+    emptyMessage: string,
+    showEmptyError: boolean,
+  ): void {
+    const item = this.createForm.productItems[productIndex];
+    if (!item) {
+      return;
+    }
+
+    const unitEntry = item.unitTypes.find((entry) => entry.label === unitLabel);
+    if (!unitEntry) {
+      return;
+    }
+
+    const serialNumber = this.normalizeSerial(rawSerialInput);
     unitEntry.scanError = '';
     unitEntry.scanSuccess = '';
 
     if (!serialNumber) {
       if (showEmptyError) {
-        unitEntry.scanError = 'Enter serial number before scanning';
+        unitEntry.scanError = emptyMessage;
       }
+      return;
+    }
+
+    if (this.drawerMode !== 'edit' || this.editingPurchaseId === null) {
       return;
     }
 
@@ -2760,7 +3351,7 @@ export class PurchaseOrderComponent implements OnInit, OnDestroy {
   private buildPurchasePayload(): CreatePurchaseRequestPayload {
     const vendorId = this.resolveExistingVendorId();
     const vendorName = this.createForm.vendorName.trim();
-    const useExistingVendor = this.vendorMode === 'existing';
+    const useExistingVendor = !!vendorId;
     const vendorPayload = vendorName
       ? {
           name: vendorName,
@@ -2812,18 +3403,17 @@ export class PurchaseOrderComponent implements OnInit, OnDestroy {
   }
 
   private validatePurchaseForm(): string | null {
-    const useExistingVendor = this.vendorMode === 'existing';
     const vendorName = this.createForm.vendorName.trim();
     const resolvedExistingVendorId = this.resolveExistingVendorId();
 
-    if (useExistingVendor) {
-      if (!resolvedExistingVendorId) {
-        return 'Select an existing vendor from the dropdown, or switch to New Vendor.';
-      }
+    if (!vendorName) {
+      return 'Dealer name is required.';
+    }
 
+    if (resolvedExistingVendorId) {
       this.createForm.vendorId = resolvedExistingVendorId;
-    } else if (!vendorName) {
-      return 'Vendor name is required.';
+    } else {
+      this.createForm.vendorId = '';
     }
 
     if (this.createForm.productItems.length === 0) {
@@ -2985,7 +3575,28 @@ export class PurchaseOrderComponent implements OnInit, OnDestroy {
       totalAmount: Number(detail.totalAmount) || Number(fallbackItem.totalAmount) || 0,
     };
 
+    this.unresolvedLinkedSerialNumbersByUnitType =
+      detail.unresolvedLinkedSerialNumbers && typeof detail.unresolvedLinkedSerialNumbers === 'object'
+        ? this.normalizeSerialNumbersByUnitType(detail.unresolvedLinkedSerialNumbers)
+        : {};
+
+    this.serialStatusByNumber =
+      detail.serialStatuses && typeof detail.serialStatuses === 'object'
+        ? Object.fromEntries(
+            Object.entries(detail.serialStatuses).map(([serialNumber, status]) => [
+              this.normalizeSerial(serialNumber).toLowerCase(),
+              String(status ?? '').trim().toLowerCase() || 'in_stock',
+            ]),
+          )
+        : {};
+
+    this.poLinkedSerialNumbersByUnitType =
+      detail.poLinkedSerialNumbers && typeof detail.poLinkedSerialNumbers === 'object'
+        ? this.normalizeSerialNumbersByUnitType(detail.poLinkedSerialNumbers)
+        : {};
+
     this.vendorSearch = detail.vendorName ?? fallbackItem.vendorName ?? '';
+    this.syncProductComboboxState();
     if (detail.vendorId && !this.vendorOptions.some((vendor) => vendor.id === detail.vendorId)) {
       this.vendorOptions = [
         { id: detail.vendorId, name: detail.vendorName || detail.vendorId },
@@ -3311,6 +3922,15 @@ export class PurchaseOrderComponent implements OnInit, OnDestroy {
       ],
       totalSetQty: 1,
     };
+  }
+
+  private syncProductComboboxState(): void {
+    this.productSearchByItem = Object.fromEntries(
+      this.createForm.productItems.map((item, index) => [String(index), item.productId ? this.getProductDisplayLabel(item.productId) : '']),
+    );
+    this.isProductDropdownOpenByItem = Object.fromEntries(
+      this.createForm.productItems.map((_, index) => [String(index), false]),
+    );
   }
 
   private createEmptyPaymentItem(): PurchasePaymentFormItem {

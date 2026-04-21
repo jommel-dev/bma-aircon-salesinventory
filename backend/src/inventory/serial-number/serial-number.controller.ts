@@ -42,6 +42,45 @@ export class SerialNumberController {
     return normalizedTokenBranchId;
   }
 
+  @Post('insert-bulk')
+  @UseGuards(JwtAuthGuard)
+  insertBulk(
+    @Body() body: { serials: Array<{ serialNumber: string; unitType?: string; status?: string; productId?: number; capacityId?: number }> },
+    @Req() request: { user?: Record<string, unknown> },
+  ) {
+    const role = String(request.user?.roleName ?? '').trim().toLowerCase();
+    if (role !== 'superadmin' && role !== 'super admin' && role !== 'admin') {
+      return { success: false, message: 'Access denied. Admin or Super Admin role required.' };
+    }
+    return this.serialNumberService.insertBulk(body.serials);
+  }
+
+  @Post('csv-preview')
+  csvPreview(
+    @Body() body: { rows: Array<{ serialNumber: string; unitType?: string; status: string }> },
+    @Req() request: { user?: Record<string, unknown> },
+  ) {
+    const role = String(request.user?.roleName ?? '').trim().toLowerCase();
+    if (role !== 'superadmin' && role !== 'super admin' && role !== 'admin') {
+      return { success: false, message: 'Access denied. Admin or Super Admin role required.' };
+    }
+    return this.serialNumberService.csvPreview(body.rows);
+  }
+
+  @Post('bulk-update-status')
+  bulkUpdateStatus(
+    @Body() body: { serialNumbers: string[]; status: string },
+    @Req() request: { user?: { sub?: unknown; roleName?: unknown } },
+  ) {
+    const role = String(request.user?.roleName ?? '').trim().toLowerCase();
+    if (role !== 'superadmin' && role !== 'super admin' && role !== 'admin') {
+      return { success: false, message: 'Access denied. Admin or Super Admin role required.' };
+    }
+    const userId = Number(request.user?.sub);
+    const normalizedUserId = Number.isFinite(userId) ? userId : undefined;
+    return this.serialNumberService.bulkUpdateStatus(body.serialNumbers, body.status, normalizedUserId);
+  }
+
   @Post('scan-sales-order')
   scanSalesOrder(
     @Body() dto: ScanSalesOrderDto,

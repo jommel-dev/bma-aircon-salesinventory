@@ -78,6 +78,14 @@ export interface SalesOrderConcernDetailsPayload {
   priority?: string;
   resolutionNotes?: string;
   resolvedAt?: string | null;
+  warrantySerials?: string;
+}
+
+export interface SalesOrderReturnedSerialDetailsPayload {
+  isDefective?: boolean;
+  defectReason?: string;
+  defectDate?: string | null;
+  serialNumbers?: string[];
 }
 
 export interface SalesOrderExpenseDetailsPayload {
@@ -101,12 +109,14 @@ export interface SalesOrderPayload {
   totalAmount?: number;
   scheduleDate?: string | null;
   salesType?: string;
+  projectId?: number;
   projectName?: string;
   projectCode?: string;
   installer?: string;
   remarks?: string;
   transferDetails?: SalesOrderTransferDetailsPayload;
   concernDetails?: SalesOrderConcernDetailsPayload;
+  returnedSerialDetails?: SalesOrderReturnedSerialDetailsPayload;
   status?: string;
 }
 
@@ -119,6 +129,66 @@ export interface SalesOrderApiResponse {
     totalAmount?: number;
     status?: string;
   };
+}
+
+export interface SalesOrderMigrationPreviewItem {
+  rowNumber: number;
+  mergedRowNumbers?: number[];
+  raw: Record<string, unknown>;
+  extracted: {
+    capacityKey?: string;
+    productHint?: string;
+    customerId?: string | null;
+    salesType?: string;
+    inferredPaymentMethod?: string;
+    unitTypeLabel?: string;
+  };
+  matchedCatalog: {
+    productId: number;
+    capacityId: number;
+    brandName: string;
+    productName: string;
+    capacity: string;
+  } | null;
+  matchedCatalogs?: Array<{
+    productId: number;
+    capacityId: number;
+    brandName: string;
+    productName: string;
+    capacity: string;
+  }>;
+  confidence: 'high' | 'medium' | 'rejected';
+  issues: string[];
+  mappedPayload: Record<string, unknown> | null;
+}
+
+export interface SalesOrderMigrationPreviewResponse {
+  success: boolean;
+  message?: string;
+  summary: {
+    total: number;
+    highConfidence: number;
+    reviewNeeded: number;
+    rejected: number;
+    matchedCustomers: number;
+    newCustomers: number;
+  } | null;
+  items: SalesOrderMigrationPreviewItem[];
+}
+
+export interface SalesOrderMigrationImportResponse {
+  success: boolean;
+  batchFailed?: boolean;
+  message?: string;
+  summary: {
+    total: number;
+    created: number;
+    failed: number;
+    blocked: number;
+    aborted: number;
+    skippedReview: number;
+  } | null;
+  items: Array<{ rowNumber: number; status: string; salesOrderId?: number | null; message: string }>;
 }
 
 export interface SalesOrderListItem {
@@ -135,12 +205,13 @@ export interface SalesOrderListItem {
   scheduleDate: string | null;
   createdAt: string | null;
   serialCount: number;
+  concernStatus?: string;
 }
 
 export interface SalesCustomerDetail {
   id: string;
   name: string;
-  customer_type: 'regular' | 'sub_dealer';
+  customer_type: 'regular' | 'sub_dealer' | 'dealer';
   current_balance: number;
   credit_limit?: number;
   payment_terms: number;
@@ -159,23 +230,87 @@ export interface SalesCustomerOrder {
   totalAmount: number;
   status: string;
   salesType: string;
+  scheduleDate: string | null;
   createdAt: string | null;
+  payments: Array<{
+    method: string;
+    amount: number;
+    status: string;
+    terms: string | null;
+    termsDueDate: string | null;
+    downPayment: number;
+    checkNo: string | null;
+    postDated: string | null;
+    paymentDate: string | null;
+    bankName: string | null;
+    referenceNo: string | null;
+  }>;
+  productItems: Array<{
+    productName: string;
+    capacity: string;
+    qty: number;
+    unitPrice: number;
+    discountPrice: number;
+  }>;
 }
 
-export interface SalesCustomerPayment {
-  id: string;
-  paymentDate: string | null;
-  paymentAmount: number;
-  paymentMethod: string;
-  referenceNo: string;
-  paymentNotes: string;
-  createdAt: string | null;
+export interface SalesCustomerPaymentSummary {
+  totalCharges: number;
+  totalManualPayments: number;
+  outstandingBalance: number;
 }
+
+export interface SalesCustomerSoPayment {
+  id: string;
+  type: 'so_payment';
+  soId: string;
+  soNumber: string;
+  method: string;
+  amount: number;
+  downPayment: number;
+  status: string;
+  termsDueDate: string | null;
+  postDated: string | null;
+  paymentDate: string | null;
+  referenceNo: string | null;
+  checkNo: string | null;
+  bankName: string | null;
+  notes: string | null;
+  appliedToBalance: number;
+  date: string | null;
+}
+
+export interface SalesCustomerSettlement {
+  id: string;
+  type: 'settlement';
+  soId: string | null;
+  soNumber: string | null;
+  method: string;
+  amount: number;
+  downPayment: number;
+  status: string;
+  termsDueDate: string | null;
+  postDated: string | null;
+  paymentDate: string | null;
+  referenceNo: string | null;
+  checkNo: string | null;
+  bankName: string | null;
+  notes: string | null;
+  appliedToBalance: number;
+  date: string | null;
+}
+
+// Keep backward compat alias
+export type SalesCustomerPayment = SalesCustomerSoPayment | SalesCustomerSettlement;
 
 export interface SalesCustomerConcern {
   id: number;
   salesId: number;
   soNumber: string;
+  salesType: string;
+  status: string;
+  scheduleDate: string | null;
+  createdAt: string | null;
   concernType: string;
   concernSubject: string;
   concernDescription: string;
@@ -183,6 +318,11 @@ export interface SalesCustomerConcern {
   priority: string;
   resolutionNotes: string;
   resolvedAt: string | null;
+  serviceName: string;
+  serviceType: string;
+  serviceStatus: string;
+  serviceDate: string | null;
+  serviceCost: number;
 }
 
 export interface SalesStatementOfAccountItem {
@@ -283,6 +423,7 @@ export interface SalesOrderDetailItem {
   status: string;
   scheduleDate: string | null;
   salesType: string;
+  projectId?: number;
   projectName: string;
   projectCode: string;
   installer: string;
@@ -314,6 +455,37 @@ export interface ProductOption {
   unit?: string;
   unitTypes?: string[];
   capacities: ProductCapacityOption[];
+}
+
+export interface ProjectMasterOption {
+  id: number;
+  projectCode: string;
+  projectName: string;
+  projectType?: string;
+  projectOwner?: string;
+  projectLocation?: string;
+  projectStartDate?: string | null;
+  projectEndDate?: string | null;
+  projectManager?: string;
+  projectStatus?: string;
+  projectNotes?: string;
+  relatedSOCount?: number;
+  createdBy?: string;
+  createdAt?: string;
+  updatedAt?: string;
+}
+
+export interface ProjectWithRelatedSOs extends ProjectMasterOption {
+  relatedSalesOrders: Array<{
+    id: number;
+    soNumber: string;
+    customerId: string;
+    customerName: string;
+    totalAmount: number;
+    status: string;
+    scheduleDate?: string | null;
+    createdAt?: string | null;
+  }>;
 }
 
 export interface SalesListMeta {
@@ -465,6 +637,24 @@ export class SalesOrderService {
     };
   }
 
+  async previewDailyReleaseMigration(rows: Array<Record<string, unknown>>): Promise<SalesOrderMigrationPreviewResponse> {
+    const response = await apiClient.post<SalesOrderMigrationPreviewResponse>('/sales-order/migration/preview', { rows });
+    return response.data;
+  }
+
+  async importDailyReleaseMigration(
+    rows: Array<Record<string, unknown>>,
+    selectedMediumRowNumbers: number[] = [],
+    editedPayloads: Array<{ rowNumber: number; payload: SalesOrderPayload }> = [],
+  ): Promise<SalesOrderMigrationImportResponse> {
+    const response = await apiClient.post<SalesOrderMigrationImportResponse>('/sales-order/migration/import', {
+      rows,
+      selectedMediumRowNumbers,
+      editedPayloads,
+    });
+    return response.data;
+  }
+
   async getSalesOrderById(id: number): Promise<SalesOrderDetailItem> {
     const response = await apiClient.get<SalesOrderDetailResponse>(`/sales-order/${id}`);
     if (!response.data.success) {
@@ -560,14 +750,22 @@ export class SalesOrderService {
     };
   }
 
-  async getCustomerPayments(id: string): Promise<{ success: boolean; items?: SalesCustomerPayment[]; message?: string }> {
-    const response = await apiClient.get<{ success: boolean; items?: SalesCustomerPayment[]; message?: string }>(
-      `/sales-order/customers/${id}/payments`,
-    );
-
+  async getCustomerPayments(id: string): Promise<{
+    success: boolean;
+    summary?: { totalCharges: number; totalManualPayments: number; outstandingBalance: number };
+    soPayments?: SalesCustomerSoPayment[];
+    settlements?: SalesCustomerSettlement[];
+    message?: string;
+  }> {
+    const response = await apiClient.get<{
+      success: boolean;
+      summary?: { totalCharges: number; totalManualPayments: number; outstandingBalance: number };
+      soPayments?: SalesCustomerSoPayment[];
+      settlements?: SalesCustomerSettlement[];
+      message?: string;
+    }>(`/sales-order/customers/${id}/payments`);
     return response.data;
   }
-
   async getCustomerConcerns(id: string): Promise<{ success: boolean; items?: SalesCustomerConcern[]; message?: string }> {
     const response = await apiClient.get<{ success: boolean; items?: SalesCustomerConcern[]; message?: string }>(
       `/sales-order/customers/${id}/concerns`,
@@ -657,6 +855,38 @@ export class SalesOrderService {
     return response.data;
   }
 
+  async searchProjects(params: {
+    search?: string;
+    status?: string;
+    page?: number;
+    limit?: number;
+    branchId?: number;
+  }): Promise<{ items: ProjectMasterOption[]; meta: SalesListMeta }> {
+    const response = await apiClient.get<{ success: boolean; items?: ProjectMasterOption[]; meta?: SalesListMeta }>(
+      '/sales-order/projects/search',
+      { params },
+    );
+
+    return {
+      items: response.data.items ?? [],
+      meta: response.data.meta ?? { page: params.page ?? 1, limit: params.limit ?? 10, total: 0, totalPages: 1 },
+    };
+  }
+
+  async getProjectWithRelatedSOs(projectId: number): Promise<ProjectWithRelatedSOs | null> {
+    const response = await apiClient.get<{
+      success: boolean;
+      message?: string;
+      data?: ProjectWithRelatedSOs;
+    }>(`/sales-order/projects/${projectId}/related-orders`);
+
+    if (!response.data.success || !response.data.data) {
+      return null;
+    }
+
+    return response.data.data;
+  }
+
   async getProducts(): Promise<ProductOption[]> {
     const response = await apiClient.get<{ success: boolean; items?: ProductOption[] }>('/products');
     return response.data.items ?? [];
@@ -704,6 +934,35 @@ export class SalesOrderService {
       payload,
     );
 
+    return response.data;
+  }
+
+  async bulkUpdateSerialStatus(serialNumbers: string[], status: string): Promise<{ success: boolean; message?: string; updated?: number }> {
+    const response = await apiClient.post<{ success: boolean; message?: string; updated?: number }>(
+      '/serial-number/bulk-update-status',
+      { serialNumbers, status },
+    );
+    return response.data;
+  }
+
+  async insertBulkSerials(serials: Array<{ serialNumber: string; unitType?: string; status?: string; productId?: number; capacityId?: number }>): Promise<{ success: boolean; message?: string; inserted?: number; skipped?: number }> {
+    const response = await apiClient.post('/serial-number/insert-bulk', { serials });
+    return response.data;
+  }
+
+  async previewCsvSerials(rows: Array<{ serialNumber: string; unitType?: string; status: string }>): Promise<{
+    success: boolean;
+    message?: string;
+    summary?: {
+      total: number; toInstall: number; alreadyInstalled: number; notFound: number; otherStatus: number;
+      totalSets: number; unitTypeCounts: Record<string, number>; remainingStocks: number;
+    };
+    toInstall?: Array<{ serialNumber: string; csvStatus: string; csvUnitType: string; unitType: string; productName: string; capacityName: string }>;
+    alreadyInstalled?: Array<{ serialNumber: string; unitType: string; productName: string; capacityName: string }>;
+    notFound?: Array<{ serialNumber: string; csvStatus: string; csvUnitType: string }>;
+    otherStatus?: Array<{ serialNumber: string; csvStatus: string; dbStatus: string; unitType: string; productName: string; capacityName: string }>;
+  }> {
+    const response = await apiClient.post('/serial-number/csv-preview', { rows });
     return response.data;
   }
 }

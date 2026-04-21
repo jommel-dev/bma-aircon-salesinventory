@@ -1,6 +1,7 @@
 import { BadRequestException, Injectable, NotFoundException } from '@nestjs/common';
 import { DatabaseService } from 'src/database/database.service';
 import { PoolClient } from 'pg';
+import { AuditActorContext, AuditLogService } from 'src/audit-log/audit-log.service';
 
 type Trend = 'up' | 'down';
 
@@ -82,7 +83,48 @@ type SalesSettlementStateRow = {
 
 @Injectable()
 export class DashboardService {
-  constructor(private readonly databaseService: DatabaseService) {}
+  constructor(
+    private readonly databaseService: DatabaseService,
+    private readonly auditLogService: AuditLogService,
+  ) {}
+
+  private async getSalesSettlementAuditSnapshot(
+    salesOrderId: number,
+    branchId?: number,
+  ): Promise<Record<string, unknown> | null> {
+    const branchParam = branchId ? String(branchId) : null;
+    const result = await this.databaseService.query<SalesSettlementStateRow>(
+      `${this.getSalesDashboardBaseCte()}
+       SELECT
+         ss.so_id::text AS "soId",
+         ss.total_amount::text AS "totalAmount",
+         ss.paid_amount::text AS "paidAmount",
+         ss.remaining_amount::text AS "remainingAmount",
+         ss.outstanding_receivable_amount::text AS "outstandingReceivableAmount",
+         ss.normalized_status::text AS "normalizedStatus",
+         NULLIF(ss.branch_id, '')::text AS "branchId"
+       FROM sales_scope ss
+       WHERE ss.so_id = $1::text
+         AND ($2::text IS NULL OR ss.branch_id = $2::text)
+       LIMIT 1`,
+      [String(salesOrderId), branchParam],
+    );
+
+    if (result.rowCount === 0) {
+      return null;
+    }
+
+    const row = result.rows[0];
+    return {
+      salesOrderId: Number(row.soId),
+      totalAmount: this.toNumber(row.totalAmount),
+      paidAmount: this.toNumber(row.paidAmount),
+      remainingAmount: this.toNumber(row.remainingAmount),
+      outstandingReceivableAmount: this.toNumber(row.outstandingReceivableAmount),
+      normalizedStatus: row.normalizedStatus,
+      branchId: row.branchId ? Number(row.branchId) : null,
+    };
+  }
 
   private toNumber(value: unknown): number {
     const parsed = Number(value);
@@ -1133,19 +1175,33 @@ export class DashboardService {
           customer: string;
           totalAmount: string;
           paidAmount: string;
+          downPayment: string;
           method: string;
           dueDate: string;
         }>(
-          `${this.getSalesDashboardBaseCte()}
+          `${this.getSalesDashboardBaseCte()},
+           down_payment_scope AS (
+             SELECT
+               COALESCE(to_jsonb(sp)->>'so_id', to_jsonb(sp)->>'soId') AS so_id,
+               COALESCE(SUM(
+                 COALESCE(NULLIF(COALESCE(to_jsonb(sp)->>'downPayment', to_jsonb(sp)->>'down_payment', ''), '')::numeric, 0)
+               ), 0) AS total_down_payment
+             FROM tblso_payments sp
+             WHERE LOWER(COALESCE(to_jsonb(sp)->>'status', '')) != 'paid'
+               AND COALESCE(NULLIF(COALESCE(to_jsonb(sp)->>'downPayment', to_jsonb(sp)->>'down_payment', ''), '')::numeric, 0) > 0
+             GROUP BY COALESCE(to_jsonb(sp)->>'so_id', to_jsonb(sp)->>'soId')
+           )
            SELECT
              ss.so_id::text AS "soId",
              ss.so_number::text AS "soNumber",
              ss.customer::text AS customer,
              ss.total_amount::text AS "totalAmount",
              ss.paid_amount::text AS "paidAmount",
+             COALESCE(dp.total_down_payment, 0)::text AS "downPayment",
              ss.credit_terms_methods::text AS method,
              ss.due_date::text AS "dueDate"
            FROM sales_scope ss
+           LEFT JOIN down_payment_scope dp ON dp.so_id = ss.so_id
            WHERE ${mode === 'overdues' ? overdueBalancePredicate : openBalancePredicate}
              AND ($1::text IS NULL OR ss.branch_id = $1::text)
            ORDER BY ss.due_date ASC NULLS LAST, ss.created_at DESC
@@ -1155,17 +1211,24 @@ export class DashboardService {
 
         return {
           success: true,
-          items: result.rows.map((row) => ({
-            id: row.soId,
-            soId: Number(row.soId),
-            soNumber: row.soNumber,
-            customer: row.customer,
-            totalAmount: this.toNumber(row.totalAmount),
-            paidAmount: this.toNumber(row.paidAmount),
-            method: row.method,
-            balance: Math.max(this.toNumber(row.totalAmount) - this.toNumber(row.paidAmount), 0),
-            dueDate: row.dueDate ? new Date(row.dueDate) : null,
-          })),
+          items: result.rows.map((row) => {
+            const total = this.toNumber(row.totalAmount);
+            const paid = this.toNumber(row.paidAmount);
+            const dp = this.toNumber(row.downPayment);
+            const balance = Math.max(total - paid - dp, 0);
+            return {
+              id: row.soId,
+              soId: Number(row.soId),
+              soNumber: row.soNumber,
+              customer: row.customer,
+              totalAmount: total,
+              paidAmount: paid,
+              downPayment: dp,
+              method: row.method,
+              balance,
+              dueDate: row.dueDate ? new Date(row.dueDate) : null,
+            };
+          }),
         };
       }
 
@@ -1258,11 +1321,14 @@ export class DashboardService {
       postDated?: string | null;
     },
     branchId?: number,
+    auditActor?: AuditActorContext,
   ): Promise<{ success: boolean; message: string }> {
     const salesOrderId = Number(payload.salesOrderId);
     if (!Number.isFinite(salesOrderId) || salesOrderId <= 0) {
       throw new BadRequestException('A valid salesOrderId is required');
     }
+
+    const beforeSnapshot = await this.getSalesSettlementAuditSnapshot(salesOrderId, branchId);
 
     const mode = payload.mode;
     if (!mode || !['partial', 'full', 'cheque', 'split'].includes(mode)) {
@@ -1334,6 +1400,21 @@ export class DashboardService {
       }
 
       await this.updateSalesOrderStatusForSettlement(client, salesOrderId, branchId);
+    });
+
+    const afterSnapshot = await this.getSalesSettlementAuditSnapshot(salesOrderId, branchId);
+    await this.auditLogService.logMutation({
+      action: 'DASHBOARD_SALES_SETTLEMENT',
+      entityType: 'sales-settlement',
+      entityId: salesOrderId,
+      actor: auditActor,
+      description: `Recorded ${mode} settlement for sales order #${salesOrderId}`,
+      requestBody: payload as Record<string, unknown>,
+      before: beforeSnapshot,
+      after: afterSnapshot,
+      metadata: {
+        mode,
+      },
     });
 
     return {
