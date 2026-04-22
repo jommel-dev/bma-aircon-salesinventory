@@ -160,6 +160,10 @@ export class SettingsComponent implements OnInit {
     cvNumberSuffix: string;
     gjNumberPrefix: string;
     gjNumberSuffix: string;
+    // quotation payment details
+    quotePaymentTerms: string;
+    quotePaymentInstruction: string;
+    quoteBankAccount: string;
   } = {
     paperSize: 'A4',
     showLogo: true,
@@ -182,6 +186,9 @@ export class SettingsComponent implements OnInit {
     cvNumberSuffix: '',
     gjNumberPrefix: 'GJ',
     gjNumberSuffix: '',
+    quotePaymentTerms: '',
+    quotePaymentInstruction: '',
+    quoteBankAccount: '',
   };
 
   constructor(
@@ -1017,6 +1024,9 @@ export class SettingsComponent implements OnInit {
       cvNumberSuffix: item?.cvNumberSuffix ?? '',
       gjNumberPrefix: item?.gjNumberPrefix ?? 'GJ',
       gjNumberSuffix: item?.gjNumberSuffix ?? '',
+      quotePaymentTerms: item?.quotationPaymentTerms ?? '',
+      quotePaymentInstruction: item?.quotationPaymentInstruction ?? '',
+      quoteBankAccount: item?.quotationBankAccount ?? '',
     };
   }
 
@@ -1046,6 +1056,9 @@ export class SettingsComponent implements OnInit {
         printDrShowSerials: String(this.printForm.drShowSerials),
         printDrShowSignature: String(this.printForm.drShowSignature),
         printAddressDetails: this.toNullable(this.printForm.addressDetails),
+        quotationPaymentTerms: this.toNullable(this.printForm.quotePaymentTerms),
+        quotationPaymentInstruction: this.toNullable(this.printForm.quotePaymentInstruction),
+        quotationBankAccount: this.toNullable(this.printForm.quoteBankAccount),
         printAddressShowSoInvoice: String(this.printForm.addressShowSoInvoice),
         printAddressShowQuotation: String(this.printForm.addressShowQuotation),
         printAddressShowDr: String(this.printForm.addressShowDr),

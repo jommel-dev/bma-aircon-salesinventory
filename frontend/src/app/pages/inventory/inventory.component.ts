@@ -50,6 +50,9 @@ interface UnitTypeOption {
 
 interface CapacityDraft {
   srp: number | null;
+  cashPrice: number | null;
+  ccPrice: number | null;
+  unitPrice: number | null;
   netPrice: number | null;
   indoorModel: string;
   outdoorModel: string;
@@ -140,6 +143,9 @@ export class InventoryComponent implements OnInit {
 
   newCapacityName = '';
   newCapacitySrp: number | null = null;
+  newCapacityCashPrice: number | null = null;
+  newCapacityCcPrice: number | null = null;
+  newCapacityUnitPrice: number | null = null;
   newCapacityNetPrice: number | null = null;
   newCapacityIndoorModel = '';
   newCapacityOutdoorModel = '';
@@ -1194,6 +1200,9 @@ export class InventoryComponent implements OnInit {
         outdoorModel: this.newCapacityOutdoorModel.trim(),
         srp: this.newCapacitySrp ?? 0,
         netPrice: this.newCapacityNetPrice ?? 0,
+        cashPrice: this.newCapacityCashPrice ?? 0,
+        ccPrice: this.newCapacityCcPrice ?? 0,
+        unitPrice: this.newCapacityUnitPrice ?? 0,
       });
 
       if (!response.data.success) {
@@ -1318,6 +1327,30 @@ export class InventoryComponent implements OnInit {
         step: 0.01,
       },
       {
+        key: 'cashPrice',
+        label: 'Cash Price',
+        type: 'number',
+        required: false,
+        min: 0,
+        step: 0.01,
+      },
+      {
+        key: 'ccPrice',
+        label: 'CC Price',
+        type: 'number',
+        required: false,
+        min: 0,
+        step: 0.01,
+      },
+      {
+        key: 'unitPrice',
+        label: 'Unit Price',
+        type: 'number',
+        required: false,
+        min: 0,
+        step: 0.01,
+      },
+      {
         key: 'indoorModel',
         label: 'Indoor Model',
         type: 'text',
@@ -1332,6 +1365,9 @@ export class InventoryComponent implements OnInit {
       capacityName: capacity.name ?? '',
       srp: Number(capacity.sellPrice ?? 0),
       netPrice: Number(capacity.unitPrice ?? 0),
+      cashPrice: Number(capacity.cashPrice ?? 0),
+      ccPrice: Number(capacity.ccPrice ?? 0),
+      unitPrice: Number(capacity.unitPrice ?? 0),
       indoorModel: String(capacity.indoorModel ?? ''),
       outdoorModel: String(capacity.outdoorModel ?? ''),
     };
@@ -1468,6 +1504,9 @@ export class InventoryComponent implements OnInit {
         capacity: capacityName,
         srp,
         netPrice,
+        cashPrice: Number(payload['cashPrice'] ?? 0),
+        ccPrice: Number(payload['ccPrice'] ?? 0),
+        unitPrice: Number(payload['unitPrice'] ?? 0),
         indoorModel,
         outdoorModel,
       });
@@ -1772,6 +1811,9 @@ export class InventoryComponent implements OnInit {
       outdoorModel: String(details.outdoorModel ?? '').trim(),
       srp: String(Number.isFinite(srp) ? srp : 0),
       netPrice: String(Number.isFinite(netPrice) ? netPrice : 0),
+      cashPrice: String(Number.isFinite(Number(details.cashPrice ?? 0)) ? Number(details.cashPrice) : 0),
+      ccPrice: String(Number.isFinite(Number(details.ccPrice ?? 0)) ? Number(details.ccPrice) : 0),
+      unitPrice: String(Number.isFinite(Number(details.unitPrice ?? 0)) ? Number(details.unitPrice) : 0),
       supplierId: '',
       purchaseOrderId: '',
       purchaseOrderNo: '',
@@ -1782,6 +1824,9 @@ export class InventoryComponent implements OnInit {
   private createEmptyCapacityDraft(): CapacityDraft {
     return {
       srp: null,
+      cashPrice: null,
+      ccPrice: null,
+      unitPrice: null,
       netPrice: null,
       indoorModel: '',
       outdoorModel: '',

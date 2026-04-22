@@ -5,4 +5,7 @@ export class CreateCapacityDto {
 	outdoorModel?: string;
 	srp?: number;
 	netPrice?: number;
+	cashPrice?: number;
+	ccPrice?: number;
+	unitPrice?: number;
 }

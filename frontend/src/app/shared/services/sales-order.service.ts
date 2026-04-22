@@ -442,6 +442,8 @@ export interface ProductCapacityOption {
   id: number;
   name: string;
   sellPrice?: number;
+  cashPrice?: number;
+  ccPrice?: number;
   unitPrice?: number;
   indoorModel?: string;
   outdoorModel?: string;

@@ -86,6 +86,9 @@ export class ProductsService {
         : '';
     const srp = toRequiredNumber(capacityItem.srp, 'srp');
     const netPrice = toRequiredNumber(capacityItem.netPrice, 'netPrice');
+    const cashPrice = toOptionalNumber(capacityItem.cashPrice);
+    const ccPrice = toOptionalNumber(capacityItem.ccPrice);
+    const unitPrice = toOptionalNumber(capacityItem.unitPrice);
 
     const capacityColumns = await this.getTableColumns(executor, 'tblcapacity');
     if (capacityColumns.length === 0) {
@@ -114,6 +117,21 @@ export class ProductsService {
     const netPriceColumn = this.pickColumn(capacityColumns, [
       'netPrice',
       'net_price',
+    ]);
+    const cashPriceColumn = this.pickColumn(capacityColumns, [
+      'cashPrice',
+      'cash_price',
+      'cashprice',
+    ]);
+    const ccPriceColumn = this.pickColumn(capacityColumns, [
+      'ccPrice',
+      'cc_price',
+      'ccprice',
+    ]);
+    const unitPriceColumn = this.pickColumn(capacityColumns, [
+      'unitPrice',
+      'unit_price',
+      'unitprice',
     ]);
     const supplierIdColumn = this.pickColumn(capacityColumns, [
       'supplierId',
@@ -158,6 +176,18 @@ export class ProductsService {
       [srpColumn]: srp,
       [netPriceColumn]: netPrice,
     };
+
+    if (cashPriceColumn && cashPrice != null) {
+      capacityRecord[cashPriceColumn] = cashPrice;
+    }
+
+    if (ccPriceColumn && ccPrice != null) {
+      capacityRecord[ccPriceColumn] = ccPrice;
+    }
+
+    if (unitPriceColumn && unitPrice != null) {
+      capacityRecord[unitPriceColumn] = unitPrice;
+    }
 
     if (supplierIdColumn && supplierId != null) {
       capacityRecord[supplierIdColumn] = supplierId;
@@ -492,6 +522,14 @@ export class ProductsService {
                      to_jsonb(c)->>'capacityValue',
                      to_jsonb(c)->>'capacity_value',
                      to_jsonb(c)->>'name'
+                    ),
+                    'cashPrice', COALESCE(
+                      NULLIF(COALESCE(to_jsonb(c)->>'cashPrice', to_jsonb(c)->>'cash_price', ''), '')::numeric, 
+                      0
+                    ),
+                    'ccPrice', COALESCE(
+                      NULLIF(COALESCE(to_jsonb(c)->>'ccPrice', to_jsonb(c)->>'cc_price', ''), '')::numeric, 
+                      0
                     ),
                    'sellPrice', COALESCE(
                      NULLIF(

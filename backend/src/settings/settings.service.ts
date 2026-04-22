@@ -42,6 +42,8 @@ type BusinessProfileKey =
   | 'cvNumberSuffix'
   | 'gjNumberPrefix'
   | 'gjNumberSuffix';
+  // add quotation payment detail keys
+  type ExtendedBusinessProfileKey = BusinessProfileKey | 'quotationPaymentTerms' | 'quotationPaymentInstruction' | 'quotationBankAccount';
 
 @Injectable()
 export class SettingsService {
@@ -185,6 +187,9 @@ export class SettingsService {
            COALESCE(to_jsonb(s)->>'printSignaturePreparedBy', to_jsonb(s)->>'print_signature_prepared_by', null) AS "printSignaturePreparedBy",
            COALESCE(to_jsonb(s)->>'printSignatureCheckedBy', to_jsonb(s)->>'print_signature_checked_by', null) AS "printSignatureCheckedBy",
            COALESCE(to_jsonb(s)->>'printSignatureApprovedBy', to_jsonb(s)->>'print_signature_approved_by', null) AS "printSignatureApprovedBy",
+              COALESCE(to_jsonb(s)->>'quotationPaymentTerms', to_jsonb(s)->>'quotation_payment_terms', null) AS "quotationPaymentTerms",
+              COALESCE(to_jsonb(s)->>'quotationPaymentInstruction', to_jsonb(s)->>'quotation_payment_instruction', null) AS "quotationPaymentInstruction",
+              COALESCE(to_jsonb(s)->>'quotationBankAccount', to_jsonb(s)->>'quotation_bank_account', null) AS "quotationBankAccount",
            COALESCE(to_jsonb(s)->>'cv_number_prefix', null) AS "cvNumberPrefix",
            COALESCE(to_jsonb(s)->>'cv_number_suffix', null) AS "cvNumberSuffix",
            COALESCE(to_jsonb(s)->>'gj_number_prefix', null) AS "gjNumberPrefix",
@@ -233,6 +238,9 @@ export class SettingsService {
           printSignaturePreparedBy: null,
           printSignatureCheckedBy: null,
           printSignatureApprovedBy: null,
+          quotationPaymentTerms: null,
+          quotationPaymentInstruction: null,
+          quotationBankAccount: null,
           cvNumberPrefix: null,
           cvNumberSuffix: null,
           gjNumberPrefix: null,
@@ -253,7 +261,7 @@ export class SettingsService {
       const settingsId = await this.ensureSettingsRow();
       const columns = await this.getSettingsColumns();
 
-      const fieldCandidates: Record<BusinessProfileKey, string[]> = {
+      const fieldCandidates: Record<string, string[]> = {
         websiteTabName: ['websiteTabName', 'website_tab_name'],
         routingTabName: ['routingTabName', 'routing_tab_name'],
         businessName: ['businessName', 'business_name'],
@@ -289,6 +297,10 @@ export class SettingsService {
         printSignaturePreparedBy: ['printSignaturePreparedBy', 'print_signature_prepared_by'],
         printSignatureCheckedBy: ['printSignatureCheckedBy', 'print_signature_checked_by'],
         printSignatureApprovedBy: ['printSignatureApprovedBy', 'print_signature_approved_by'],
+        // quotation payment details
+        quotationPaymentTerms: ['quotationPaymentTerms', 'quotation_payment_terms'],
+        quotationPaymentInstruction: ['quotationPaymentInstruction', 'quotation_payment_instruction'],
+        quotationBankAccount: ['quotationBankAccount', 'quotation_bank_account'],
         cvNumberPrefix: ['cv_number_prefix'],
         cvNumberSuffix: ['cv_number_suffix'],
         gjNumberPrefix: ['gj_number_prefix'],
@@ -298,7 +310,7 @@ export class SettingsService {
       const values: unknown[] = [];
       const setClauses: string[] = [];
 
-      const appendUpdate = (key: BusinessProfileKey) => {
+      const appendUpdate = (key: string) => {
         if (dto[key] === undefined) {
           return;
         }
@@ -347,6 +359,9 @@ export class SettingsService {
       appendUpdate('printSignaturePreparedBy');
       appendUpdate('printSignatureCheckedBy');
       appendUpdate('printSignatureApprovedBy');
+      appendUpdate('quotationPaymentTerms');
+      appendUpdate('quotationPaymentInstruction');
+      appendUpdate('quotationBankAccount');
 
       // cv_number_prefix / cv_number_suffix are NOT NULL — use empty-string fallback
       const appendRequiredText = (key: BusinessProfileKey, fallback: string) => {

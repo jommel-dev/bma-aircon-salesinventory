@@ -270,9 +270,17 @@
                   <p class="text-xs uppercase tracking-wide text-gray-500 dark:text-gray-400">SRP</p>
                   <p class="mt-1 text-sm font-medium text-gray-800 dark:text-white/90">{{ (selectedCapacity.sellPrice ?? 0) | currency:'PHP':'symbol':'1.2-2' }}</p>
                 </div>
-                <div class="rounded-lg border border-gray-200 p-4 dark:border-gray-700 md:col-span-2">
+                <div class="rounded-lg border border-gray-200 p-4 dark:border-gray-700">
                   <p class="text-xs uppercase tracking-wide text-gray-500 dark:text-gray-400">Net Price</p>
                   <p class="mt-1 text-sm font-medium text-gray-800 dark:text-white/90">{{ (selectedCapacity.unitPrice ?? 0) | currency:'PHP':'symbol':'1.2-2' }}</p>
+                </div>
+                <div class="rounded-lg border border-gray-200 p-4 dark:border-gray-700">
+                  <p class="text-xs uppercase tracking-wide text-gray-500 dark:text-gray-400">Cash Price</p>
+                  <p class="mt-1 text-sm font-medium text-gray-800 dark:text-white/90">{{ (selectedCapacity.cashPrice ?? 0) | currency:'PHP':'symbol':'1.2-2' }}</p>
+                </div>
+                <div class="rounded-lg border border-gray-200 p-4 dark:border-gray-700">
+                  <p class="text-xs uppercase tracking-wide text-gray-500 dark:text-gray-400">CC Price</p>
+                  <p class="mt-1 text-sm font-medium text-gray-800 dark:text-white/90">{{ (selectedCapacity.ccPrice ?? 0) | currency:'PHP':'symbol':'1.2-2' }}</p>
                 </div>
                 <div class="rounded-lg border border-gray-200 p-4 dark:border-gray-700">
                   <p class="text-xs uppercase tracking-wide text-gray-500 dark:text-gray-400">Indoor Model</p>
@@ -825,15 +833,37 @@
                 <div class="rounded-lg border border-gray-200 p-3 dark:border-gray-700">
                   <p class="text-xs font-semibold uppercase tracking-wide text-gray-500 dark:text-gray-400">{{ capacity }}</p>
                   <div class="mt-2 grid grid-cols-1 gap-3 md:grid-cols-2">
-                    <label class="text-xs font-medium uppercase tracking-wide text-gray-500 dark:text-gray-400">SRP</label>
-                    <label class="text-xs font-medium uppercase tracking-wide text-gray-500 dark:text-gray-400">Net Price</label>
-                    <input type="number" min="0" [(ngModel)]="allInOneCapacityDetails[capacity].srp" class="h-10 rounded-lg border border-gray-300 bg-transparent px-3 text-sm text-gray-800 focus:border-brand-300 focus:outline-none dark:border-gray-700 dark:text-white/90" />
-                    <input type="number" min="0" [(ngModel)]="allInOneCapacityDetails[capacity].netPrice" class="h-10 rounded-lg border border-gray-300 bg-transparent px-3 text-sm text-gray-800 focus:border-brand-300 focus:outline-none dark:border-gray-700 dark:text-white/90" />
+                    <div>
+                      <label class="text-xs font-medium uppercase tracking-wide text-gray-500 dark:text-gray-400">SRP</label>
+                      <input type="number" min="0" [(ngModel)]="allInOneCapacityDetails[capacity].srp" class="h-10 w-full rounded-lg border border-gray-300 bg-transparent px-3 text-sm text-gray-800 focus:border-brand-300 focus:outline-none dark:border-gray-700 dark:text-white/90" />
+                    </div>
+                    <div>
+                      <label class="text-xs font-medium uppercase tracking-wide text-gray-500 dark:text-gray-400">Net Price</label>
+                      <input type="number" min="0" [(ngModel)]="allInOneCapacityDetails[capacity].netPrice" class="h-10 w-full rounded-lg border border-gray-300 bg-transparent px-3 text-sm text-gray-800 focus:border-brand-300 focus:outline-none dark:border-gray-700 dark:text-white/90" />
+                    </div>
 
-                    <label class="text-xs font-medium uppercase tracking-wide text-gray-500 dark:text-gray-400">Indoor Model</label>
-                    <label class="text-xs font-medium uppercase tracking-wide text-gray-500 dark:text-gray-400">Outdoor Model</label>
-                    <input type="text" [(ngModel)]="allInOneCapacityDetails[capacity].indoorModel" class="h-10 rounded-lg border border-gray-300 bg-transparent px-3 text-sm text-gray-800 focus:border-brand-300 focus:outline-none dark:border-gray-700 dark:text-white/90" />
-                    <input type="text" [(ngModel)]="allInOneCapacityDetails[capacity].outdoorModel" class="h-10 rounded-lg border border-gray-300 bg-transparent px-3 text-sm text-gray-800 focus:border-brand-300 focus:outline-none dark:border-gray-700 dark:text-white/90" />
+                    <div>
+                      <label class="text-xs font-medium uppercase tracking-wide text-gray-500 dark:text-gray-400">Cash Price</label>
+                      <input type="number" min="0" [(ngModel)]="allInOneCapacityDetails[capacity].cashPrice" class="h-10 w-full rounded-lg border border-gray-300 bg-transparent px-3 text-sm text-gray-800 focus:border-brand-300 focus:outline-none dark:border-gray-700 dark:text-white/90" />
+                    </div>
+                    <div>
+                      <label class="text-xs font-medium uppercase tracking-wide text-gray-500 dark:text-gray-400">CC Price</label>
+                      <input type="number" min="0" [(ngModel)]="allInOneCapacityDetails[capacity].ccPrice" class="h-10 w-full rounded-lg border border-gray-300 bg-transparent px-3 text-sm text-gray-800 focus:border-brand-300 focus:outline-none dark:border-gray-700 dark:text-white/90" />
+                    </div>
+
+                    <div>
+                      <label class="text-xs font-medium uppercase tracking-wide text-gray-500 dark:text-gray-400">Unit Price</label>
+                      <input type="number" min="0" [(ngModel)]="allInOneCapacityDetails[capacity].unitPrice" class="h-10 w-full rounded-lg border border-gray-300 bg-transparent px-3 text-sm text-gray-800 focus:border-brand-300 focus:outline-none dark:border-gray-700 dark:text-white/90" />
+                    </div>
+                    <div>
+                      <label class="text-xs font-medium uppercase tracking-wide text-gray-500 dark:text-gray-400">Indoor Model</label>
+                      <input type="text" [(ngModel)]="allInOneCapacityDetails[capacity].indoorModel" class="h-10 w-full rounded-lg border border-gray-300 bg-transparent px-3 text-sm text-gray-800 focus:border-brand-300 focus:outline-none dark:border-gray-700 dark:text-white/90" />
+                    </div>
+
+                    <div>
+                      <label class="text-xs font-medium uppercase tracking-wide text-gray-500 dark:text-gray-400">Outdoor Model</label>
+                      <input type="text" [(ngModel)]="allInOneCapacityDetails[capacity].outdoorModel" class="h-10 w-full rounded-lg border border-gray-300 bg-transparent px-3 text-sm text-gray-800 focus:border-brand-300 focus:outline-none dark:border-gray-700 dark:text-white/90" />
+                    </div>
                   </div>
                 </div>
               }
@@ -949,15 +979,37 @@
               <div class="rounded-lg border border-gray-200 p-3 dark:border-gray-700">
                 <p class="text-xs font-semibold uppercase tracking-wide text-gray-500 dark:text-gray-400">{{ capacity }}</p>
                 <div class="mt-2 grid grid-cols-1 gap-3 md:grid-cols-2">
-                  <label class="text-xs font-medium uppercase tracking-wide text-gray-500 dark:text-gray-400">SRP</label>
-                  <label class="text-xs font-medium uppercase tracking-wide text-gray-500 dark:text-gray-400">Net Price</label>
-                  <input type="number" min="0" [(ngModel)]="productFormCapacityDetails[capacity].srp" class="h-10 rounded-lg border border-gray-300 bg-transparent px-3 text-sm text-gray-800 focus:border-brand-300 focus:outline-none dark:border-gray-700 dark:text-white/90" />
-                  <input type="number" min="0" [(ngModel)]="productFormCapacityDetails[capacity].netPrice" class="h-10 rounded-lg border border-gray-300 bg-transparent px-3 text-sm text-gray-800 focus:border-brand-300 focus:outline-none dark:border-gray-700 dark:text-white/90" />
+                  <div>
+                    <label class="text-xs font-medium uppercase tracking-wide text-gray-500 dark:text-gray-400">SRP</label>
+                    <input type="number" min="0" [(ngModel)]="productFormCapacityDetails[capacity].srp" class="h-10 w-full rounded-lg border border-gray-300 bg-transparent px-3 text-sm text-gray-800 focus:border-brand-300 focus:outline-none dark:border-gray-700 dark:text-white/90" />
+                  </div>
+                  <div>
+                    <label class="text-xs font-medium uppercase tracking-wide text-gray-500 dark:text-gray-400">Net Price</label>
+                    <input type="number" min="0" [(ngModel)]="productFormCapacityDetails[capacity].netPrice" class="h-10 w-full rounded-lg border border-gray-300 bg-transparent px-3 text-sm text-gray-800 focus:border-brand-300 focus:outline-none dark:border-gray-700 dark:text-white/90" />
+                  </div>
 
-                  <label class="text-xs font-medium uppercase tracking-wide text-gray-500 dark:text-gray-400">Indoor Model</label>
-                  <label class="text-xs font-medium uppercase tracking-wide text-gray-500 dark:text-gray-400">Outdoor Model</label>
-                  <input type="text" [(ngModel)]="productFormCapacityDetails[capacity].indoorModel" class="h-10 rounded-lg border border-gray-300 bg-transparent px-3 text-sm text-gray-800 focus:border-brand-300 focus:outline-none dark:border-gray-700 dark:text-white/90" />
-                  <input type="text" [(ngModel)]="productFormCapacityDetails[capacity].outdoorModel" class="h-10 rounded-lg border border-gray-300 bg-transparent px-3 text-sm text-gray-800 focus:border-brand-300 focus:outline-none dark:border-gray-700 dark:text-white/90" />
+                  <div>
+                    <label class="text-xs font-medium uppercase tracking-wide text-gray-500 dark:text-gray-400">Cash Price</label>
+                    <input type="number" min="0" [(ngModel)]="productFormCapacityDetails[capacity].cashPrice" class="h-10 w-full rounded-lg border border-gray-300 bg-transparent px-3 text-sm text-gray-800 focus:border-brand-300 focus:outline-none dark:border-gray-700 dark:text-white/90" />
+                  </div>
+                  <div>
+                    <label class="text-xs font-medium uppercase tracking-wide text-gray-500 dark:text-gray-400">CC Price</label>
+                    <input type="number" min="0" [(ngModel)]="productFormCapacityDetails[capacity].ccPrice" class="h-10 w-full rounded-lg border border-gray-300 bg-transparent px-3 text-sm text-gray-800 focus:border-brand-300 focus:outline-none dark:border-gray-700 dark:text-white/90" />
+                  </div>
+
+                  <div>
+                    <label class="text-xs font-medium uppercase tracking-wide text-gray-500 dark:text-gray-400">Unit Price</label>
+                    <input type="number" min="0" [(ngModel)]="productFormCapacityDetails[capacity].unitPrice" class="h-10 w-full rounded-lg border border-gray-300 bg-transparent px-3 text-sm text-gray-800 focus:border-brand-300 focus:outline-none dark:border-gray-700 dark:text-white/90" />
+                  </div>
+                  <div>
+                    <label class="text-xs font-medium uppercase tracking-wide text-gray-500 dark:text-gray-400">Indoor Model</label>
+                    <input type="text" [(ngModel)]="productFormCapacityDetails[capacity].indoorModel" class="h-10 w-full rounded-lg border border-gray-300 bg-transparent px-3 text-sm text-gray-800 focus:border-brand-300 focus:outline-none dark:border-gray-700 dark:text-white/90" />
+                  </div>
+
+                  <div>
+                    <label class="text-xs font-medium uppercase tracking-wide text-gray-500 dark:text-gray-400">Outdoor Model</label>
+                    <input type="text" [(ngModel)]="productFormCapacityDetails[capacity].outdoorModel" class="h-10 w-full rounded-lg border border-gray-300 bg-transparent px-3 text-sm text-gray-800 focus:border-brand-300 focus:outline-none dark:border-gray-700 dark:text-white/90" />
+                  </div>
                 </div>
               </div>
             }
@@ -1012,15 +1064,37 @@
             <div class="rounded-lg border border-gray-200 p-3 dark:border-gray-700">
               <p class="text-xs font-semibold uppercase tracking-wide text-gray-500 dark:text-gray-400">{{ capacity }}</p>
               <div class="mt-2 grid grid-cols-1 gap-3 md:grid-cols-2">
-                <label class="text-xs font-medium uppercase tracking-wide text-gray-500 dark:text-gray-400">SRP</label>
-                <label class="text-xs font-medium uppercase tracking-wide text-gray-500 dark:text-gray-400">Net Price</label>
-                <input type="number" min="0" [(ngModel)]="capacityOnlyDetails[capacity].srp" class="h-10 rounded-lg border border-gray-300 bg-transparent px-3 text-sm text-gray-800 focus:border-brand-300 focus:outline-none dark:border-gray-700 dark:text-white/90" />
-                <input type="number" min="0" [(ngModel)]="capacityOnlyDetails[capacity].netPrice" class="h-10 rounded-lg border border-gray-300 bg-transparent px-3 text-sm text-gray-800 focus:border-brand-300 focus:outline-none dark:border-gray-700 dark:text-white/90" />
+                <div>
+                  <label class="text-xs font-medium uppercase tracking-wide text-gray-500 dark:text-gray-400">SRP</label>
+                  <input type="number" min="0" [(ngModel)]="capacityOnlyDetails[capacity].srp" class="h-10 w-full rounded-lg border border-gray-300 bg-transparent px-3 text-sm text-gray-800 focus:border-brand-300 focus:outline-none dark:border-gray-700 dark:text-white/90" />
+                </div>
+                <div>
+                  <label class="text-xs font-medium uppercase tracking-wide text-gray-500 dark:text-gray-400">Net Price</label>
+                  <input type="number" min="0" [(ngModel)]="capacityOnlyDetails[capacity].netPrice" class="h-10 w-full rounded-lg border border-gray-300 bg-transparent px-3 text-sm text-gray-800 focus:border-brand-300 focus:outline-none dark:border-gray-700 dark:text-white/90" />
+                </div>
 
-                <label class="text-xs font-medium uppercase tracking-wide text-gray-500 dark:text-gray-400">Indoor Model</label>
-                <label class="text-xs font-medium uppercase tracking-wide text-gray-500 dark:text-gray-400">Outdoor Model</label>
-                <input type="text" [(ngModel)]="capacityOnlyDetails[capacity].indoorModel" class="h-10 rounded-lg border border-gray-300 bg-transparent px-3 text-sm text-gray-800 focus:border-brand-300 focus:outline-none dark:border-gray-700 dark:text-white/90" />
-                <input type="text" [(ngModel)]="capacityOnlyDetails[capacity].outdoorModel" class="h-10 rounded-lg border border-gray-300 bg-transparent px-3 text-sm text-gray-800 focus:border-brand-300 focus:outline-none dark:border-gray-700 dark:text-white/90" />
+                <div>
+                  <label class="text-xs font-medium uppercase tracking-wide text-gray-500 dark:text-gray-400">Cash Price</label>
+                  <input type="number" min="0" [(ngModel)]="capacityOnlyDetails[capacity].cashPrice" class="h-10 w-full rounded-lg border border-gray-300 bg-transparent px-3 text-sm text-gray-800 focus:border-brand-300 focus:outline-none dark:border-gray-700 dark:text-white/90" />
+                </div>
+                <div>
+                  <label class="text-xs font-medium uppercase tracking-wide text-gray-500 dark:text-gray-400">CC Price</label>
+                  <input type="number" min="0" [(ngModel)]="capacityOnlyDetails[capacity].ccPrice" class="h-10 w-full rounded-lg border border-gray-300 bg-transparent px-3 text-sm text-gray-800 focus:border-brand-300 focus:outline-none dark:border-gray-700 dark:text-white/90" />
+                </div>
+
+                <div>
+                  <label class="text-xs font-medium uppercase tracking-wide text-gray-500 dark:text-gray-400">Unit Price</label>
+                  <input type="number" min="0" [(ngModel)]="capacityOnlyDetails[capacity].unitPrice" class="h-10 w-full rounded-lg border border-gray-300 bg-transparent px-3 text-sm text-gray-800 focus:border-brand-300 focus:outline-none dark:border-gray-700 dark:text-white/90" />
+                </div>
+                <div>
+                  <label class="text-xs font-medium uppercase tracking-wide text-gray-500 dark:text-gray-400">Indoor Model</label>
+                  <input type="text" [(ngModel)]="capacityOnlyDetails[capacity].indoorModel" class="h-10 w-full rounded-lg border border-gray-300 bg-transparent px-3 text-sm text-gray-800 focus:border-brand-300 focus:outline-none dark:border-gray-700 dark:text-white/90" />
+                </div>
+
+                <div>
+                  <label class="text-xs font-medium uppercase tracking-wide text-gray-500 dark:text-gray-400">Outdoor Model</label>
+                  <input type="text" [(ngModel)]="capacityOnlyDetails[capacity].outdoorModel" class="h-10 w-full rounded-lg border border-gray-300 bg-transparent px-3 text-sm text-gray-800 focus:border-brand-300 focus:outline-none dark:border-gray-700 dark:text-white/90" />
+                </div>
               </div>
             </div>
           }

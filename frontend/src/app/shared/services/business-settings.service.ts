@@ -42,6 +42,10 @@ export interface BusinessProfileSettings {
   cvNumberSuffix: string | null;
   gjNumberPrefix: string | null;
   gjNumberSuffix: string | null;
+  // quotation payment details
+  quotationPaymentTerms?: string | null;
+  quotationPaymentInstruction?: string | null;
+  quotationBankAccount?: string | null;
 }
 
 interface BusinessProfileResponse {

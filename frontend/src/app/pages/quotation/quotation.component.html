@@ -558,17 +558,20 @@
             <span class="rounded-full border border-gray-300 px-2 py-0.5 text-[10px] font-medium text-gray-500 dark:border-gray-600 dark:text-gray-400">read-only</span>
           </div>
           <div class="space-y-2 text-sm text-gray-700 dark:text-gray-300">
-            <div class="flex gap-3">
+            <div class="flex gap-3" *ngIf="drawerHeaderProfile?.paymentTerms">
               <span class="w-36 shrink-0 text-xs font-medium text-gray-500 dark:text-gray-400">Payment Terms</span>
-              <span>50% Downpayment Upon Approval<br/>50% Upon Completion of Work</span>
+              <span [innerHTML]="drawerHeaderProfile?.paymentTerms"></span>
             </div>
-            <div class="flex gap-3">
+            <div class="flex gap-3" *ngIf="drawerHeaderProfile?.paymentInstruction">
               <span class="w-36 shrink-0 text-xs font-medium text-gray-500 dark:text-gray-400">Payment Instruction</span>
-              <span>For payment check please make the check payable to ROGER VAN V. SARAZA</span>
+              <span [innerHTML]="drawerHeaderProfile?.paymentInstruction"></span>
             </div>
-            <div class="flex gap-3">
+            <div class="flex gap-3" *ngIf="drawerHeaderProfile?.bankAccount">
               <span class="w-36 shrink-0 text-xs font-medium text-gray-500 dark:text-gray-400">Bank Account</span>
-              <span>BDO Bank Account No. <strong>0119-6006-1435</strong><br/>Account Name: <strong>ROGER VAN V. SARAZA</strong></span>
+              <span [innerHTML]="drawerHeaderProfile?.bankAccount"></span>
+            </div>
+            <div *ngIf="!drawerHeaderProfile || (!drawerHeaderProfile.paymentTerms && !drawerHeaderProfile.paymentInstruction && !drawerHeaderProfile.bankAccount)" class="text-xs text-gray-500">
+              No payment details configured. Update in settings.
             </div>
           </div>
         </section>

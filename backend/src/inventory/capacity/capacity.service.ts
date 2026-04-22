@@ -47,6 +47,15 @@ export class CapacityService {
     const netPrice = Number.isFinite(Number(createCapacityDto.netPrice))
       ? Number(createCapacityDto.netPrice)
       : 0;
+    const cashPrice = Number.isFinite(Number(createCapacityDto.cashPrice))
+      ? Number(createCapacityDto.cashPrice)
+      : 0;
+    const ccPrice = Number.isFinite(Number(createCapacityDto.ccPrice))
+      ? Number(createCapacityDto.ccPrice)
+      : 0;
+    const unitPrice = Number.isFinite(Number(createCapacityDto.unitPrice))
+      ? Number(createCapacityDto.unitPrice)
+      : 0;
 
     if (!Number.isFinite(productId) || productId <= 0) {
       return {
@@ -84,6 +93,9 @@ export class CapacityService {
     ]);
     const srpColumn = this.pickColumn(columns, ['srp', 'SRP']);
     const netPriceColumn = this.pickColumn(columns, ['netPrice', 'net_price']);
+    const cashPriceColumn = this.pickColumn(columns, ['cashPrice', 'cash_price', 'cashprice']);
+    const ccPriceColumn = this.pickColumn(columns, ['ccPrice', 'cc_price', 'ccprice']);
+    const unitPriceColumn = this.pickColumn(columns, ['unitPrice', 'unit_price', 'unitprice']);
 
     if (
       !productIdColumn ||
@@ -122,6 +134,9 @@ export class CapacityService {
       [outdoorModelColumn]: outdoorModel,
       [srpColumn]: srp,
       [netPriceColumn]: netPrice,
+      ...(cashPriceColumn ? { [cashPriceColumn]: cashPrice } : {}),
+      ...(ccPriceColumn ? { [ccPriceColumn]: ccPrice } : {}),
+      ...(unitPriceColumn ? { [unitPriceColumn]: unitPrice } : {}),
     };
 
     const recordColumns = Object.keys(record);
@@ -182,6 +197,9 @@ export class CapacityService {
         const outdoorModelColumn = this.pickColumn(columns, ['outdoorModel', 'outdoor_model']);
         const srpColumn = this.pickColumn(columns, ['srp', 'SRP']);
         const netPriceColumn = this.pickColumn(columns, ['netPrice', 'net_price']);
+        const cashPriceColumn = this.pickColumn(columns, ['cashPrice', 'cash_price', 'cashprice']);
+        const ccPriceColumn = this.pickColumn(columns, ['ccPrice', 'cc_price', 'ccprice']);
+        const unitPriceColumn = this.pickColumn(columns, ['unitPrice', 'unit_price', 'unitprice']);
 
         if (!idColumn || !productIdColumn || !capacityColumn) {
           return {
@@ -254,6 +272,36 @@ export class CapacityService {
 
           values.push(nextNetPrice);
           updates.push(`"${netPriceColumn}" = $${values.length}`);
+        }
+
+        if (cashPriceColumn && updateCapacityDto.cashPrice !== undefined) {
+          const nextCashPrice = Number(updateCapacityDto.cashPrice);
+          if (!Number.isFinite(nextCashPrice)) {
+            return { success: false, message: 'cashPrice must be a valid number' };
+          }
+
+          values.push(nextCashPrice);
+          updates.push(`"${cashPriceColumn}" = $${values.length}`);
+        }
+
+        if (ccPriceColumn && updateCapacityDto.ccPrice !== undefined) {
+          const nextCcPrice = Number(updateCapacityDto.ccPrice);
+          if (!Number.isFinite(nextCcPrice)) {
+            return { success: false, message: 'ccPrice must be a valid number' };
+          }
+
+          values.push(nextCcPrice);
+          updates.push(`"${ccPriceColumn}" = $${values.length}`);
+        }
+
+        if (unitPriceColumn && updateCapacityDto.unitPrice !== undefined) {
+          const nextUnitPrice = Number(updateCapacityDto.unitPrice);
+          if (!Number.isFinite(nextUnitPrice)) {
+            return { success: false, message: 'unitPrice must be a valid number' };
+          }
+
+          values.push(nextUnitPrice);
+          updates.push(`"${unitPriceColumn}" = $${values.length}`);
         }
 
         if (updates.length === 0) {

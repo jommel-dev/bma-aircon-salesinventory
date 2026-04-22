@@ -4,6 +4,9 @@ export class CreateProductCapacityDto {
     outdoorModel: string;
     srp: number;
     netPrice: number;
+    cashPrice?: number;
+    ccPrice?: number;
+    unitPrice?: number;
     supplierId?: number;
     purchaseOrderId?: number;
     purchaseOrderNo?: string;
