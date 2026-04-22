@@ -72,6 +72,7 @@ interface QuotationPreviewPdfData {
   customerContactNumber: string;
   customerAddress: string;
   totalAmount: number;
+  discountAmount?: number;
   rows: QuotationPreviewPdfRow[];
   miscRows: QuotationPreviewMiscRow[];
 }
@@ -679,25 +680,22 @@ export class QuotationComponent implements OnInit, OnDestroy {
     const discountPrice = Number(item.discountPrice ?? 0);
     const qty = Number(item.totalSetQty ?? 0);
     // When sellPrice is provided and discountPrice is provided, treat discountPrice as discount amount
-    let effectivePrice = 0;
     if (sellPrice > 0) {
       if (discountPrice > 0) {
         // validation: discount must not be greater than sell price
         if (discountPrice > sellPrice) {
-          // clamp to 0 (validation handled elsewhere)
-          effectivePrice = 0;
-        } else {
-          effectivePrice = Math.max(0, sellPrice - discountPrice);
+          return this.getMiscTotal(item);
         }
-      } else {
-        effectivePrice = sellPrice;
+        // discountPrice is a one-time deduction per line (not per unit)
+        return Math.max(0, sellPrice * qty - discountPrice) + this.getMiscTotal(item);
       }
-    } else {
-      // fallback: if no sellPrice, use discountPrice as override, else unitPrice
-      effectivePrice = discountPrice > 0 ? discountPrice : unitPrice;
+
+      return sellPrice * qty + this.getMiscTotal(item);
     }
 
-    return effectivePrice * qty + this.getMiscTotal(item);
+    // fallback: if no sellPrice, treat discountPrice as unit price override
+    const price = discountPrice > 0 ? discountPrice : unitPrice;
+    return price * qty + this.getMiscTotal(item);
   }
 
   private calculatePreviewLineTotal(price: number, qty: number, miscTotal: number): number {
@@ -972,17 +970,17 @@ export class QuotationComponent implements OnInit, OnDestroy {
           const freeQty = Number(install.freeQty ?? 0);
           const unit = String(install.unit || 'FT').trim() || 'FT';
           const baseRaw = String(install.description || '').trim();
-          // skip completely empty installation entries
+          // skip completely empty installation entries (no description and no numeric values)
           if (!baseRaw && unitPrice <= 0 && excessQty <= 0 && freeQty <= 0) {
             return '';
           }
 
-          const base = baseRaw || 'Installation';
+          const base = baseRaw || '';
           const parts: string[] = [];
           if (base) parts.push(base);
-          if (unitPrice > 0) parts.push(`Unit Price: ${this.formatAmount(unitPrice)}`);
-          if (excessQty > 0) parts.push(`Excess: ${excessQty}`);
-          if (freeQty > 0) parts.push(`Free: ${freeQty} ${this.escapeHtml(unit)}`);
+          if (unitPrice > 0 && baseRaw) parts.push(`Unit Price: ${this.formatAmount(unitPrice)}`);
+          if (excessQty > 0 && baseRaw) parts.push(`Excess: ${excessQty}`);
+          if (freeQty > 0 && baseRaw) parts.push(`Free: ${freeQty} ${this.escapeHtml(unit)}`);
           return parts.join(' | ');
         })
         .filter(Boolean)
@@ -1013,7 +1011,7 @@ export class QuotationComponent implements OnInit, OnDestroy {
         return sum + unitPrice * Math.max(0, excessQty);
       }, 0);
       const quantity = Number(productItem.totalSetQty ?? 0);
-      const totalPerLine = (Math.max(0, price - disc) * quantity) + miscTotal;
+      const totalPerLine = Math.max(0, price * quantity - disc) + miscTotal;
 
       if (!groupedItems.has(groupName)) {
         groupedItems.set(groupName, []);
@@ -1046,14 +1044,15 @@ export class QuotationComponent implements OnInit, OnDestroy {
               const freeQty = Number(install.freeQty ?? 0);
               const unit = String(install.unit || 'FT').trim() || 'FT';
               const baseRaw = String(install.description || '').trim();
+              // skip completely empty installation entries (no description and no numeric values)
               if (!baseRaw && unitPrice <= 0 && excessQty <= 0 && freeQty <= 0) return '';
 
-              const base = baseRaw || 'Installation';
+              const base = baseRaw || '';
               const parts: string[] = [];
               if (base) parts.push(base);
-              if (unitPrice > 0) parts.push(`Unit Price: ${this.formatAmountPdf(unitPrice)}`);
-              if (excessQty > 0) parts.push(`Excess: ${excessQty}`);
-              if (freeQty > 0) parts.push(`Free: ${freeQty} ${unit}`);
+              if (unitPrice > 0 && base) parts.push(`Unit Price: ${this.formatAmountPdf(unitPrice)}`);
+              if (excessQty > 0 && base) parts.push(`Excess: ${excessQty}`);
+              if (freeQty > 0 && base) parts.push(`Free: ${freeQty} ${unit}`);
               return parts.join(' | ');
             })
             .filter(Boolean)
@@ -1134,6 +1133,7 @@ export class QuotationComponent implements OnInit, OnDestroy {
       : '<tr><td colspan="6" class="center">No miscellaneous costs</td></tr>';
 
     const totalAmount = pdfRows.reduce((sum, row) => sum + Number(row.lineTotal ?? 0), 0);
+    const totalDiscount = pdfRows.reduce((sum, row) => sum + Number(row.discPrice ?? 0), 0);
 
     const html = this.buildQuotationPreviewHtml({
       quoteNo: String(detail.quoteNo || '').trim() || 'AUTO GENERATED',
@@ -1154,6 +1154,7 @@ export class QuotationComponent implements OnInit, OnDestroy {
       checkedSignature: headerProfile.checkedSignature,
       approvedSignature: headerProfile.approvedSignature,
       totalAmount,
+      discountAmount: totalDiscount,
       logoSrc: headerProfile.logoSrc,
       tableRowsHtml,
       miscTableRowsHtml,
@@ -1168,6 +1169,7 @@ export class QuotationComponent implements OnInit, OnDestroy {
       customerContactNumber: detail.customerContactNumber,
       customerAddress: detail.customerAddress,
       totalAmount,
+      discountAmount: totalDiscount,
       rows: pdfRows,
       miscRows,
     };
@@ -1212,9 +1214,18 @@ export class QuotationComponent implements OnInit, OnDestroy {
           const excessQty = Number(install.excessQty ?? 0);
           const freeQty = Number(install.freeQty ?? 0);
           const unit = String(install.unit || 'FT').trim() || 'FT';
-          const base = String(install.description || '').trim() || 'Installation';
-          return `${base} | Unit Price: ${this.formatAmount(unitPrice)} | Excess: ${excessQty} | Free: ${freeQty} ${this.escapeHtml(unit)}`;
+          const baseRaw = String(install.description || '').trim();
+          // skip completely empty installation entries
+          if (!baseRaw && unitPrice <= 0 && excessQty <= 0 && freeQty <= 0) return '';
+
+          const parts: string[] = [];
+          if (baseRaw) parts.push(baseRaw);
+          if (unitPrice > 0 && baseRaw) parts.push(`Unit Price: ${this.formatAmount(unitPrice)}`);
+          if (excessQty > 0 && baseRaw) parts.push(`Excess: ${excessQty}`);
+          if (freeQty > 0 && baseRaw) parts.push(`Free: ${freeQty} ${this.escapeHtml(unit)}`);
+          return parts.join(' | ');
         })
+        .filter(Boolean)
         .join('<br/>');
 
       const capacityModel = (() => {
@@ -1239,7 +1250,7 @@ export class QuotationComponent implements OnInit, OnDestroy {
         groupedItems.set(groupName, []);
       }
 
-      const totalPerLine = (Math.max(0, price - disc) * Number(row.totalSetQty ?? 0)) + miscTotal;
+      const totalPerLine = Math.max(0, price * Number(row.totalSetQty ?? 0) - disc) + miscTotal;
 
         groupedItems.get(groupName)?.push({
           model: this.escapeHtml(productName),
@@ -1267,9 +1278,17 @@ export class QuotationComponent implements OnInit, OnDestroy {
               const excessQty = Number(install.excessQty ?? 0);
               const freeQty = Number(install.freeQty ?? 0);
               const unit = String(install.unit || 'FT').trim() || 'FT';
-              const base = String(install.description || '').trim() || 'Installation';
-              return `${base} | Unit Price: ${this.formatAmountPdf(unitPrice)} | Excess: ${excessQty} | Free: ${freeQty} ${unit}`;
+              const baseRaw = String(install.description || '').trim();
+              if (!baseRaw && unitPrice <= 0 && excessQty <= 0 && freeQty <= 0) return '';
+
+              const parts: string[] = [];
+              if (baseRaw) parts.push(baseRaw);
+              if (unitPrice > 0 && baseRaw) parts.push(`Unit Price: ${this.formatAmountPdf(unitPrice)}`);
+              if (excessQty > 0 && baseRaw) parts.push(`Excess: ${excessQty}`);
+              if (freeQty > 0 && baseRaw) parts.push(`Free: ${freeQty} ${unit}`);
+              return parts.join(' | ');
             })
+            .filter(Boolean)
             .join(' | '),
         ]
           .filter((part) => part.trim().length > 0)
@@ -1365,6 +1384,7 @@ export class QuotationComponent implements OnInit, OnDestroy {
       checkedSignature: headerProfile.checkedSignature,
       approvedSignature: headerProfile.approvedSignature,
       totalAmount: this.form.totalAmount,
+      discountAmount: pdfRows.reduce((sum, r) => sum + Number(r.discPrice ?? 0), 0),
       logoSrc: headerProfile.logoSrc,
       tableRowsHtml,
       miscTableRowsHtml,
@@ -1379,6 +1399,7 @@ export class QuotationComponent implements OnInit, OnDestroy {
       customerContactNumber: this.form.customer.contact_number,
       customerAddress: this.form.customer.address,
       totalAmount: Number(this.form.totalAmount ?? 0),
+      discountAmount: pdfRows.reduce((sum, r) => sum + Number(r.discPrice ?? 0), 0),
       rows: pdfRows,
       miscRows,
     };
@@ -1426,6 +1447,7 @@ export class QuotationComponent implements OnInit, OnDestroy {
     checkedSignature?: string | null;
     approvedSignature?: string | null;
     totalAmount: number;
+    discountAmount?: number;
     logoSrc: string | null;
     tableRowsHtml: string;
     miscTableRowsHtml: string;
@@ -1580,7 +1602,7 @@ export class QuotationComponent implements OnInit, OnDestroy {
 
             <div class="totals">
               <div class="totals-row"><span>TOTAL</span><span>${this.formatAmount(payload.totalAmount)}</span></div>
-              <div class="totals-row"><span>DISCOUNT</span><span>${this.formatAmount(0)}</span></div>
+              <div class="totals-row"><span>DISCOUNT</span><span>${this.formatAmount(payload.discountAmount ?? 0)}</span></div>
               <div class="totals-row"><span>VAT</span><span>${this.formatAmount(0)}</span></div>
               <div class="totals-row"><span>GRAND TOTAL</span><span>${this.formatAmount(payload.totalAmount)}</span></div>
             </div>
@@ -1806,7 +1828,8 @@ export class QuotationComponent implements OnInit, OnDestroy {
 
     y -= 10;
     page.drawText(`TOTAL: ${this.formatAmountPdf(data.totalAmount)}`, { x: width - 220, y, size: 10, font: fontBold });
-    page.drawText(`GRAND TOTAL: ${this.formatAmountPdf(data.totalAmount)}`, { x: width - 220, y: y - 16, size: 10, font: fontBold });
+    page.drawText(`DISCOUNT: ${this.formatAmountPdf(Number(data.discountAmount ?? 0))}`, { x: width - 220, y: y - 16, size: 10, font: fontBold });
+    page.drawText(`GRAND TOTAL: ${this.formatAmountPdf(data.totalAmount)}`, { x: width - 220, y: y - 32, size: 10, font: fontBold });
 
     // Draw prepared / checked / approved signatures if available in settings
     const preparedSigSource = headerProfile.preparedSignature ? [headerProfile.preparedSignature, '/images/van-esign.png'] : ['/images/van-esign.png'];
