@@ -7,12 +7,15 @@ import {
   Param,
   Query,
   Req,
+  ForbiddenException,
 } from '@nestjs/common';
 import { PurchaseService } from './purchase.service';
 import { CreatePurchaseDto } from './dto/create-purchase.dto';
 import { UpdatePurchaseDto } from './dto/update-purchase.dto';
 import { UseGuards } from '@nestjs/common';
 import { JwtAuthGuard } from 'src/auth/jwt-auth.guard';
+import { PermissionGuard } from 'src/auth/permission.guard';
+import { Permissions } from 'src/auth/permissions.decorator';
 import { ListPurchaseQueryDto } from './dto/list-purchase-query.dto';
 import { DeletePurchaseWithAuthDto } from './dto/delete-purchase-with-auth.dto';
 import { AuditActorContext } from 'src/audit-log/audit-log.service';
@@ -21,6 +24,25 @@ import { AuditActorContext } from 'src/audit-log/audit-log.service';
 @UseGuards(JwtAuthGuard)
 export class PurchaseController {
   constructor(private readonly purchaseService: PurchaseService) {}
+
+  private userHasAnyPermission(request: { user?: Record<string, unknown> }, keys: string[]): boolean {
+    const roleName = String(request.user?.roleName ?? request.user?.role_name ?? '').trim().toLowerCase();
+    if (roleName === 'admin' || roleName === 'superadmin' || roleName === 'super admin') return true;
+
+    const permsRaw = String(request.user?.permissions ?? request.user?.rolePermission ?? '').trim();
+    if (!permsRaw) return false;
+
+    const perms = permsRaw.split(',').map(p => String(p ?? '').trim().toLowerCase()).filter(Boolean);
+    for (const key of keys) {
+      const normalized = String(key ?? '').trim().toLowerCase();
+      if (!normalized) continue;
+      if (perms.includes(normalized)) return true;
+      // allow substring match for flexible keys
+      if (perms.some(p => p.includes(normalized) || normalized.includes(p))) return true;
+    }
+
+    return false;
+  }
 
   private buildAuditContext(
     request: { user?: Record<string, unknown>; ip?: string },
@@ -90,6 +112,19 @@ export class PurchaseController {
     return this.purchaseService.findAll(this.withEffectiveBranchScope(query, request));
   }
 
+  @Get('my')
+  getMyRequests(
+    @Query() query: ListPurchaseQueryDto,
+    @Req() request: { user?: Record<string, unknown> },
+  ) {
+    const userId = Number(request.user?.sub);
+    if (Number.isFinite(userId)) {
+      query.createdBy = userId;
+    }
+
+    return this.purchaseService.getMyRequests(this.withEffectiveBranchScope(query, request));
+  }
+
   @Get('deliveries')
   getDeliveries(
     @Query() query: ListPurchaseQueryDto,
@@ -99,6 +134,8 @@ export class PurchaseController {
   }
 
   @Get('approvals')
+  @UseGuards(PermissionGuard)
+  @Permissions(['purchase-order.tab.approvals', 'purchase-order.approvals', 'purchase-order.approve'])
   getApprovals(
     @Query() query: ListPurchaseQueryDto,
     @Req() request: { user?: Record<string, unknown> },
@@ -184,6 +221,8 @@ export class PurchaseController {
   }
 
   @Patch(':id/revert-in-progress')
+  @UseGuards(PermissionGuard)
+  @Permissions(['purchase-order.button.revert-in-progress', 'purchase-order.revert', 'purchase_order.canUpdate'])
   revertInProgress(
     @Param('id') id: string,
     @Req() request: { user?: { sub?: unknown } },
@@ -196,6 +235,8 @@ export class PurchaseController {
   }
 
   @Patch(':id/revert-deliveries')
+  @UseGuards(PermissionGuard)
+  @Permissions(['purchase-order.button.revert-deliveries', 'purchase-order.revert', 'purchase_order.canUpdate'])
   revertDeliveries(
     @Param('id') id: string,
     @Req() request: { user?: { sub?: unknown } },
@@ -208,6 +249,8 @@ export class PurchaseController {
   }
 
   @Patch(':id/verify-receive')
+  @UseGuards(PermissionGuard)
+  @Permissions(['purchase-order.button.verify-receive', 'purchase-order.verify', 'purchase_order.canUpdate'])
   verifyAndReceive(
     @Param('id') id: string,
     @Req() request: { user?: Record<string, unknown>; ip?: string },
@@ -220,12 +263,35 @@ export class PurchaseController {
     );
   }
 
+  @UseGuards(PermissionGuard)
+  @Patch(':id/receive-request')
+  @Permissions(['purchase-order.button.receive-request', 'purchase-order.button.complete', 'purchase-order.complete'], { allowOwner: true })
+  receiveRequest(
+    @Param('id') id: string,
+    @Req() request: { user?: Record<string, unknown>; ip?: string },
+  ) {
+    const userId = Number(request.user?.sub);
+    return this.purchaseService.completeRequest(
+      +id,
+      Number.isFinite(userId) ? userId : undefined,
+      this.buildAuditContext(request),
+    );
+  }
+
   @Patch(':id/approve')
   approve(
     @Param('id') id: string,
     @Req() request: { user?: Record<string, unknown>; ip?: string },
   ) {
     const userId = Number(request.user?.sub);
+    const allowed = this.userHasAnyPermission(request, [
+      'purchase-order.button.approve',
+      'purchase-order.approve',
+      'purchase_order.canUpdate',
+      'purchase-order.tab.approvals',
+    ]);
+    if (!allowed) throw new ForbiddenException('You do not have permission to approve purchase orders');
+
     return this.purchaseService.approve(
       +id,
       Number.isFinite(userId) ? userId : undefined,
@@ -247,6 +313,8 @@ export class PurchaseController {
       request.user?.branchId ?? request.user?.branch_id ?? request.user?.branch,
     );
 
+    // only allow cancel if user has cancel permission or is creator
+    // use PermissionGuard to enforce if configured globally; fallback simple check
     return this.purchaseService.cancelPurchase(+id, {
       userId: Number.isFinite(userId) ? userId : undefined,
       username: username || undefined,

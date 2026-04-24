@@ -1023,7 +1023,7 @@ export class PurchaseService {
     auditActor?: AuditActorContext,
   ) {
     const poNumber = String(createPurchaseDto.poNumber ?? '').trim();
-    const status = String(createPurchaseDto.status ?? 'pending').trim().toLowerCase() || 'pending';
+    const status = String(createPurchaseDto.status ?? 'for_approval').trim().toLowerCase() || 'for_approval';
 
     const productItems = Array.isArray(createPurchaseDto.productItems)
       ? createPurchaseDto.productItems
@@ -1480,6 +1480,10 @@ export class PurchaseService {
     return this.fetchByMode('master-data', query);
   }
 
+  async getMyRequests(query: ListPurchaseQueryDto): Promise<PurchaseListResponseDto> {
+    return this.fetchByMode('master-data', query);
+  }
+
   private isApprovalStageStatus(status: string | null | undefined): boolean {
     const normalized = String(status ?? '').trim().toLowerCase();
     return [
@@ -1809,10 +1813,12 @@ export class PurchaseService {
 
   async approve(id: number, userId?: number, auditActor?: AuditActorContext) {
     const beforeSnapshot = await this.getPurchaseAuditSnapshot(id);
-    const response = await this.transitionPurchaseStatus(id, 'approved', userId, {
+    // Approve the PO and move it to awaiting delivery. Do NOT force serials to in-stock here;
+    // serials are marked in-stock when scanned during delivery/receiving.
+    const response = await this.transitionPurchaseStatus(id, 'in-progress', userId, {
       approvalOnly: true,
-      updateSerialsToInStock: true,
-      successMessage: 'Purchase order approved and serials moved to in-stock',
+      updateSerialsToInStock: false,
+      successMessage: 'Purchase order approved and in-progress',
     });
 
     if (response.success) {
@@ -1833,6 +1839,125 @@ export class PurchaseService {
     }
 
     return response;
+  }
+
+  /**
+   * Mark a purchase request as completed (received) after serial numbers have been scanned
+   * and the scanned counts satisfy the requested quantities.
+   */
+  async completeRequest(
+    id: number,
+    userId?: number,
+    auditActor?: AuditActorContext,
+  ): Promise<{ success: boolean; message: string; data?: Record<string, unknown> }> {
+    if (!Number.isFinite(id) || id <= 0) {
+      return { success: false, message: 'Invalid purchase id' };
+    }
+
+    const beforeSnapshot = await this.getPurchaseAuditSnapshot(id);
+
+    try {
+      const result = await this.databaseService.withTransaction(async (client) => {
+        // 1. Load PO items and serial counts
+        const productRows = await client.query<{
+          id: number;
+          product_id: string | null;
+          capacity_id: string | null;
+          total_set_qty: string | null;
+        }>(
+          `SELECT tpi.id, 
+                  COALESCE(to_jsonb(tpi)->>'productId', to_jsonb(tpi)->>'product_id') AS product_id,
+                  COALESCE(to_jsonb(tpi)->>'capacityId', to_jsonb(tpi)->>'capacity_id') AS capacity_id,
+                  COALESCE(to_jsonb(tpi)->>'totalSetQty', to_jsonb(tpi)->>'total_set_qty', '0')::text AS total_set_qty
+           FROM tbltransaction_product_items tpi
+           WHERE COALESCE(to_jsonb(tpi)->>'purchaseId', to_jsonb(tpi)->>'purchase_id', to_jsonb(tpi)->>'po_id') = $1
+             AND LOWER(COALESCE(to_jsonb(tpi)->>'transType', to_jsonb(tpi)->>'trans_type', 'purchase')) = 'purchase'`,
+          [String(id)],
+        );
+
+        // For each item compute scanned/in-stock serials linked to this PO
+        const serialColumns = await this.getTableColumns(client, 'tblserial_numbers');
+        const serialPurchaseIdColumn = this.pickColumn(serialColumns, [
+          'purchaseId',
+          'purchase_id',
+          'po_id',
+          'purchaseOrderId',
+          'purchase_order_id',
+        ]);
+        const serialProductIdColumn = this.pickColumn(serialColumns, ['productId', 'product_id']);
+        const serialCapacityIdColumn = this.pickColumn(serialColumns, ['capacityId', 'capacity_id']);
+        const serialStatusColumn = this.pickColumn(serialColumns, ['status']);
+
+        if (!serialPurchaseIdColumn || !serialProductIdColumn || !serialCapacityIdColumn) {
+          throw new Error('Serial number table is not configured to validate received quantities');
+        }
+
+        for (const row of productRows.rows) {
+          const productId = String(row.product_id ?? '').trim();
+          const capacityId = String(row.capacity_id ?? '').trim();
+          const expectedQty = Number(row.total_set_qty ?? '0') || 0;
+
+          if (!productId || !capacityId) {
+            continue;
+          }
+
+          const countResult = await client.query<{ count: string }>(
+            `SELECT COUNT(*)::text AS count
+             FROM tblserial_numbers
+             WHERE (COALESCE("${serialPurchaseIdColumn}"::text, '') = $1 OR COALESCE("${serialPurchaseIdColumn}", 0) = $2)
+               AND COALESCE("${serialProductIdColumn}"::text, '') = $3
+               AND COALESCE("${serialCapacityIdColumn}"::text, '') = $4
+               AND LOWER(COALESCE("${serialStatusColumn}", '')) IN ('in-stock', 'in_stock', 'instock', 'scanned')`,
+            [String(id), id, productId, capacityId],
+          );
+
+          const scannedCount = Number(countResult.rows[0]?.count ?? '0') || 0;
+          if (scannedCount < expectedQty) {
+            throw new Error(
+              `Serials for product ${productId} capacity ${capacityId} are incomplete: expected ${expectedQty}, found ${scannedCount}`,
+            );
+          }
+        }
+
+        // 2. All items satisfied — mark PO as request_completed
+        const purchaseColumns = await this.getTableColumns(client, 'tblpurchase_orders');
+        const statusColumn = this.pickColumn(purchaseColumns, ['status']);
+        if (!statusColumn) {
+          throw new Error('tblpurchase_orders status column is not configured');
+        }
+
+        await client.query(
+          `UPDATE tblpurchase_orders SET "${statusColumn}" = $1 WHERE id = $2`,
+          ['completed', id],
+        );
+
+        // 3. Update serial numbers status to in-stock
+        await client.query(
+          `UPDATE tblserial_numbers
+           SET status = 'in-stock'
+           WHERE (COALESCE("${serialPurchaseIdColumn}"::text, '') = $1 OR COALESCE("${serialPurchaseIdColumn}", 0) = $2)
+             AND LOWER(COALESCE("${serialStatusColumn}", '')) IN ('in-stock', 'in_stock', 'instock', 'scanned')`,
+          [String(id), id],
+        );
+
+        return { purchaseId: id, status: 'request_completed' };
+      });
+
+      const afterSnapshot = await this.getPurchaseAuditSnapshot(id);
+      await this.auditLogService.logMutation({
+        action: 'PURCHASE_RECEIVE_REQUEST',
+        entityType: 'purchase-order',
+        entityId: id,
+        actor: auditActor ?? { userId },
+        description: `Completed purchase request #${id}`,
+        before: beforeSnapshot,
+        after: afterSnapshot,
+      });
+
+      return { success: true, message: 'Purchase request completed', data: result };
+    } catch (error) {
+      return { success: false, message: error instanceof Error ? error.message : 'Failed to complete purchase request' };
+    }
   }
 
   async getVendors(search?: string) {
@@ -2881,9 +3006,17 @@ export class PurchaseService {
                 ? (item.serialNumbers as Record<string, unknown>)
                 : {};
 
-            const serialStatus = String(serialPayload.status ?? 'scanned')
-              .trim()
-              .toLowerCase() || 'scanned';
+            // Determine default serial status: if PO is already approved/awaiting_delivery,
+            // new scanned serials should be marked as in-stock. Otherwise use provided status or 'scanned'.
+            let serialStatus = String(serialPayload.status ?? '').trim().toLowerCase();
+            if (!serialStatus) {
+              const normalizedPoStatus = String(status ?? existingPurchase.status ?? '').trim().toLowerCase();
+              if (['approved', 'awaiting_delivery', 'awaiting-delivery', 'awaiting delivery', 'received'].includes(normalizedPoStatus)) {
+                serialStatus = 'in-stock';
+              } else {
+                serialStatus = 'scanned';
+              }
+            }
 
             for (const [unitTypeKey, values] of Object.entries(serialPayload)) {
               if (unitTypeKey.toLowerCase() === 'status') {
@@ -3256,6 +3389,7 @@ export class PurchaseService {
     const offset = (page - 1) * limit;
     const search = (query.search ?? '').trim().toLowerCase();
     const branchId = Number(query.branchId);
+    const createdBy = Number(query.createdBy);
 
     const params: unknown[] = [];
     const whereParts: string[] = [];
@@ -3268,6 +3402,12 @@ export class PurchaseService {
       whereParts.push(`LOWER(COALESCE(base.original_status, '')) IN (
         'for_approval', 'for approval', 'approval', 'pending_approval', 'pending approval'
       )`);
+    }
+
+    if (Number.isFinite(createdBy) && createdBy > 0) {
+      params.push(String(createdBy));
+      const idx = params.length;
+      whereParts.push(`COALESCE(base.created_by, '')::text = $${idx}`);
     }
 
     if (search) {
@@ -3348,6 +3488,11 @@ export class PurchaseService {
           v.name AS vendor_name,
           po.total_amount,
           COALESCE(po.status, 'pending') AS original_status,
+          COALESCE(
+            to_jsonb(po)->>'createdBy',
+            to_jsonb(po)->>'created_by',
+            ''
+          ) AS created_by,
           po.created_at,
           COALESCE(sc.serial_count, 0)::int AS serial_count,
           ${computedStatusExpression} AS computed_status

@@ -85,6 +85,7 @@ export interface QuotationDetailItem extends QuotationListItem {
     lineTotal: number;
     remarks: string;
   }>;
+  createdByName?: string | null;
 }
 
 export interface QuotationListMeta {

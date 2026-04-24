@@ -75,6 +75,7 @@ interface QuotationPreviewPdfData {
   discountAmount?: number;
   rows: QuotationPreviewPdfRow[];
   miscRows: QuotationPreviewMiscRow[];
+  preparedByName?: string | null;
 }
 
 interface QuotationHeaderProfile {
@@ -199,13 +200,8 @@ export class QuotationComponent implements OnInit, OnDestroy {
         '(2) The unit diagnose as NO Detect Found(NDP) (e.g. power supply issue, loose cable, for general cleaning only)\n' +
         '(3) The damage was caused by mishandling (e.g) improper installation/ physical or impact damage\n' +
         '(4) The unit was serviced, altered and/ or tampered by non-accredited installers or service centers that led to malfunction or failure of the operation',
-      validity:
-        'Quotation only valid 14 days upon issued\n' +
-        'Free delivery within Pampanga, please contact us regarding your location, and we will be happy to assist you with queries',
-      note:
-        '(1) An authorized dealer shall have Accreditation Certificate from AIRSUMMIT AIRCON AND REFRIGERATIONS SERVICES to maintain equipments Full Warranty\n' +
-        '(2) Any damage units while at the custody of the client will not be shouldered by AIRSUMMIT AIRCON AND REFRIGERATIONS SERVICES\n' +
-        '(3) This quotation serves as the sales contract when duly signed by the customer.',
+      validity: '',
+      note: '',
       penaltyFee:
         '20% cancellation fee of the total amount of the conforme contract will be applied.\n' +
         'ADDITIONAL 4% PENALTY FOR LATE PAYMENT',
@@ -1151,6 +1147,7 @@ export class QuotationComponent implements OnInit, OnDestroy {
       paymentInstruction: headerProfile.paymentInstruction,
       bankAccount: headerProfile.bankAccount,
       preparedSignature: headerProfile.preparedSignature,
+      preparedByName: String(detail.createdByName || '').trim() || undefined,
       checkedSignature: headerProfile.checkedSignature,
       approvedSignature: headerProfile.approvedSignature,
       totalAmount,
@@ -1172,6 +1169,7 @@ export class QuotationComponent implements OnInit, OnDestroy {
       discountAmount: totalDiscount,
       rows: pdfRows,
       miscRows,
+      preparedByName: String(detail.createdByName || '').trim() || undefined,
     };
 
     const blob = new Blob([html], { type: 'text/html;charset=utf-8' });
@@ -1381,6 +1379,7 @@ export class QuotationComponent implements OnInit, OnDestroy {
       paymentInstruction: headerProfile.paymentInstruction,
       bankAccount: headerProfile.bankAccount,
       preparedSignature: headerProfile.preparedSignature,
+      preparedByName: String(this.rbacService.getDisplayName() || '').trim() || undefined,
       checkedSignature: headerProfile.checkedSignature,
       approvedSignature: headerProfile.approvedSignature,
       totalAmount: this.form.totalAmount,
@@ -1402,6 +1401,7 @@ export class QuotationComponent implements OnInit, OnDestroy {
       discountAmount: pdfRows.reduce((sum, r) => sum + Number(r.discPrice ?? 0), 0),
       rows: pdfRows,
       miscRows,
+      preparedByName: String(this.rbacService.getDisplayName() || '').trim() || undefined,
     };
 
     const blob = new Blob([html], { type: 'text/html;charset=utf-8' });
@@ -1444,6 +1444,7 @@ export class QuotationComponent implements OnInit, OnDestroy {
     paymentInstruction?: string | null;
     bankAccount?: string | null;
     preparedSignature?: string | null;
+    preparedByName?: string | null;
     checkedSignature?: string | null;
     approvedSignature?: string | null;
     totalAmount: number;
@@ -1620,7 +1621,7 @@ export class QuotationComponent implements OnInit, OnDestroy {
           <div class="signatures">
             <div class="sig">
               ${preparedSign ? `<img src="${preparedSign}" alt="Prepared By" class="sig-signature" />` : ''}
-              <div class="sig-line">${this.escapeHtml(String(payload.headerBusinessName || ''))}</div>
+                <div class="sig-line">${this.escapeHtml(String((payload.preparedByName ?? payload.headerBusinessName) || ''))}</div>
               <div>Prepared By</div>
             </div>
             <div class="sig">
@@ -1697,7 +1698,7 @@ export class QuotationComponent implements OnInit, OnDestroy {
         height: logoHeight,
       });
     } else {
-      page.drawText(headerProfile.businessName || 'AIR SUMMIT', {
+      page.drawText(headerProfile.businessName || '', {
         x: 50,
         y: height - 50,
         size: 20,
@@ -1866,6 +1867,11 @@ export class QuotationComponent implements OnInit, OnDestroy {
     page.drawLine({ start: { x: 50, y: 70 }, end: { x: 280, y: 70 }, thickness: 0.8, color: rgb(0.2, 0.2, 0.2) });
     page.drawText('Received by:', { x: width - 280, y: 85, size: 10, font });
     page.drawLine({ start: { x: width - 280, y: 70 }, end: { x: width - 50, y: 70 }, thickness: 0.8, color: rgb(0.2, 0.2, 0.2) });
+    // draw prepared by name (creator) if provided
+    const preparedName = String(data.preparedByName ?? '').trim();
+    if (preparedName) {
+      page.drawText(preparedName, { x: 50, y: 58, size: 10, font });
+    }
 
     return await pdfDoc.save();
   }

@@ -299,6 +299,14 @@ export class PurchaseOrderService {
     return response.data;
   }
 
+  async getMyRequests(params: PurchaseQueryParams): Promise<PurchaseOrderListResult> {
+    const response = await apiClient.get<PurchaseOrderApiResponse>('/purchase/my', { params });
+    return {
+      items: response.data.items ?? [],
+      meta: response.data.meta,
+    };
+  }
+
   async getDeliveries(params: PurchaseQueryParams): Promise<PurchaseOrderListResult> {
     const response = await apiClient.get<PurchaseOrderApiResponse>('/purchase/deliveries', { params });
     return {
@@ -345,6 +353,11 @@ export class PurchaseOrderService {
 
   async verifyAndReceivePurchase(id: number): Promise<PurchaseActionResponse> {
     const response = await apiClient.patch<PurchaseActionResponse>(`/purchase/${id}/verify-receive`, {});
+    return response.data;
+  }
+
+  async receiveRequest(id: number): Promise<PurchaseActionResponse> {
+    const response = await apiClient.patch<PurchaseActionResponse>(`/purchase/${id}/receive-request`, {});
     return response.data;
   }
 

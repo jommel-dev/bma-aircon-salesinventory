@@ -721,6 +721,16 @@
               {{ isProcessingApprovalAction ? 'Processing...' : 'Revert to Deliveries' }}
             </button>
           }
+          @if (drawerMode === 'edit' && (editingPurchaseStatus || '').trim().toLowerCase() === 'awaiting_delivery' && hasAnyScannedSerials() && canCompleteRequest()) {
+            <button
+              type="button"
+              (click)="openReceiveConfirmDialog()"
+              [disabled]="isCompletingRequest || isCreating"
+              class="rounded-lg bg-brand-600 px-4 py-2 text-sm font-medium text-white disabled:opacity-60 hover:bg-brand-700"
+            >
+              {{ isCompletingRequest ? 'Processing...' : 'Received Request' }}
+            </button>
+          }
           <button type="submit" [disabled]="isCreating || isProcessingApprovalAction" class="rounded-lg bg-brand-500 px-4 py-2 text-sm font-medium text-white disabled:opacity-60">
             {{ isCreating ? 'Saving...' : (drawerMode === 'create' ? 'Create PO Request' : 'Update PO Request') }}
           </button>
@@ -811,8 +821,46 @@
     </div>
   }
 
+  @if (showReceiveConfirmDialog) {
+    <div class="fixed inset-0 z-100030 bg-gray-950/55 backdrop-blur-sm"></div>
+    <div class="fixed inset-0 z-100031 flex items-center justify-center p-4">
+      <div class="w-full max-w-md overflow-hidden rounded-[28px] border border-gray-200 bg-white shadow-2xl dark:border-gray-800 dark:bg-gray-900">
+        <div class="border-b border-gray-200 bg-linear-to-r from-amber-50 via-white to-sky-50 px-6 py-5 dark:border-gray-800">
+          <div class="flex items-start justify-between gap-4">
+            <div>
+              <p class="text-[11px] font-semibold uppercase tracking-[0.22em] text-amber-700">Confirm Receive Request</p>
+              <h3 class="mt-2 text-xl font-semibold text-gray-900 dark:text-white">Complete Purchase Request</h3>
+            </div>
+          </div>
+        </div>
+
+        <div class="space-y-4 px-6 py-5">
+          <p class="text-sm leading-6 text-gray-600 dark:text-gray-300">Are you sure you want to mark this purchase request as completed? This will finalize the PO and cannot be undone.</p>
+        </div>
+
+        <div class="flex items-center justify-end gap-3 border-t border-gray-200 px-6 py-4 dark:border-gray-800">
+          <button type="button" (click)="cancelReceiveConfirm()" class="rounded-lg border border-gray-300 px-4 py-2 text-sm font-medium text-gray-700">Cancel</button>
+          <button type="button" (click)="confirmReceiveRequest()" [disabled]="isCompletingRequest" class="rounded-lg bg-brand-600 px-4 py-2 text-sm font-medium text-white">{{ isCompletingRequest ? 'Processing...' : 'Confirm' }}</button>
+        </div>
+      </div>
+    </div>
+  }
+
   <div class="border-b border-default">
     <ul class="flex flex-wrap -mb-px text-sm font-medium text-center text-body">
+        @if (canAccessPurchaseTab('my-request')) {
+          <li class="me-2">
+            <button type="button" (click)="setTab('my-request')" [ngClass]="{
+              'text-brand-700 border-brand-500 dark:text-brand-300': activeTab === 'my-request',
+              'border-transparent text-gray-500 hover:text-brand-700 hover:border-brand-400 dark:text-gray-400 dark:hover:text-brand-300': activeTab !== 'my-request'
+            }" [attr.aria-current]="activeTab === 'my-request' ? 'page' : null" class="inline-flex items-center justify-center p-4 border-b rounded-t-base group transition-colors">
+              <svg class="w-5 h-5 me-2 text-gray-800 dark:text-white" aria-hidden="true" xmlns="http://www.w3.org/2000/svg" width="24" height="24" fill="currentColor" viewBox="0 0 24 24">
+                <path d="M5 3h14a2 2 0 0 1 2 2v2H3V5a2 2 0 0 1 2-2zM3 9h18v10a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V9z"/>
+              </svg>
+              My Request
+            </button>
+          </li>
+        }
         @if (canAccessPurchaseTab('deliveries')) {
           <li class="me-2">
             <button type="button" (click)="setTab('deliveries')" [ngClass]="{
@@ -945,14 +993,14 @@
                       </button>
                     }
 
-                    @if (canSendForApproval(item.status) && activeTab === 'deliveries' && canCreateOrUpdatePurchase() && !item.isTransferPO) {
+                    @if (activeTab === 'deliveries' && canCompleteRequest() && !item.isTransferPO && !isPurchaseCompleted(item.status)) {
                       <button
                         type="button"
-                        (click)="sendForApproval(item)"
-                        [disabled]="sendingForApprovalIds.has(item.id)"
+                        (click)="editingPurchaseId = item.id; openReceiveConfirmDialog()"
+                        [disabled]="isCompletingRequest || item.serialCount <= 0"
                         class="rounded-lg border border-brand-300 px-3 py-1.5 text-xs font-medium text-brand-700 transition hover:bg-brand-50 disabled:opacity-50 dark:border-brand-500/40 dark:text-brand-300 dark:hover:bg-brand-500/10"
                       >
-                        {{ sendingForApprovalIds.has(item.id) ? 'Sending...' : 'Send for Approval' }}
+                        {{ isCompletingRequest && editingPurchaseId === item.id ? 'Processing...' : 'Request Complete' }}
                       </button>
                     }
 

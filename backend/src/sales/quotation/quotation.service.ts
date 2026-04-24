@@ -166,6 +166,7 @@ export class QuotationService {
     const discountPrice = this.toOptionalNumber(item.discountPrice) ?? 0;
     const totalSetQty = this.toOptionalNumber(item.totalSetQty) ?? 0;
     const priceToUse = discountPrice > 0 ? discountPrice : sellPrice > 0 ? sellPrice : unitPrice;
+    
     return priceToUse * totalSetQty + this.extractMiscTotalFromRemarks(item.remarks);
   }
 
@@ -611,9 +612,17 @@ export class QuotationService {
       isDeleted: boolean | null;
       deletedAt: string | null;
       createdAt: string | null;
+      createdBy: string | null;
     }>(
       `SELECT
          q.id,
+         q.created_by::text AS "createdBy",
+         COALESCE(
+           to_jsonb(u)->>'fullname',
+           to_jsonb(u)->>'fullName',
+           to_jsonb(u)->>'full_name',
+           ''
+         ) AS "createdByName",
          q.quote_no AS "quoteNo",
          q.quote_date::text AS "quoteDate",
          q.customer_id::text AS "customerId",
@@ -634,8 +643,9 @@ export class QuotationService {
          q.is_deleted AS "isDeleted",
          q.deleted_at::text AS "deletedAt",
          q.created_at::text AS "createdAt"
-       FROM tblquotation q
-       WHERE q.id = $1
+      FROM tblquotation q
+      LEFT JOIN tblusers u ON u.id::text = q.created_by::text
+      WHERE q.id = $1
        LIMIT 1`,
       [id],
     );
@@ -723,6 +733,7 @@ export class QuotationService {
         isDeleted: Boolean(quotation.isDeleted),
         deletedAt: quotation.deletedAt,
         createdAt: quotation.createdAt,
+        createdByName: String(quotation.createdByName ?? '').trim(),
         productItems: itemsResult.rows.map((item) => ({
           id: item.id,
           productId: item.productId,

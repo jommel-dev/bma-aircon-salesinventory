@@ -15,9 +15,10 @@ import {
   VendorOption,
 } from '../../shared/services/purchase-order.service';
 import { RbacService } from '../../shared/services/rbac.service';
+import { NotificationService } from '../../shared/services/notification.service';
 import axios from 'axios';
 
-type PurchaseTab = 'deliveries' | 'approvals' | 'master-data';
+type PurchaseTab = 'my-request' | 'deliveries' | 'approvals' | 'master-data';
 type PurchaseOrderGuardDialogMode =
   | 'idle-warning'
   | 'session-timeout'
@@ -132,6 +133,8 @@ export class PurchaseOrderComponent implements OnInit, OnDestroy {
   isCreating = false;
   isProcessingApprovalAction = false;
   isVerifyingReceive = false;
+  isCompletingRequest = false;
+  showReceiveConfirmDialog = false;
   createError = '';
   createSuccess = '';
   isExportingSerials = false;
@@ -204,7 +207,8 @@ export class PurchaseOrderComponent implements OnInit, OnDestroy {
   private poIdleCountdownTimer: ReturnType<typeof setInterval> | null = null;
   private suppressBeforeUnloadPrompt = false;
   private drawerInitialStateSnapshot = '';
-  private readonly purchaseTabPermissionKeyMap: Record<PurchaseTab, string[]> = {
+    private readonly purchaseTabPermissionKeyMap: Record<PurchaseTab, string[]> = {
+      'my-request': [],
       deliveries: ['purchase-order.tab.deliveries', 'purchase-order.tab.local'],
       approvals: ['purchase-order.tab.approvals'],
       'master-data': ['purchase-order.tab.master-data', 'purchase-order.tab.imported'],
@@ -213,6 +217,7 @@ export class PurchaseOrderComponent implements OnInit, OnDestroy {
   constructor(
     private readonly purchaseOrderService: PurchaseOrderService,
     private readonly rbacService: RbacService,
+    private readonly notificationService: NotificationService,
   ) {}
 
   ngOnInit(): void {
@@ -637,7 +642,11 @@ export class PurchaseOrderComponent implements OnInit, OnDestroy {
     };
 
     try {
-      if (tab === 'deliveries') {
+      if (tab === 'my-request') {
+        const result = await this.purchaseOrderService.getMyRequests(query);
+        this.purchaseOrders = result.items;
+        this.applyMeta(result.meta);
+      } else if (tab === 'deliveries') {
         const result = await this.purchaseOrderService.getDeliveries(query);
         this.purchaseOrders = result.items;
         this.applyMeta(result.meta);
@@ -725,9 +734,21 @@ export class PurchaseOrderComponent implements OnInit, OnDestroy {
 
   getRowActionLabel(item?: PurchaseOrderItem): 'View' | 'Edit' {
     if (item && item.isTransferPO) return 'View';
+    // Return View for completed POs in my-request tab
+    if (item && this.activeTab === 'my-request' && this.isPurchaseCompleted(item.status)) {
+      return 'View';
+    }
     return this.activeTab === 'approvals' || this.activeTab === 'master-data'
       ? 'View'
       : 'Edit';
+  }
+
+  isPurchaseCompleted(status: string | null | undefined): boolean {
+    if (!status) return false;
+    const normalized = status.toLowerCase().trim();
+    return ['completed', 'request_completed', 'received', 'approved'].some(s =>
+      normalized.includes(s)
+    );
   }
 
   canSendForApproval(status: string | null | undefined): boolean {
@@ -1125,6 +1146,86 @@ export class PurchaseOrderComponent implements OnInit, OnDestroy {
     }
   }
 
+  async receiveRequest(): Promise<void> {
+    if (!this.editingPurchaseId || this.isCompletingRequest || this.isCreating) {
+      return;
+    }
+
+    this.isCompletingRequest = true;
+    this.createError = '';
+    this.createSuccess = '';
+
+    try {
+      const response = await this.purchaseOrderService.receiveRequest(this.editingPurchaseId);
+      if (!response.success) {
+        this.createError = response.message ?? 'Failed to complete purchase request';
+        return;
+      }
+
+      this.createSuccess = response.message ?? 'Purchase request completed successfully';
+      await this.closeCreateDrawer();
+      await this.loadTabData(this.activeTab);
+    } catch (error: unknown) {
+      if (axios.isAxiosError(error)) {
+        this.createError =
+          (error.response?.data as { message?: string } | undefined)?.message ??
+          'Failed to complete purchase request';
+      } else {
+        this.createError = 'Failed to complete purchase request';
+      }
+    } finally {
+      this.isCompletingRequest = false;
+    }
+  }
+
+  openReceiveConfirmDialog(): void {
+    this.showReceiveConfirmDialog = true;
+  }
+
+  cancelReceiveConfirm(): void {
+    this.showReceiveConfirmDialog = false;
+  }
+
+  async confirmReceiveRequest(): Promise<void> {
+    // keep the dialog open while processing to show loading state
+    this.isCompletingRequest = true;
+    this.createError = '';
+    this.createSuccess = '';
+
+    try {
+      const response = await this.purchaseOrderService.receiveRequest(this.editingPurchaseId!);
+      if (!response.success) {
+        this.createError = response.message ?? 'Failed to complete purchase request';
+        this.notificationService.error('Receive Request Failed', this.createError);
+        return;
+      }
+
+      this.createSuccess = response.message ?? 'Purchase request completed successfully';
+      this.notificationService.success('Receive Request Completed', this.createSuccess);
+      this.showReceiveConfirmDialog = false;
+      await this.closeCreateDrawer();
+      await this.loadTabData(this.activeTab);
+    } catch (error: unknown) {
+      if (axios.isAxiosError(error)) {
+        this.createError =
+          (error.response?.data as { message?: string } | undefined)?.message ??
+          'Failed to complete purchase request';
+      } else {
+        this.createError = 'Failed to complete purchase request';
+      }
+    } finally {
+      this.isCompletingRequest = false;
+    }
+  }
+
+  canCompleteRequest(): boolean {
+    // Allow if user has explicit button permission, or if they can approve (update) purchase orders
+    return (
+      this.rbacService.hasEffectivePermissionKey('purchase-order.button.receive-request') ||
+      this.canApprovePurchaseOrder()
+    );
+  }
+
   // ── Cancel / Delete ────────────────────────────────────────────────
 
   canCancelPurchase(status: string | null | undefined): boolean {
@@ -1296,6 +1397,18 @@ export class PurchaseOrderComponent implements OnInit, OnDestroy {
     if (!this.canOpenPurchaseDrawer()) {
       this.createError = 'You do not have permission to update purchase orders.';
       return;
+    }
+
+    // For my-request tab, disable editing for completed POs
+    if (this.activeTab === 'my-request') {
+      const completedStatuses = ['completed', 'request_completed', 'received', 'approved'];
+      const isCompleted = completedStatuses.some(status =>
+        (item.status ?? '').toLowerCase().includes(status.toLowerCase())
+      );
+      if (isCompleted) {
+        // Open in view-only mode for completed POs
+        this.drawerMode = 'view';
+      }
     }
 
     this.resetCreateForm();
@@ -1944,7 +2057,7 @@ export class PurchaseOrderComponent implements OnInit, OnDestroy {
   }
 
   getVisibleTabs(): PurchaseTab[] {
-    const allTabs: PurchaseTab[] = ['deliveries', 'approvals', 'master-data'];
+    const allTabs: PurchaseTab[] = ['my-request', 'deliveries', 'approvals', 'master-data'];
     return allTabs.filter((tab) => this.canAccessPurchaseTab(tab));
   }
   private applyMeta(meta?: { page: number; limit: number; total: number; totalPages: number }): void {
