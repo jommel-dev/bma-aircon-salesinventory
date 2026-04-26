@@ -180,7 +180,7 @@ export interface AccountingReportPrintSettingsPayload {
 
 @Injectable()
 export class AccountingService {
-  constructor(private readonly db: DatabaseService) {}
+  constructor(private readonly db: DatabaseService) { }
 
   async getAccountTitles(): Promise<AccountTitleRow[]> {
     const result = await this.db.query<AccountTitleRow>(
@@ -394,203 +394,299 @@ export class AccountingService {
 
     const deposits = Array.isArray(payload.deposits)
       ? payload.deposits.map((item) => ({
-          bankName: String(item.bankName ?? '').trim(),
-          chequeNo: String(item.chequeNo ?? '').trim(),
-          chequeDate: this.normalizeDateOrNull(item.chequeDate),
-          amount: Number(item.amount) || 0,
-        }))
+        bankName: String(item.bankName ?? '').trim(),
+        chequeNo: String(item.chequeNo ?? '').trim(),
+        chequeDate: this.normalizeDateOrNull(item.chequeDate),
+        amount: Number(item.amount) || 0,
+      }))
       : [];
 
     const invoices = Array.isArray(payload.invoices)
       ? payload.invoices.map((item) => ({
-          invoiceNo: String(item.invoiceNo ?? '').trim(),
-          invoiceDate: this.normalizeDateOrNull(item.invoiceDate),
-          description: String(item.description ?? '').trim(),
-          amount: Number(item.amount) || 0,
-        }))
+        invoiceNo: String(item.invoiceNo ?? '').trim(),
+        invoiceDate: this.normalizeDateOrNull(item.invoiceDate),
+        description: String(item.description ?? '').trim(),
+        amount: Number(item.amount) || 0,
+      }))
       : [];
 
     const accountTitles = Array.isArray(payload.accountTitles)
       ? payload.accountTitles.map((item) => ({
-          accountNumber: String(item.accountNumber ?? '').trim(),
-          description: String(item.description ?? '').trim(),
-          debit: Number(item.debit) || 0,
-          credit: Number(item.credit) || 0,
-        }))
+        accountNumber: String(item.accountNumber ?? '').trim(),
+        description: String(item.description ?? '').trim(),
+        debit: Number(item.debit) || 0,
+        credit: Number(item.credit) || 0,
+      }))
       : [];
 
-    const result = await this.db.withTransaction(async (client) => {
-      await client.query('LOCK TABLE tblcheque_vouchers IN EXCLUSIVE MODE');
+    try {
+      const result = await this.db.withTransaction(async (client) => {
+        // Synchronize vendor/payee details with tblvendors
+        const normalizedPayee = payee.trim();
 
-      const { prefix, suffix } = await this.getChequeVoucherNumberFormat();
-      const nextSequence = await this.getNextChequeVoucherSequence(prefix, client);
-      const cvNo = this.buildChequeVoucherNumber(nextSequence, prefix, suffix);
-
-      const preparedBy = this.nullIfBlank(payload.preparedBy);
-
-      const voucherResult = await client.query<ChequeVoucherRow>(
-        `INSERT INTO tblcheque_vouchers (
-            cv_no,
-            voucher_type,
-            payee,
-            voucher_date,
-            tin_number,
-            address,
-            zip_code,
-            particulars,
-            prepared_by,
-            released_at
-          )
-          VALUES ($1, $2, $3, $4::date, $5, $6, $7, $8, $9, NOW())
-          RETURNING
-            id,
-            cv_no AS "cvNo",
-            voucher_type AS "voucherType",
-            payee,
-            voucher_date::text AS "voucherDate",
-            tin_number AS "tinNumber",
-            address,
-            zip_code AS "zipCode",
-            particulars,
-            released_at::text AS "releasedAt",
-            prepared_by AS "preparedBy"`,
-        [
-          cvNo,
-          voucherType,
-          payee,
-          voucherDate,
-          this.nullIfBlank(payload.tinNumber),
-          this.nullIfBlank(payload.address),
-          this.nullIfBlank(payload.zipCode),
-          this.nullIfBlank(payload.particulars),
-          preparedBy,
-        ],
-      );
-
-      const voucher = voucherResult.rows[0];
-      if (!voucher) {
-        throw new BadRequestException('Unable to create cheque voucher.');
-      }
-
-      const savedDeposits: Array<{ bankName: string; chequeNo: string; chequeDate: string | null; amount: number }> = [];
-      for (const row of deposits) {
-        const inserted = await client.query<{
-          bankName: string;
-          chequeNo: string;
-          chequeDate: string | null;
-          amount: string;
-        }>(
-          `INSERT INTO tblcheque_voucher_deposits (
-              voucher_id,
-              bank_name,
-              cheque_no,
-              cheque_date,
-              amount
-            )
-            VALUES ($1, $2, $3, $4::date, $5)
-            RETURNING
-              COALESCE(bank_name, '') AS "bankName",
-              COALESCE(cheque_no, '') AS "chequeNo",
-              cheque_date::text AS "chequeDate",
-              amount::text AS amount`,
-          [voucher.id, this.nullIfBlank(row.bankName), this.nullIfBlank(row.chequeNo), row.chequeDate, row.amount],
+        const existingVendorResult = await client.query<{ id: string }>(
+          `SELECT v.id::text AS id FROM tblvendors v
+           WHERE LOWER(TRIM(COALESCE(to_jsonb(v)->>'name', to_jsonb(v)->>'vendor_name', ''))) = LOWER(TRIM($1))
+           LIMIT 1`,
+          [normalizedPayee],
         );
 
-        const insertedRow = inserted.rows[0];
-        if (insertedRow) {
-          savedDeposits.push({
-            bankName: insertedRow.bankName,
-            chequeNo: insertedRow.chequeNo,
-            chequeDate: insertedRow.chequeDate,
-            amount: Number(insertedRow.amount) || 0,
+        const vendorColumnsResult = await client.query<{ column_name: string }>(
+          `SELECT column_name FROM information_schema.columns WHERE table_name = 'tblvendors' AND table_schema = current_schema()`
+        );
+        const vendorColumns = vendorColumnsResult.rows.map(c => c.column_name);
+        const nameCol = vendorColumns.includes('name') ? 'name' : (vendorColumns.includes('vendor_name') ? 'vendor_name' : null);
+        const tinCol = vendorColumns.includes('tin_number') ? 'tin_number' : (vendorColumns.includes('tinNumber') ? 'tinNumber' : null);
+        const addressCol = vendorColumns.includes('address') ? 'address' : null;
+        const zipCol = vendorColumns.includes('zip_code') ? 'zip_code' : (vendorColumns.includes('zipCode') ? 'zipCode' : null);
+
+        const hasCreatedAt = vendorColumns.includes('created_at');
+        const hasUpdatedAt = vendorColumns.includes('updated_at');
+
+        if (existingVendorResult.rowCount === 0) {
+          if (nameCol) {
+            const insertCols = [nameCol];
+            const insertVals = [normalizedPayee];
+            const placeholders = ['$1'];
+
+            if (tinCol && payload.tinNumber) {
+              insertCols.push(tinCol);
+              insertVals.push(payload.tinNumber);
+              placeholders.push(`$${insertVals.length}`);
+            }
+            if (addressCol && payload.address) {
+              insertCols.push(addressCol);
+              insertVals.push(payload.address);
+              placeholders.push(`$${insertVals.length}`);
+            }
+            if (zipCol && payload.zipCode) {
+              insertCols.push(zipCol);
+              insertVals.push(payload.zipCode);
+              placeholders.push(`$${insertVals.length}`);
+            }
+
+            if (hasCreatedAt) {
+              insertCols.push('created_at');
+              insertVals.push(new Date().toISOString());
+              placeholders.push(`$${insertVals.length}`);
+            }
+            if (hasUpdatedAt) {
+              insertCols.push('updated_at');
+              insertVals.push(new Date().toISOString());
+              placeholders.push(`$${insertVals.length}`);
+            }
+
+            await client.query(
+              `INSERT INTO tblvendors (${insertCols.join(', ')}) VALUES (${placeholders.join(', ')})`,
+              insertVals
+            );
+          }
+        } else {
+          const updateParts: string[] = [];
+          const updateVals: any[] = [existingVendorResult.rows[0].id];
+
+          if (tinCol && payload.tinNumber) {
+            updateVals.push(payload.tinNumber);
+            updateParts.push(`${tinCol} = $${updateVals.length}`);
+          }
+          if (addressCol && payload.address) {
+            updateVals.push(payload.address);
+            updateParts.push(`${addressCol} = $${updateVals.length}`);
+          }
+          if (zipCol && payload.zipCode) {
+            updateVals.push(payload.zipCode);
+            updateParts.push(`${zipCol} = $${updateVals.length}`);
+          }
+
+          if (updateParts.length > 0) {
+            if (hasUpdatedAt) {
+              updateParts.push(`updated_at = NOW()`);
+            }
+            await client.query(
+              `UPDATE tblvendors SET ${updateParts.join(', ')} WHERE id::text = $1`,
+              updateVals
+            );
+          }
+        }
+
+        await client.query('LOCK TABLE tblcheque_vouchers IN EXCLUSIVE MODE');
+
+        const { prefix, suffix } = await this.getChequeVoucherNumberFormat();
+        const nextSequence = await this.getNextChequeVoucherSequence(prefix, client);
+        const cvNo = this.buildChequeVoucherNumber(nextSequence, prefix, suffix);
+
+        const preparedBy = this.nullIfBlank(payload.preparedBy);
+
+        const voucherResult = await client.query<ChequeVoucherRow>(
+          `INSERT INTO tblcheque_vouchers (
+              cv_no,
+              voucher_type,
+              payee,
+              voucher_date,
+              tin_number,
+              address,
+              zip_code,
+              particulars,
+              prepared_by,
+              released_at
+            )
+            VALUES ($1, $2, $3, $4::date, $5, $6, $7, $8, $9, NOW())
+            RETURNING
+              id,
+              cv_no AS "cvNo",
+              voucher_type AS "voucherType",
+              payee,
+              voucher_date::text AS "voucherDate",
+              tin_number AS "tinNumber",
+              address,
+              zip_code AS "zipCode",
+              particulars,
+              released_at::text AS "releasedAt",
+              prepared_by AS "preparedBy"`,
+          [
+            cvNo,
+            voucherType,
+            payee,
+            voucherDate,
+            this.nullIfBlank(payload.tinNumber),
+            this.nullIfBlank(payload.address),
+            this.nullIfBlank(payload.zipCode),
+            this.nullIfBlank(payload.particulars),
+            preparedBy,
+          ],
+        );
+
+        const voucher = voucherResult.rows[0];
+        if (!voucher) {
+          throw new BadRequestException('Unable to create cheque voucher.');
+        }
+
+        const savedDeposits: Array<{ bankName: string; chequeNo: string; chequeDate: string | null; amount: number }> = [];
+        for (const row of deposits) {
+          const inserted = await client.query<{
+            bankName: string;
+            chequeNo: string;
+            chequeDate: string | null;
+            amount: string;
+          }>(
+            `INSERT INTO tblcheque_voucher_deposits (
+                voucher_id,
+                bank_name,
+                cheque_no,
+                cheque_date,
+                amount
+              )
+              VALUES ($1, $2, $3, $4::date, $5)
+              RETURNING
+                COALESCE(bank_name, '') AS "bankName",
+                COALESCE(cheque_no, '') AS "chequeNo",
+                cheque_date::text AS "chequeDate",
+                amount::text AS amount`,
+            [voucher.id, this.nullIfBlank(row.bankName), this.nullIfBlank(row.chequeNo), row.chequeDate, row.amount],
+          );
+
+          const insertedRow = inserted.rows[0];
+          if (insertedRow) {
+            savedDeposits.push({
+              bankName: insertedRow.bankName,
+              chequeNo: insertedRow.chequeNo,
+              chequeDate: insertedRow.chequeDate,
+              amount: Number(insertedRow.amount) || 0,
+            });
+          }
+        }
+
+        const savedInvoices: Array<{ invoiceNo: string; invoiceDate: string | null; description: string; amount: number }> = [];
+        for (const row of invoices) {
+          const inserted = await client.query<{
+            invoiceNo: string;
+            invoiceDate: string | null;
+            description: string;
+            amount: string;
+          }>(
+            `INSERT INTO tblcheque_voucher_invoices (
+                voucher_id,
+                invoice_no,
+                invoice_date,
+                description,
+                amount
+              )
+              VALUES ($1, $2, $3::date, $4, $5)
+              RETURNING
+                COALESCE(invoice_no, '') AS "invoiceNo",
+                invoice_date::text AS "invoiceDate",
+                COALESCE(description, '') AS description,
+                amount::text AS amount`,
+            [voucher.id, this.nullIfBlank(row.invoiceNo), row.invoiceDate, this.nullIfBlank(row.description), row.amount],
+          );
+
+          const insertedRow = inserted.rows[0];
+          if (insertedRow) {
+            savedInvoices.push({
+              invoiceNo: insertedRow.invoiceNo,
+              invoiceDate: insertedRow.invoiceDate,
+              description: insertedRow.description,
+              amount: Number(insertedRow.amount) || 0,
+            });
+          }
+        }
+
+        const savedAccountTitles: Array<{ accountNumber: string; description: string; debit: number; credit: number }> = [];
+        for (const row of accountTitles) {
+          if (!row.accountNumber || !row.description) {
+            continue;
+          }
+
+          const accountTitleResult = await client.query<{ id: number }>(
+            `INSERT INTO tblaccount_titles (account_number, description, is_active)
+             VALUES ($1, $2, TRUE)
+             ON CONFLICT (account_number, description)
+             DO UPDATE SET
+               is_active = TRUE,
+               updated_at = NOW()
+             RETURNING id`,
+            [row.accountNumber, row.description],
+          );
+
+          const accountTitleId = accountTitleResult.rows[0]?.id ?? null;
+
+          await client.query(
+            `INSERT INTO tblcheque_voucher_account_titles (
+                voucher_id,
+                account_title_id,
+                account_number,
+                description,
+                debit,
+                credit
+              )
+              VALUES ($1, $2, $3, $4, $5, $6)`,
+            [voucher.id, accountTitleId, row.accountNumber, row.description, row.debit, row.credit],
+          );
+
+          savedAccountTitles.push({
+            accountNumber: row.accountNumber,
+            description: row.description,
+            debit: row.debit,
+            credit: row.credit,
           });
         }
+
+        return {
+          ...voucher,
+          deposits: savedDeposits,
+          invoices: savedInvoices,
+          accountTitles: savedAccountTitles,
+        };
+      });
+
+      return result;
+    } catch (error) {
+      console.error('Error releasing cheque voucher:', error);
+      if (error instanceof BadRequestException) {
+        throw error;
       }
-
-      const savedInvoices: Array<{ invoiceNo: string; invoiceDate: string | null; description: string; amount: number }> = [];
-      for (const row of invoices) {
-        const inserted = await client.query<{
-          invoiceNo: string;
-          invoiceDate: string | null;
-          description: string;
-          amount: string;
-        }>(
-          `INSERT INTO tblcheque_voucher_invoices (
-              voucher_id,
-              invoice_no,
-              invoice_date,
-              description,
-              amount
-            )
-            VALUES ($1, $2, $3::date, $4, $5)
-            RETURNING
-              COALESCE(invoice_no, '') AS "invoiceNo",
-              invoice_date::text AS "invoiceDate",
-              COALESCE(description, '') AS description,
-              amount::text AS amount`,
-          [voucher.id, this.nullIfBlank(row.invoiceNo), row.invoiceDate, this.nullIfBlank(row.description), row.amount],
-        );
-
-        const insertedRow = inserted.rows[0];
-        if (insertedRow) {
-          savedInvoices.push({
-            invoiceNo: insertedRow.invoiceNo,
-            invoiceDate: insertedRow.invoiceDate,
-            description: insertedRow.description,
-            amount: Number(insertedRow.amount) || 0,
-          });
-        }
-      }
-
-      const savedAccountTitles: Array<{ accountNumber: string; description: string; debit: number; credit: number }> = [];
-      for (const row of accountTitles) {
-        if (!row.accountNumber || !row.description) {
-          continue;
-        }
-
-        const accountTitleResult = await client.query<{ id: number }>(
-          `INSERT INTO tblaccount_titles (account_number, description, is_active)
-           VALUES ($1, $2, TRUE)
-           ON CONFLICT (account_number, description)
-           DO UPDATE SET
-             is_active = TRUE,
-             updated_at = NOW()
-           RETURNING id`,
-          [row.accountNumber, row.description],
-        );
-
-        const accountTitleId = accountTitleResult.rows[0]?.id ?? null;
-
-        await client.query(
-          `INSERT INTO tblcheque_voucher_account_titles (
-              voucher_id,
-              account_title_id,
-              account_number,
-              description,
-              debit,
-              credit
-            )
-            VALUES ($1, $2, $3, $4, $5, $6)`,
-          [voucher.id, accountTitleId, row.accountNumber, row.description, row.debit, row.credit],
-        );
-
-        savedAccountTitles.push({
-          accountNumber: row.accountNumber,
-          description: row.description,
-          debit: row.debit,
-          credit: row.credit,
-        });
-      }
-
-      return {
-        ...voucher,
-        deposits: savedDeposits,
-        invoices: savedInvoices,
-        accountTitles: savedAccountTitles,
-      };
-    });
-
-    return result;
+      throw new BadRequestException(error instanceof Error ? error.message : 'Unable to release cheque voucher.');
+    }
   }
 
   async updateChequeVoucher(
@@ -615,29 +711,29 @@ export class AccountingService {
 
     const deposits = Array.isArray(payload.deposits)
       ? payload.deposits.map((item) => ({
-          bankName: String(item.bankName ?? '').trim(),
-          chequeNo: String(item.chequeNo ?? '').trim(),
-          chequeDate: this.normalizeDateOrNull(item.chequeDate),
-          amount: Number(item.amount) || 0,
-        }))
+        bankName: String(item.bankName ?? '').trim(),
+        chequeNo: String(item.chequeNo ?? '').trim(),
+        chequeDate: this.normalizeDateOrNull(item.chequeDate),
+        amount: Number(item.amount) || 0,
+      }))
       : [];
 
     const invoices = Array.isArray(payload.invoices)
       ? payload.invoices.map((item) => ({
-          invoiceNo: String(item.invoiceNo ?? '').trim(),
-          invoiceDate: this.normalizeDateOrNull(item.invoiceDate),
-          description: String(item.description ?? '').trim(),
-          amount: Number(item.amount) || 0,
-        }))
+        invoiceNo: String(item.invoiceNo ?? '').trim(),
+        invoiceDate: this.normalizeDateOrNull(item.invoiceDate),
+        description: String(item.description ?? '').trim(),
+        amount: Number(item.amount) || 0,
+      }))
       : [];
 
     const accountTitles = Array.isArray(payload.accountTitles)
       ? payload.accountTitles.map((item) => ({
-          accountNumber: String(item.accountNumber ?? '').trim(),
-          description: String(item.description ?? '').trim(),
-          debit: Number(item.debit) || 0,
-          credit: Number(item.credit) || 0,
-        }))
+        accountNumber: String(item.accountNumber ?? '').trim(),
+        description: String(item.description ?? '').trim(),
+        debit: Number(item.debit) || 0,
+        credit: Number(item.credit) || 0,
+      }))
       : [];
 
     const result = await this.db.withTransaction(async (client) => {
@@ -875,12 +971,12 @@ export class AccountingService {
 
     const lines = Array.isArray(payload.sundries)
       ? payload.sundries.map((line) => ({
-          accountNumber: String(line.accountNumber ?? '').trim(),
-          description: String(line.description ?? '').trim(),
-          debit: Number(line.debit) || 0,
-          credit: Number(line.credit) || 0,
-        }))
-          .filter((line) => line.accountNumber || line.description || line.debit > 0 || line.credit > 0)
+        accountNumber: String(line.accountNumber ?? '').trim(),
+        description: String(line.description ?? '').trim(),
+        debit: Number(line.debit) || 0,
+        credit: Number(line.credit) || 0,
+      }))
+        .filter((line) => line.accountNumber || line.description || line.debit > 0 || line.credit > 0)
       : [];
 
     if (lines.length === 0) {
@@ -1009,13 +1105,13 @@ export class AccountingService {
 
     const lines = Array.isArray(payload.sundries)
       ? payload.sundries
-          .map((line) => ({
-            accountNumber: String(line.accountNumber ?? '').trim(),
-            description: String(line.description ?? '').trim(),
-            debit: Number(line.debit) || 0,
-            credit: Number(line.credit) || 0,
-          }))
-          .filter((line) => line.accountNumber || line.description || line.debit > 0 || line.credit > 0)
+        .map((line) => ({
+          accountNumber: String(line.accountNumber ?? '').trim(),
+          description: String(line.description ?? '').trim(),
+          debit: Number(line.debit) || 0,
+          credit: Number(line.credit) || 0,
+        }))
+        .filter((line) => line.accountNumber || line.description || line.debit > 0 || line.credit > 0)
       : [];
 
     if (lines.length === 0) {
@@ -1362,8 +1458,8 @@ export class AccountingService {
         const signatureSourceRaw = String(source.signatureSource ?? '').trim();
         const signatureSource =
           signatureSourceRaw === 'preparedBy' ||
-          signatureSourceRaw === 'checkedBy' ||
-          signatureSourceRaw === 'approvedBy'
+            signatureSourceRaw === 'checkedBy' ||
+            signatureSourceRaw === 'approvedBy'
             ? signatureSourceRaw
             : 'none';
 

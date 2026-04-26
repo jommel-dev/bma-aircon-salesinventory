@@ -144,6 +144,22 @@
         }
         @if (!isTransferPOViewOnly) {
           <section class="rounded-xl border border-gray-200 p-4 dark:border-gray-800">
+            <h4 class="mb-3 text-sm font-semibold text-gray-700 dark:text-gray-200">PO Request Type</h4>
+            <div class="grid grid-cols-1 gap-3 md:grid-cols-3">
+              @for (option of poTypeOptions; track option.value) {
+                <label class="flex cursor-pointer items-center gap-2 rounded-lg border border-gray-200 p-3 transition-colors hover:bg-gray-50 dark:border-gray-700 dark:hover:bg-gray-800"
+                  [class.border-blue-500]="createForm.poType === option.value"
+                  [class.bg-blue-50]="createForm.poType === option.value"
+                  [class.dark:bg-blue-900]="createForm.poType === option.value">
+                  <input type="radio" name="poType" [value]="option.value" [(ngModel)]="createForm.poType" (ngModelChange)="onPoTypeChange($event)" class="h-4 w-4 text-blue-600" />
+                  <span class="text-sm font-medium text-gray-700 dark:text-gray-200">{{ option.label }}</span>
+                </label>
+              }
+            </div>
+          </section>
+        }
+        @if (!isTransferPOViewOnly) {
+          <section class="rounded-xl border border-gray-200 p-4 dark:border-gray-800">
             <h4 class="mb-3 text-sm font-semibold text-gray-700 dark:text-gray-200">Dealer</h4>
           <div class="grid grid-cols-1 gap-3 md:grid-cols-2">
             <div>
@@ -346,53 +362,203 @@
               </div>
 
               <div class="grid grid-cols-1 gap-3 md:grid-cols-2">
-                <div>
-                  <label class="mb-1 block text-xs font-medium text-gray-600 dark:text-gray-300">Product Name</label>
-                  <div class="relative">
-                    <input
-                      type="text"
-                      [ngModel]="getProductSearchValue(activeProductTabIndex)"
-                      [name]="'productSearch_' + activeProductTabIndex"
-                      (ngModelChange)="onProductSearchChange(activeProductTabIndex, $event)"
-                      (focus)="onProductComboboxFocus(activeProductTabIndex)"
-                      (blur)="onProductComboboxBlur(activeProductTabIndex)"
-                      [readonly]="isMasterDataDrawerMode() || isTransferPOViewOnly"
-                      autocomplete="off"
-                      class="w-full rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm dark:border-gray-700 dark:bg-gray-900"
-                      required
-                      placeholder="Type to search product..."
-                    />
-                    <ul *ngIf="isProductDropdownOpenByItem[activeProductTabIndex] && getFilteredProductOptions(activeProductTabIndex).length > 0" class="absolute z-50 mt-1 max-h-48 w-full overflow-y-auto rounded-lg border border-gray-300 bg-white shadow-lg dark:border-gray-700 dark:bg-gray-900">
-                      <li
-                        *ngFor="let product of getFilteredProductOptions(activeProductTabIndex)"
-                        (mousedown)="selectProduct(activeProductTabIndex, product.id)"
-                        class="cursor-pointer px-3 py-2 text-sm hover:bg-gray-100 dark:hover:bg-gray-800"
-                      >
-                        {{ product.name }}<span *ngIf="product.brandName" class="ml-2 text-xs text-gray-400">({{ product.brandName }})</span>
-                      </li>
-                    </ul>
+                @if (createForm.poType === 'ACU') {
+                  <!-- ACU: Aircon Units - Original Product Form -->
+                  <div>
+                    <label class="mb-1 block text-xs font-medium text-gray-600 dark:text-gray-300">Product Name</label>
+                    <div class="relative">
+                      <input
+                        type="text"
+                        [ngModel]="getProductSearchValue(activeProductTabIndex)"
+                        [name]="'productSearch_' + activeProductTabIndex"
+                        (ngModelChange)="onProductSearchChange(activeProductTabIndex, $event)"
+                        (focus)="onProductComboboxFocus(activeProductTabIndex)"
+                        (blur)="onProductComboboxBlur(activeProductTabIndex)"
+                        [readonly]="isMasterDataDrawerMode() || isTransferPOViewOnly"
+                        autocomplete="off"
+                        class="w-full rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm dark:border-gray-700 dark:bg-gray-900"
+                        required
+                        placeholder="Type to search product..."
+                      />
+                      <ul *ngIf="isProductDropdownOpenByItem[activeProductTabIndex] && getFilteredProductOptions(activeProductTabIndex).length > 0" class="absolute z-50 mt-1 max-h-48 w-full overflow-y-auto rounded-lg border border-gray-300 bg-white shadow-lg dark:border-gray-700 dark:bg-gray-900">
+                        <li
+                          *ngFor="let product of getFilteredProductOptions(activeProductTabIndex)"
+                          (mousedown)="selectProduct(activeProductTabIndex, product.id)"
+                          class="cursor-pointer px-3 py-2 text-sm hover:bg-gray-100 dark:hover:bg-gray-800"
+                        >
+                          {{ product.name }}<span *ngIf="product.brandName" class="ml-2 text-xs text-gray-400">({{ product.brandName }})</span>
+                        </li>
+                      </ul>
+                    </div>
                   </div>
-                </div>
 
-                <div>
-                  <label class="mb-1 block text-xs font-medium text-gray-600 dark:text-gray-300">Capacity</label>
-                  <select [(ngModel)]="activeItem.capacityId" [name]="'capacityId_' + activeProductTabIndex" [disabled]="isMasterDataDrawerMode() || isTransferPOViewOnly" class="w-full rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm dark:border-gray-700 dark:bg-gray-900" required>
-                    <option value="">Select Capacity</option>
-                    @for (capacity of getCapacitiesByProduct(activeItem.productId); track capacity.id) {
-                      <option [value]="capacity.id">{{ capacity.name }}</option>
-                    }
-                  </select>
-                </div>
+                  <div>
+                    <label class="mb-1 block text-xs font-medium text-gray-600 dark:text-gray-300">Capacity</label>
+                    <select [(ngModel)]="activeItem.capacityId" [name]="'capacityId_' + activeProductTabIndex" [disabled]="isMasterDataDrawerMode() || isTransferPOViewOnly" class="w-full rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm dark:border-gray-700 dark:bg-gray-900" required>
+                      <option value="">Select Capacity</option>
+                      @for (capacity of getCapacitiesByProduct(activeItem.productId); track capacity.id) {
+                        <option [value]="capacity.id">{{ capacity.name }}</option>
+                      }
+                    </select>
+                  </div>
 
-                <div>
-                  <label class="mb-1 block text-xs font-medium text-gray-600 dark:text-gray-300">Unit Price</label>
-                  <input type="number" [(ngModel)]="activeItem.unitPrice" (ngModelChange)="recalculateTotalAmount()" [name]="'unitPrice_' + activeProductTabIndex" [readonly]="isTransferPOViewOnly" class="w-full rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm dark:border-gray-700 dark:bg-gray-900" required />
-                </div>
-                <div>
-                  <label class="mb-1 block text-xs font-medium text-gray-600 dark:text-gray-300">Total Set Qty</label>
-                  <input type="number" [(ngModel)]="activeItem.totalSetQty" (ngModelChange)="onTotalSetQtyChange(activeProductTabIndex)" [readonly]="isMasterDataDrawerMode() || isTransferPOViewOnly" [name]="'totalSetQty_' + activeProductTabIndex" class="w-full rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm dark:border-gray-700 dark:bg-gray-900" required />
-                </div>
+                  <div>
+                    <label class="mb-1 block text-xs font-medium text-gray-600 dark:text-gray-300">Unit Price</label>
+                    <input type="number" [(ngModel)]="activeItem.unitPrice" (ngModelChange)="recalculateTotalAmount()" [name]="'unitPrice_' + activeProductTabIndex" [readonly]="isTransferPOViewOnly" class="w-full rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm dark:border-gray-700 dark:bg-gray-900" required />
+                  </div>
+                  <div>
+                    <label class="mb-1 block text-xs font-medium text-gray-600 dark:text-gray-300">Total Set Qty</label>
+                    <input type="number" [(ngModel)]="activeItem.totalSetQty" (ngModelChange)="onTotalSetQtyChange(activeProductTabIndex)" [readonly]="isMasterDataDrawerMode() || isTransferPOViewOnly" [name]="'totalSetQty_' + activeProductTabIndex" class="w-full rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm dark:border-gray-700 dark:bg-gray-900" required />
+                  </div>
+                }
 
+                @if (createForm.poType === 'ACP') {
+                  <!-- ACP: Aircon Parts Form -->
+                  <div>
+                    <label class="mb-1 block text-xs font-medium text-gray-600 dark:text-gray-300">Brand</label>
+                    <div class="relative">
+                      <input
+                        type="text"
+                        [(ngModel)]="activeItem.partsBrandName"
+                        [name]="'partsBrand_' + activeProductTabIndex"
+                        (input)="onPartsBrandSearch(activeProductTabIndex, $event)"
+                        (focus)="onBrandComboboxFocus(activeProductTabIndex)"
+                        (blur)="onBrandComboboxBlur(activeProductTabIndex)"
+                        [readonly]="isMasterDataDrawerMode() || isTransferPOViewOnly"
+                        autocomplete="off"
+                        class="w-full rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm dark:border-gray-700 dark:bg-gray-900"
+                        placeholder="Type to search brand..."
+                      />
+                      <ul *ngIf="isBrandDropdownOpenByItem[activeProductTabIndex] && brandOptionsByItem[activeProductTabIndex]?.length" class="absolute z-10 mt-1 max-h-60 w-full overflow-auto rounded-md bg-white py-1 text-base shadow-lg ring-1 ring-black ring-opacity-5 focus:outline-none dark:bg-gray-800 sm:text-sm">
+                        <li *ngFor="let brand of brandOptionsByItem[activeProductTabIndex]" (click)="selectPartsBrand(activeProductTabIndex, brand)" class="relative cursor-pointer select-none px-4 py-2 text-gray-900 hover:bg-blue-600 hover:text-white dark:text-gray-200">
+                          {{ brand.name }}
+                        </li>
+                      </ul>
+                    </div>
+                  </div>
+                  <div>
+                    <label class="mb-1 block text-xs font-medium text-gray-600 dark:text-gray-300">Parts Name</label>
+                    <div class="relative">
+                      <input 
+                        type="text" 
+                        [(ngModel)]="activeItem.partsName" 
+                        [name]="'partsName_' + activeProductTabIndex" 
+                        (input)="onPartsSearch(activeProductTabIndex, $event)"
+                        (focus)="onPartComboboxFocus(activeProductTabIndex)"
+                        (blur)="onPartComboboxBlur(activeProductTabIndex)"
+                        [readonly]="isTransferPOViewOnly" 
+                        autocomplete="off"
+                        class="w-full rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm dark:border-gray-700 dark:bg-gray-900" 
+                        placeholder="Enter parts name" 
+                      />
+                      <ul *ngIf="isPartDropdownOpenByItem[activeProductTabIndex] && partOptionsByItem[activeProductTabIndex]?.length" class="absolute z-10 mt-1 max-h-60 w-full overflow-auto rounded-md bg-white py-1 text-base shadow-lg ring-1 ring-black ring-opacity-5 focus:outline-none dark:bg-gray-800 sm:text-sm">
+                        <li *ngFor="let part of partOptionsByItem[activeProductTabIndex]" (click)="selectPart(activeProductTabIndex, part)" class="relative cursor-pointer select-none px-4 py-2 text-gray-900 hover:bg-blue-600 hover:text-white dark:text-gray-200">
+                          <div class="font-medium">{{ part.part_name || part.name }}</div>
+                          <div class="text-xs opacity-80">{{ part.part_code || part.code }} - {{ part.part_model || part.model }}</div>
+                        </li>
+                      </ul>
+                    </div>
+                  </div>
+                  <div>
+                    <label class="mb-1 block text-xs font-medium text-gray-600 dark:text-gray-300">Model</label>
+                    <input type="text" [(ngModel)]="activeItem.partsModel" [name]="'partsModel_' + activeProductTabIndex" [readonly]="isTransferPOViewOnly" class="w-full rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm dark:border-gray-700 dark:bg-gray-900" placeholder="Enter model" />
+                  </div>
+                  <div>
+                    <label class="mb-1 block text-xs font-medium text-gray-600 dark:text-gray-300">Parts Code</label>
+                    <input type="text" [(ngModel)]="activeItem.partsCode" [name]="'partsCode_' + activeProductTabIndex" [readonly]="isTransferPOViewOnly" class="w-full rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm dark:border-gray-700 dark:bg-gray-900" placeholder="Enter parts code" />
+                  </div>
+                  <div>
+                    <label class="mb-1 block text-xs font-medium text-gray-600 dark:text-gray-300">SRP</label>
+                    <input type="number" [(ngModel)]="activeItem.srp" (ngModelChange)="onSrpChange(activeProductTabIndex)" [name]="'srp_' + activeProductTabIndex" [readonly]="isTransferPOViewOnly" class="w-full rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm dark:border-gray-700 dark:bg-gray-900" placeholder="0.00" />
+                  </div>
+                  <div>
+                    <label class="mb-1 block text-xs font-medium text-gray-600 dark:text-gray-300">Discount %</label>
+                    <input type="number" [(ngModel)]="activeItem.discountPercentage" (ngModelChange)="onDiscountPercentageChange(activeProductTabIndex)" [name]="'discountPercentage_' + activeProductTabIndex" [readonly]="isTransferPOViewOnly" class="w-full rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm dark:border-gray-700 dark:bg-gray-900" placeholder="0" />
+                  </div>
+                  <div>
+                    <label class="mb-1 block text-xs font-medium text-gray-600 dark:text-gray-300">Discounted Price</label>
+                    <input type="number" [ngModel]="activeItem.discountPrice" [name]="'discountPrice_' + activeProductTabIndex" [readonly]="true" class="w-full rounded-lg border border-gray-200 bg-gray-50 px-3 py-2 text-sm dark:border-gray-700 dark:bg-gray-800" placeholder="Auto-calculated" />
+                  </div>
+                  <div>
+                    <label class="mb-1 block text-xs font-medium text-gray-600 dark:text-gray-300">Quantity</label>
+                    <input type="number" [(ngModel)]="activeItem.totalSetQty" (ngModelChange)="recalculateTotalAmount()" [name]="'acpQty_' + activeProductTabIndex" [readonly]="isTransferPOViewOnly" class="w-full rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm dark:border-gray-700 dark:bg-gray-900" />
+                  </div>
+                }
+
+                @if (createForm.poType === 'ACM') {
+                  <!-- ACM: Aircon Materials Form -->
+                  <div>
+                    <label class="mb-1 block text-xs font-medium text-gray-600 dark:text-gray-300">Brand</label>
+                    <div class="relative">
+                      <input
+                        type="text"
+                        [(ngModel)]="activeItem.materialBrandName"
+                        [name]="'materialBrand_' + activeProductTabIndex"
+                        (input)="onMaterialBrandSearch(activeProductTabIndex, $event)"
+                        (focus)="onBrandComboboxFocus(activeProductTabIndex)"
+                        (blur)="onBrandComboboxBlur(activeProductTabIndex)"
+                        [readonly]="isMasterDataDrawerMode() || isTransferPOViewOnly"
+                        autocomplete="off"
+                        class="w-full rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm dark:border-gray-700 dark:bg-gray-900"
+                        placeholder="Type to search brand..."
+                      />
+                      <ul *ngIf="isBrandDropdownOpenByItem[activeProductTabIndex] && brandOptionsByItem[activeProductTabIndex]?.length" class="absolute z-10 mt-1 max-h-60 w-full overflow-auto rounded-md bg-white py-1 text-base shadow-lg ring-1 ring-black ring-opacity-5 focus:outline-none dark:bg-gray-800 sm:text-sm">
+                        <li *ngFor="let brand of brandOptionsByItem[activeProductTabIndex]" (click)="selectMaterialBrand(activeProductTabIndex, brand)" class="relative cursor-pointer select-none px-4 py-2 text-gray-900 hover:bg-blue-600 hover:text-white dark:text-gray-200">
+                          {{ brand.name }}
+                        </li>
+                      </ul>
+                    </div>
+                  </div>
+                  <div>
+                    <label class="mb-1 block text-xs font-medium text-gray-600 dark:text-gray-300">Material Name</label>
+                    <div class="relative">
+                      <input 
+                        type="text" 
+                        [(ngModel)]="activeItem.materialName" 
+                        [name]="'materialName_' + activeProductTabIndex" 
+                        (input)="onMaterialsSearch(activeProductTabIndex, $event)"
+                        (focus)="onMaterialComboboxFocus(activeProductTabIndex)"
+                        (blur)="onMaterialComboboxBlur(activeProductTabIndex)"
+                        [readonly]="isTransferPOViewOnly" 
+                        autocomplete="off"
+                        class="w-full rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm dark:border-gray-700 dark:bg-gray-900" 
+                        placeholder="Enter material name" 
+                      />
+                      <ul *ngIf="isMaterialDropdownOpenByItem[activeProductTabIndex] && materialOptionsByItem[activeProductTabIndex]?.length" class="absolute z-10 mt-1 max-h-60 w-full overflow-auto rounded-md bg-white py-1 text-base shadow-lg ring-1 ring-black ring-opacity-5 focus:outline-none dark:bg-gray-800 sm:text-sm">
+                        <li *ngFor="let material of materialOptionsByItem[activeProductTabIndex]" (click)="selectMaterial(activeProductTabIndex, material)" class="relative cursor-pointer select-none px-4 py-2 text-gray-900 hover:bg-blue-600 hover:text-white dark:text-gray-200">
+                          <div class="font-medium">{{ material.material_name || material.name }}</div>
+                          <div class="text-xs opacity-80">{{ material.material_code || material.code }} - {{ material.unit }}</div>
+                        </li>
+                      </ul>
+                    </div>
+                  </div>
+                  <div>
+                    <label class="mb-1 block text-xs font-medium text-gray-600 dark:text-gray-300">Material Code</label>
+                    <input type="text" [(ngModel)]="activeItem.materialCode" [name]="'materialCode_' + activeProductTabIndex" [readonly]="isTransferPOViewOnly" class="w-full rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm dark:border-gray-700 dark:bg-gray-900" placeholder="Enter material code" />
+                  </div>
+                  <div>
+                    <label class="mb-1 block text-xs font-medium text-gray-600 dark:text-gray-300">Unit</label>
+                    <select [(ngModel)]="activeItem.materialUnit" [name]="'materialUnit_' + activeProductTabIndex" [disabled]="isTransferPOViewOnly" class="w-full rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm dark:border-gray-700 dark:bg-gray-900">
+                      <option value="PCS">PCS</option>
+                      <option value="METERS">METERS</option>
+                      <option value="LITERS">LITERS</option>
+                      <option value="KG">KG</option>
+                      <option value="BOX">BOX</option>
+                      <option value="ROLL">ROLL</option>
+                    </select>
+                  </div>
+                  <div>
+                    <label class="mb-1 block text-xs font-medium text-gray-600 dark:text-gray-300">Unit Price</label>
+                    <input type="number" [(ngModel)]="activeItem.unitPrice" (ngModelChange)="recalculateTotalAmount()" [name]="'acmUnitPrice_' + activeProductTabIndex" [readonly]="isTransferPOViewOnly" class="w-full rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm dark:border-gray-700 dark:bg-gray-900" placeholder="0.00" />
+                  </div>
+                  <div>
+                    <label class="mb-1 block text-xs font-medium text-gray-600 dark:text-gray-300">Quantity</label>
+                    <input type="number" [(ngModel)]="activeItem.quantity" (ngModelChange)="recalculateTotalAmount()" [name]="'acmQty_' + activeProductTabIndex" [readonly]="isTransferPOViewOnly" class="w-full rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm dark:border-gray-700 dark:bg-gray-900" />
+                  </div>
+                }
+              </div>
+
+                @if (createForm.poType === 'ACU') {
                 <div class="md:col-span-2 rounded-lg border border-gray-200 p-3 dark:border-gray-700">
                   <p class="mb-2 text-xs font-semibold uppercase tracking-wide text-gray-500 dark:text-gray-400">Unit Types</p>
                   <div class="mb-3 flex flex-wrap gap-2">
@@ -421,8 +587,9 @@
                     }
                   </div>
                 </div>
+                }
 
-                @if (drawerMode === 'edit' || isTransferPOViewOnly) {
+                @if (createForm.poType === 'ACU' && (drawerMode === 'edit' || isTransferPOViewOnly)) {
                   <div class="md:col-span-2 rounded-lg border border-gray-200 p-3 dark:border-gray-700">
                     <p class="mb-2 text-xs font-semibold uppercase tracking-wide text-gray-500 dark:text-gray-400">
                       @if (isTransferPOViewOnly) { Serial Numbers ({{ getSelectedUnitTypeLabel(activeProductTabIndex) }}) }
@@ -652,7 +819,6 @@
                   </div>
                 }
               </div>
-            </div>
           }
 
           <div class="mt-3">
@@ -1073,7 +1239,6 @@
     }
 
   </div>
-</div>
 
 @if (poActionDialogMode !== null) {
   <div class="fixed inset-0 z-100030 flex items-center justify-center bg-black/50 px-4 backdrop-blur-sm">

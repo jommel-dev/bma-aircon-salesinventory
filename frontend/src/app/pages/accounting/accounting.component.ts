@@ -2,6 +2,7 @@ import { CommonModule } from '@angular/common';
 import { Component, OnInit } from '@angular/core';
 import { FormsModule } from '@angular/forms';
 import { PageBreadcrumbComponent } from '../../shared/components/common/page-breadcrumb/page-breadcrumb.component';
+import { DatePickerComponent } from '../../shared/components/form/date-picker/date-picker.component';
 import {
   SalesOrderListItem,
   SalesOrderService,
@@ -287,7 +288,7 @@ interface Tax2307SupplierSummary {
 
 @Component({
   selector: 'app-accounting',
-  imports: [CommonModule, FormsModule, PageBreadcrumbComponent],
+  imports: [CommonModule, FormsModule, PageBreadcrumbComponent, DatePickerComponent],
   templateUrl: './accounting.component.html',
 })
 export class AccountingComponent implements OnInit {
@@ -474,6 +475,10 @@ export class AccountingComponent implements OnInit {
   cvAccountSearchResults: AccountTitleDraft[] = [];
   editCvAccountDropdownIndex = -1;
   editCvAccountSearchResults: AccountTitleDraft[] = [];
+
+  payeeSearchResults: any[] = [];
+  isSearchingPayee: boolean = false;
+  isPayeeDropdownOpen: boolean = false;
 
   chequeVoucherForm = {
     cvNo: '',
@@ -1847,6 +1852,14 @@ export class AccountingComponent implements OnInit {
     }
 
     if (this.isSavingChequeVoucher) {
+      return;
+    }
+
+    const debitTotal = this.chequeVoucherDebitTotal;
+    const creditTotal = this.chequeVoucherCreditTotal;
+
+    if (Math.abs(debitTotal - creditTotal) > 0.0001) {
+      this.reportError = 'Total debit must equal total credit.';
       return;
     }
 
@@ -3784,7 +3797,7 @@ export class AccountingComponent implements OnInit {
     return {
       bankName: '',
       chequeNo: '',
-      chequeDate: '',
+      chequeDate: new Date().toISOString().split('T')[0],
       amount: 0,
     };
   }
@@ -3792,7 +3805,7 @@ export class AccountingComponent implements OnInit {
   private createInvoiceDraft(): InvoiceDraft {
     return {
       invoiceNo: '',
-      invoiceDate: '',
+      invoiceDate: new Date().toISOString().split('T')[0],
       description: '',
       amount: 0,
     };
@@ -3845,6 +3858,47 @@ export class AccountingComponent implements OnInit {
       this.sundryAccountDropdownIndex = -1;
       this.sundryAccountSearchResults = [];
     }, 150);
+  }
+
+  onPayeeInput(value: string): void {
+    this.chequeVoucherForm.payee = value;
+    const query = value.trim().toLowerCase();
+
+    if (!query) {
+      this.payeeSearchResults = [];
+      this.isPayeeDropdownOpen = false;
+      return;
+    }
+
+    this.isSearchingPayee = true;
+    apiClient.get<{ success: boolean; items: any[] }>(`/vendor?search=${encodeURIComponent(query)}&limit=10`)
+      .then(response => {
+        if (response.data?.success) {
+          this.payeeSearchResults = response.data.items || [];
+          this.isPayeeDropdownOpen = this.payeeSearchResults.length > 0;
+        }
+      })
+      .catch(() => {
+        this.payeeSearchResults = [];
+      })
+      .finally(() => {
+        this.isSearchingPayee = false;
+      });
+  }
+
+  selectPayee(vendor: any): void {
+    this.chequeVoucherForm.payee = vendor.name;
+    this.chequeVoucherForm.tinNumber = vendor.tin_number || '';
+    this.chequeVoucherForm.address = vendor.address || '';
+    // If there's no zip code in the vendor record, we keep current or empty
+    this.payeeSearchResults = [];
+    this.isPayeeDropdownOpen = false;
+  }
+
+  closePayeeDropdown(): void {
+    setTimeout(() => {
+      this.isPayeeDropdownOpen = false;
+    }, 200);
   }
 
   onCvAccountInput(index: number, value: string): void {

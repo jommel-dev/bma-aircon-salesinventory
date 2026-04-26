@@ -6,6 +6,7 @@ import { PageBreadcrumbComponent } from '../../shared/components/common/page-bre
 import {
   CreatePurchaseRequestPayload,
   DeletePurchaseAuthPayload,
+  BrandOption,
   PurchaseOrderDetailItem,
   PurchaseOrderDetailProductItem,
   ProductCapacityOption,
@@ -40,6 +41,7 @@ type ManualSerialDialogState = {
 };
 
 interface PurchaseProductFormItem {
+  productType: 'ACU' | 'ACP' | 'ACM'; // ACU=Aircon Unit, ACP=Aircon Parts, ACM=Aircon Materials
   productId: string;
   capacityId: string;
   unitPrice: number;
@@ -47,6 +49,21 @@ interface PurchaseProductFormItem {
   discountPrice: number | '';
   unitTypes: PurchaseUnitTypeFormItem[];
   totalSetQty: number;
+  // ACP specific fields
+  partsBrandId: string;
+  partsBrandName: string;
+  partsName: string;
+  partsModel: string;
+  partsCode: string;
+  srp: number;
+  discountPercentage: number;
+  // ACM specific fields
+  materialBrandId: string;
+  materialBrandName: string;
+  materialName: string;
+  materialCode: string;
+  materialUnit: string;
+  quantity: number;
 }
 
 interface PurchaseUnitTypeFormItem {
@@ -97,6 +114,8 @@ export class PurchaseOrderComponent implements OnInit, OnDestroy {
   drawerMode: 'create' | 'edit' | 'view' = 'create';
   editingPurchaseId: number | null = null;
   editingPoNumber = '';
+  editingPoType: 'ACU' | 'ACP' | 'ACM' = 'ACU';
+  editingBranchId: number | null = null;
   editingPurchaseStatus = '';
   isTransferPO: boolean = false;
   serialStatusByNumber: Record<string, string> = {};
@@ -159,10 +178,27 @@ export class PurchaseOrderComponent implements OnInit, OnDestroy {
   isVendorDropdownOpen = false;
   productSearchByItem: Record<number, string> = {};
   isProductDropdownOpenByItem: Record<number, boolean> = {};
+  brandSearchByItem: Record<number, string> = {};
+  brandOptionsByItem: Record<number, BrandOption[]> = {};
+  isBrandDropdownOpenByItem: Record<number, boolean> = {};
+  partSearchByItem: Record<number, string> = {};
+  partOptionsByItem: Record<number, any[]> = {};
+  isPartDropdownOpenByItem: Record<number, boolean> = {};
+  materialSearchByItem: Record<number, string> = {};
+  materialOptionsByItem: Record<number, any[]> = {};
+  isMaterialDropdownOpenByItem: Record<number, boolean> = {};
+  private brandDebounceTimers: Record<number, any> = {};
+  private partDebounceTimers: Record<number, any> = {};
+  private materialDebounceTimers: Record<number, any> = {};
   activeProductTabIndex = 0;
   selectedUnitTypeByProduct: Record<number, string> = {};
   scannedSerialTablePageByKey: Record<string, number> = {};
   readonly scannedSerialTablePageSize = 10;
+  readonly poTypeOptions: Array<{ value: 'ACU' | 'ACP' | 'ACM'; label: string }> = [
+    { value: 'ACU', label: 'Aircon Units' },
+    { value: 'ACP', label: 'Aircon Parts' },
+    { value: 'ACM', label: 'Aircon Materials' },
+  ];
   readonly paymentMethodOptions: PurchasePaymentFormItem['method'][] = [
     'Cash',
     'Bank Transfer',
@@ -174,13 +210,14 @@ export class PurchaseOrderComponent implements OnInit, OnDestroy {
   ];
 
   createForm = {
+    poType: 'ACU' as 'ACU' | 'ACP' | 'ACM',
     vendorId: '',
     vendorName: '',
     vendorAddress: '',
     vendorContactPerson: '',
     vendorContactNumber: '',
-    paymentDetails: [this.createEmptyPaymentItem()],
-    productItems: [this.createEmptyProductItem()],
+    paymentDetails: [] as PurchasePaymentFormItem[],
+    productItems: [] as PurchaseProductFormItem[],
     totalAmount: 0,
   };
   private readonly searchDebounceMs = 300;
@@ -218,7 +255,11 @@ export class PurchaseOrderComponent implements OnInit, OnDestroy {
     private readonly purchaseOrderService: PurchaseOrderService,
     private readonly rbacService: RbacService,
     private readonly notificationService: NotificationService,
-  ) {}
+  ) {
+    // Initialize form arrays here to avoid circular dependency with createEmptyProductItem
+    this.createForm.paymentDetails = [this.createEmptyPaymentItem()];
+    this.createForm.productItems = [this.createEmptyProductItem()];
+  }
 
   ngOnInit(): void {
     const availableTabs = this.getVisibleTabs();
@@ -241,6 +282,11 @@ export class PurchaseOrderComponent implements OnInit, OnDestroy {
       clearTimeout(this.vendorDebounceTimer);
       this.vendorDebounceTimer = null;
     }
+
+    for (const timer of Object.values(this.brandDebounceTimers)) {
+      clearTimeout(timer);
+    }
+    this.brandDebounceTimers = {};
 
     for (const timer of Object.values(this.serialScanTimers)) {
       clearTimeout(timer);
@@ -1425,10 +1471,12 @@ export class PurchaseOrderComponent implements OnInit, OnDestroy {
         preferPoLinkedSerials: this.activeTab === 'master-data',
       });
 
-      if (!detail) {
-        this.createError = 'Failed to load purchase order details';
-        return;
-      }
+    if (!detail) {
+      this.createError = 'Failed to load purchase order details';
+      return;
+    }
+
+    const poType = (detail.poType as 'ACU' | 'ACP' | 'ACM') || 'ACU';
 
       this.isTransferPO = !!detail.isTransferPO;
       this.originatingSalesOrder = detail.originatingSalesOrder || null;
@@ -1438,7 +1486,9 @@ export class PurchaseOrderComponent implements OnInit, OnDestroy {
 
       this.applyDetailToForm(detail, item);
       this.editingPoNumber = String(detail.poNumber ?? item.poNumber ?? '').trim();
+      this.editingPoType = poType;
       this.editingPurchaseStatus = String(detail.status ?? item.status ?? '').trim();
+      this.editingBranchId = null; // Update this if the API response includes branchId
       this.captureDrawerInitialSnapshot();
     } catch (error: unknown) {
       if (axios.isAxiosError(error)) {
@@ -1458,8 +1508,7 @@ export class PurchaseOrderComponent implements OnInit, OnDestroy {
 
   get isTransferPOViewOnly(): boolean {
     return this.isTransferPO;
-    // Optionally: check if user branch matches receiver branch
-    // return this.isTransferPO && this.rbacService.getPayload()?.branchId === this.editingBranchId;
+    // return this.isTransferPO && this.rbacService.getBranchId() !== this.editingBranchId;
   }
 
   get isDrawerViewMode(): boolean {
@@ -2077,9 +2126,14 @@ export class PurchaseOrderComponent implements OnInit, OnDestroy {
     this.drawerMode = 'create';
     this.editingPurchaseId = null;
     this.editingPoNumber = '';
+    this.editingPoType = 'ACU';
+    this.editingBranchId = null;
     this.editingPurchaseStatus = '';
+    this.isTransferPO = false;
+    this.originatingSalesOrder = null;
     this.vendorMode = 'existing';
     this.createForm = {
+      poType: 'ACU',
       vendorId: '',
       vendorName: '',
       vendorAddress: '',
@@ -2648,13 +2702,230 @@ export class PurchaseOrderComponent implements OnInit, OnDestroy {
     const total = this.createForm.productItems.reduce((sum, item) => {
       const unitPrice = Number(item.unitPrice) || 0;
       const discountPrice = Number(item.discountPrice) || 0;
-      const qty = Math.max(0, Number(item.totalSetQty) || 0);
       const priceToUse = discountPrice > 0 ? discountPrice : unitPrice;
-      return sum + priceToUse * qty;
+
+      const qty = item.productType === 'ACM'
+        ? Math.max(0, Number(item.quantity) || 0)
+        : Math.max(0, Number(item.totalSetQty) || 0);
+
+      return sum + (priceToUse * qty);
     }, 0);
 
     this.createForm.totalAmount = total;
     this.syncPaymentAmounts();
+  }
+
+  onPoTypeChange(poType: 'ACU' | 'ACP' | 'ACM'): void {
+    this.createForm.poType = poType;
+    // Update productType for all product items
+    this.createForm.productItems = this.createForm.productItems.map(item => ({
+      ...item,
+      productType: poType,
+    }));
+    // Reset form to reflect new product type
+    this.activeProductTabIndex = 0;
+  }
+
+  onSrpChange(productIndex: number): void {
+    const item = this.createForm.productItems[productIndex];
+    if (item) {
+      // Auto-calculate discounted price: srp * (1 - discount_percentage/100)
+      const discountAmount = item.srp * (item.discountPercentage / 100);
+      item.discountPrice = item.srp - discountAmount;
+      this.recalculateTotalAmount();
+    }
+  }
+
+  onDiscountPercentageChange(productIndex: number): void {
+    this.onSrpChange(productIndex);
+  }
+
+  onPartsBrandSearch(productIndex: number, event: Event): void {
+    const value = (event.target as HTMLInputElement).value;
+    const item = this.createForm.productItems[productIndex];
+    if (!item) return;
+
+    item.partsBrandName = value;
+    item.partsBrandId = '';
+    this.brandSearchByItem[productIndex] = value;
+    this.isBrandDropdownOpenByItem[productIndex] = true;
+
+    if (this.brandDebounceTimers[productIndex]) {
+      clearTimeout(this.brandDebounceTimers[productIndex]);
+    }
+
+    this.brandDebounceTimers[productIndex] = setTimeout(async () => {
+      try {
+        const brands = await this.purchaseOrderService.getBrands(value, 'ACP');
+        this.brandOptionsByItem[productIndex] = brands;
+      } catch {
+        this.brandOptionsByItem[productIndex] = [];
+      } finally {
+        delete this.brandDebounceTimers[productIndex];
+      }
+    }, this.searchDebounceMs);
+  }
+
+  onMaterialBrandSearch(productIndex: number, event: Event): void {
+    const value = (event.target as HTMLInputElement).value;
+    const item = this.createForm.productItems[productIndex];
+    if (!item) return;
+
+    item.materialBrandName = value;
+    item.materialBrandId = '';
+    this.brandSearchByItem[productIndex] = value;
+    this.isBrandDropdownOpenByItem[productIndex] = true;
+
+    if (this.brandDebounceTimers[productIndex]) {
+      clearTimeout(this.brandDebounceTimers[productIndex]);
+    }
+
+    this.brandDebounceTimers[productIndex] = setTimeout(async () => {
+      try {
+        const brands = await this.purchaseOrderService.getBrands(value, 'ACM');
+        this.brandOptionsByItem[productIndex] = brands;
+      } catch {
+        this.brandOptionsByItem[productIndex] = [];
+      } finally {
+        delete this.brandDebounceTimers[productIndex];
+      }
+    }, this.searchDebounceMs);
+  }
+
+  onPartsSearch(productIndex: number, event: Event): void {
+    const value = (event.target as HTMLInputElement).value;
+    const item = this.createForm.productItems[productIndex];
+    if (!item) return;
+
+    item.partsName = value;
+    this.partSearchByItem[productIndex] = value;
+    this.isPartDropdownOpenByItem[productIndex] = true;
+
+    if (this.partDebounceTimers[productIndex]) {
+      clearTimeout(this.partDebounceTimers[productIndex]);
+    }
+
+    this.partDebounceTimers[productIndex] = setTimeout(async () => {
+      try {
+        const parts = await this.purchaseOrderService.getParts(value, item.partsBrandId);
+        this.partOptionsByItem[productIndex] = parts;
+      } catch {
+        this.partOptionsByItem[productIndex] = [];
+      } finally {
+        delete this.partDebounceTimers[productIndex];
+      }
+    }, this.searchDebounceMs);
+  }
+
+  onMaterialsSearch(productIndex: number, event: Event): void {
+    const value = (event.target as HTMLInputElement).value;
+    const item = this.createForm.productItems[productIndex];
+    if (!item) return;
+
+    item.materialName = value;
+    this.materialSearchByItem[productIndex] = value;
+    this.isMaterialDropdownOpenByItem[productIndex] = true;
+
+    if (this.materialDebounceTimers[productIndex]) {
+      clearTimeout(this.materialDebounceTimers[productIndex]);
+    }
+
+    this.materialDebounceTimers[productIndex] = setTimeout(async () => {
+      try {
+        const materials = await this.purchaseOrderService.getMaterials(value, item.materialBrandId);
+        this.materialOptionsByItem[productIndex] = materials;
+      } catch {
+        this.materialOptionsByItem[productIndex] = [];
+      } finally {
+        delete this.materialDebounceTimers[productIndex];
+      }
+    }, this.searchDebounceMs);
+  }
+
+  onBrandComboboxFocus(index: number): void {
+    this.isBrandDropdownOpenByItem[index] = true;
+  }
+
+  onBrandComboboxBlur(index: number): void {
+    setTimeout(() => {
+      this.isBrandDropdownOpenByItem[index] = false;
+    }, 150);
+  }
+
+  onPartComboboxFocus(index: number): void {
+    this.isPartDropdownOpenByItem[index] = true;
+  }
+
+  onPartComboboxBlur(index: number): void {
+    setTimeout(() => {
+      this.isPartDropdownOpenByItem[index] = false;
+    }, 150);
+  }
+
+  onMaterialComboboxFocus(index: number): void {
+    this.isMaterialDropdownOpenByItem[index] = true;
+  }
+
+  onMaterialComboboxBlur(index: number): void {
+    setTimeout(() => {
+      this.isMaterialDropdownOpenByItem[index] = false;
+    }, 150);
+  }
+
+  selectPartsBrand(productIndex: number, brand: BrandOption): void {
+    const item = this.createForm.productItems[productIndex];
+    if (!item) return;
+
+    item.partsBrandId = String(brand.id);
+    item.partsBrandName = brand.name;
+    this.brandSearchByItem[productIndex] = brand.name;
+    this.isBrandDropdownOpenByItem[productIndex] = false;
+    
+    // Automatically trigger parts search for this brand
+    this.onPartsSearch(productIndex, { target: { value: '' } } as any);
+  }
+
+  selectMaterialBrand(productIndex: number, brand: BrandOption): void {
+    const item = this.createForm.productItems[productIndex];
+    if (!item) return;
+
+    item.materialBrandId = String(brand.id);
+    item.materialBrandName = brand.name;
+    this.brandSearchByItem[productIndex] = brand.name;
+    this.isBrandDropdownOpenByItem[productIndex] = false;
+
+    // Automatically trigger materials search for this brand
+    this.onMaterialsSearch(productIndex, { target: { value: '' } } as any);
+  }
+
+  selectPart(productIndex: number, part: any): void {
+    const item = this.createForm.productItems[productIndex];
+    if (!item) return;
+
+    item.productId = String(part.id);
+    item.capacityId = ''; // Parts don't have capacity
+    item.partsName = part.partsName || part.parts_name || part.name;
+    item.partsModel = part.model || part.part_model || '';
+    item.partsCode = part.partsCode || part.parts_code || part.code || '';
+    item.srp = Number(part.srp) || 0;
+    this.partSearchByItem[productIndex] = item.partsName;
+    this.isPartDropdownOpenByItem[productIndex] = false;
+    this.onSrpChange(productIndex);
+  }
+
+  selectMaterial(productIndex: number, material: any): void {
+    const item = this.createForm.productItems[productIndex];
+    if (!item) return;
+
+    item.productId = String(material.id);
+    item.capacityId = ''; // Materials don't have capacity
+    item.materialName = material.material_name || material.name;
+    item.materialCode = material.material_code || material.code || '';
+    item.materialUnit = material.unit || 'PCS';
+    item.unitPrice = Number(material.unit_price) || material.unitPrice || 0;
+    this.materialSearchByItem[productIndex] = item.materialName;
+    this.isMaterialDropdownOpenByItem[productIndex] = false;
+    this.recalculateTotalAmount();
   }
 
   getCapacitiesByProduct(productId: string): ProductCapacityOption[] {
@@ -3030,14 +3301,17 @@ export class PurchaseOrderComponent implements OnInit, OnDestroy {
     unitEntry.scanInput = '';
     unitEntry.scanSuccess = 'Serial number queued for saving';
     unitEntry.scanError = '';
-    this.queueSerialScan({
+
+    const scanPayload: QueuedPurchaseSerialScan = {
       productIndex,
       unitLabel,
       serialNumber,
-      purchaseId: this.editingPurchaseId,
+      purchaseId: this.editingPurchaseId!, // Asserted because of the check on line 1353
       productId,
-      capacityId,
-    });
+      capacityId
+    };
+
+    this.queueSerialScan(scanPayload);
     this.focusSerialScanInput(productIndex, unitLabel);
   }
 
@@ -3209,6 +3483,7 @@ export class PurchaseOrderComponent implements OnInit, OnDestroy {
         }
 
         if (!result?.success) {
+          if (!unitEntry) return;
           this.removeLocalSerial(unitEntry, entry.serialNumber);
           unitEntry.scanError = result?.message ?? 'Failed to save serial number';
           unitEntry.scanSuccess = '';
@@ -3475,6 +3750,7 @@ export class PurchaseOrderComponent implements OnInit, OnDestroy {
       : undefined;
 
     return {
+      poType: this.createForm.poType,
       vendorId: useExistingVendor ? vendorId || undefined : undefined,
       vendor: vendorPayload,
       paymentDetails: this.createForm.paymentDetails.map((payment) => ({
@@ -3496,8 +3772,41 @@ export class PurchaseOrderComponent implements OnInit, OnDestroy {
         productId: item.productId ? Number(item.productId) : undefined,
         capacityId: item.capacityId ? Number(item.capacityId) : undefined,
         unitPrice: Number(item.unitPrice) || 0,
-        sellPrice: item.sellPrice === '' ? '' : Number(item.sellPrice) || '',
-        discountPrice: item.discountPrice === '' ? '' : Number(item.discountPrice) || '',
+        sellPrice: item.sellPrice === '' ? '' : (Number(item.sellPrice) ?? ''),
+        discountPrice: item.discountPrice === '' ? '' : (Number(item.discountPrice) ?? ''),
+        // Carry ACP/ACM inline create details so backend can materialize records.
+        partsBrandId:
+          item.productType === 'ACP' && String(item.partsBrandId ?? '').trim()
+            ? String(item.partsBrandId).trim()
+            : undefined,
+        partsName:
+          item.productType === 'ACP' && String(item.partsName ?? '').trim()
+            ? String(item.partsName).trim()
+            : undefined,
+        partsModel:
+          item.productType === 'ACP' && String(item.partsModel ?? '').trim()
+            ? String(item.partsModel).trim()
+            : undefined,
+        partsCode:
+          item.productType === 'ACP' && String(item.partsCode ?? '').trim()
+            ? String(item.partsCode).trim()
+            : undefined,
+        materialBrandId:
+          item.productType === 'ACM' && String(item.materialBrandId ?? '').trim()
+            ? String(item.materialBrandId).trim()
+            : undefined,
+        materialName:
+          item.productType === 'ACM' && String(item.materialName ?? '').trim()
+            ? String(item.materialName).trim()
+            : undefined,
+        materialCode:
+          item.productType === 'ACM' && String(item.materialCode ?? '').trim()
+            ? String(item.materialCode).trim()
+            : undefined,
+        materialUnit:
+          item.productType === 'ACM' && String(item.materialUnit ?? '').trim()
+            ? String(item.materialUnit).trim()
+            : undefined,
         unitTypesQty: item.unitTypes.map((entry) => ({
           label: entry.label,
           value: Number(entry.value) || 0,
@@ -3534,19 +3843,28 @@ export class PurchaseOrderComponent implements OnInit, OnDestroy {
     }
 
     for (const [index, item] of this.createForm.productItems.entries()) {
-      if (!String(item.productId ?? '').trim()) {
-        return `Product is required for item ${index + 1}.`;
-      }
+      if (item.productType === 'ACU') {
+        if (!String(item.productId ?? '').trim()) {
+          return `Product is required for item ${index + 1}.`;
+        }
 
-      if (!String(item.capacityId ?? '').trim()) {
-        return `Capacity is required for item ${index + 1}.`;
+        if (!String(item.capacityId ?? '').trim()) {
+          return `Capacity is required for item ${index + 1}.`;
+        }
+      } else {
+        // For ACP/ACM, we still want a name at least
+        const itemName = item.productType === 'ACP' ? item.partsName : item.materialName;
+        if (!itemName?.trim()) {
+          return `Item name is required for item ${index + 1}.`;
+        }
       }
 
       if (!Number.isFinite(Number(item.unitPrice)) || Number(item.unitPrice) < 0) {
         return `Unit price must be valid for item ${index + 1}.`;
       }
 
-      if (!Number.isFinite(Number(item.totalSetQty)) || Number(item.totalSetQty) <= 0) {
+      const qtyToCheck = item.productType === 'ACM' ? Number(item.quantity) : Number(item.totalSetQty);
+      if (!Number.isFinite(qtyToCheck) || qtyToCheck <= 0) {
         return `Quantity must be greater than 0 for item ${index + 1}.`;
       }
     }
@@ -3654,6 +3972,10 @@ export class PurchaseOrderComponent implements OnInit, OnDestroy {
 
   private applyDetailToForm(detail: PurchaseOrderDetailItem, fallbackItem: PurchaseOrderItem): void {
     this.vendorMode = detail.vendorId ? 'existing' : 'new';
+    const rawPoType = String(detail.poType ?? '').trim().toUpperCase();
+    const poType = (rawPoType === 'ACP' || rawPoType === 'ACM' || rawPoType === 'ACU') 
+      ? rawPoType as 'ACU' | 'ACP' | 'ACM' 
+      : 'ACU';
 
     const paymentDetails = detail.paymentDetails.length > 0
       ? detail.paymentDetails.map((payment) => ({
@@ -3674,10 +3996,11 @@ export class PurchaseOrderComponent implements OnInit, OnDestroy {
       : [this.createEmptyPaymentItem()];
 
     const productItems = detail.productItems.length > 0
-      ? detail.productItems.map((product) => this.mapDetailProductItem(product))
+        ? detail.productItems.map((product) => this.mapDetailProductItem(product, poType))
       : [this.createEmptyProductItem()];
 
     this.createForm = {
+      poType,
       vendorId: detail.vendorId ?? '',
       vendorName: detail.vendorName ?? fallbackItem.vendorName ?? '',
       vendorAddress: detail.vendorAddress ?? '',
@@ -3723,10 +4046,13 @@ export class PurchaseOrderComponent implements OnInit, OnDestroy {
     this.recalculateTotalAmount();
   }
 
-  private mapDetailProductItem(product: PurchaseOrderDetailProductItem): PurchaseProductFormItem {
+  private mapDetailProductItem(
+    product: PurchaseOrderDetailProductItem,
+    poType: 'ACU' | 'ACP' | 'ACM' = 'ACU'
+  ): PurchaseProductFormItem {
     const unitTypesFromPayload = Array.isArray(product.unitTypesQty) ? product.unitTypesQty : [];
     const serialNumbers = this.normalizeSerialNumbersByUnitType(product.serialNumbers);
-    const productUnitTypeLabels = this.getProductUnitTypeLabels(String(product.productId ?? ''));
+    const productUnitTypeLabels = poType === 'ACU' ? this.getProductUnitTypeLabels(String(product.productId ?? '')) : [];
 
     let normalizedUnitTypes: PurchaseUnitTypeFormItem[] = [];
     if (unitTypesFromPayload.length > 0) {
@@ -3794,13 +4120,28 @@ export class PurchaseOrderComponent implements OnInit, OnDestroy {
       : Number(product.totalSetQty) || 0;
 
     return {
+      productType: poType,
       productId: String(product.productId ?? ''),
       capacityId: String(product.capacityId ?? ''),
       unitPrice: Number(product.unitPrice) || 0,
-      sellPrice: Number(product.sellPrice) || 0,
-      discountPrice: Number(product.discountPrice) || 0,
+      sellPrice: Number(product.sellPrice) || '',
+      discountPrice: Number(product.discountPrice) || '',
       unitTypes,
       totalSetQty,
+      // Initialize required ACP/ACM fields
+      partsBrandId: String(product.partsBrandId ?? ''),
+      partsBrandName: String(product.partsBrandName ?? ''),
+      partsName: String(product.partsName ?? ''),
+      partsModel: String(product.partsModel ?? ''),
+      partsCode: String(product.partsCode ?? ''),
+      srp: Number(product.sellPrice) || 0,
+      discountPercentage: 0,
+      materialBrandId: String(product.materialBrandId ?? ''),
+      materialBrandName: String(product.materialBrandName ?? ''),
+      materialName: String(product.materialName ?? ''),
+      materialCode: String(product.materialCode ?? ''),
+      materialUnit: String(product.materialUnit ?? 'PCS'),
+      quantity: totalSetQty || 1
     };
   }
 
@@ -4025,6 +4366,7 @@ export class PurchaseOrderComponent implements OnInit, OnDestroy {
 
   private createEmptyProductItem(): PurchaseProductFormItem {
     return {
+      productType: this.createForm.poType,
       productId: '',
       capacityId: '',
       unitPrice: 0,
@@ -4034,15 +4376,53 @@ export class PurchaseOrderComponent implements OnInit, OnDestroy {
         this.createUnitTypeEntry('set', 0, []),
       ],
       totalSetQty: 1,
+      // ACP specific fields
+      partsBrandId: '',
+      partsBrandName: '',
+      partsName: '',
+      partsModel: '',
+      partsCode: '',
+      srp: 0,
+      discountPercentage: 0,
+      // ACM specific fields
+      materialBrandId: '',
+      materialBrandName: '',
+      materialName: '',
+      materialCode: '',
+      materialUnit: 'PCS',
+      quantity: 1,
     };
   }
 
   private syncProductComboboxState(): void {
     this.productSearchByItem = Object.fromEntries(
-      this.createForm.productItems.map((item, index) => [String(index), item.productId ? this.getProductDisplayLabel(item.productId) : '']),
+      this.createForm.productItems.map((item, index) => [
+        String(index),
+        item.productType === 'ACU' && item.productId ? this.getProductDisplayLabel(item.productId) : '',
+      ]),
     );
     this.isProductDropdownOpenByItem = Object.fromEntries(
       this.createForm.productItems.map((_, index) => [String(index), false]),
+    );
+
+    // Sync brand, part, and material search fields
+    this.brandSearchByItem = Object.fromEntries(
+      this.createForm.productItems.map((item, index) => [
+        String(index),
+        item.productType === 'ACP' ? item.partsBrandName : item.productType === 'ACM' ? item.materialBrandName : '',
+      ]),
+    );
+    this.partSearchByItem = Object.fromEntries(
+      this.createForm.productItems.map((item, index) => [
+        String(index),
+        item.productType === 'ACP' ? item.partsName : '',
+      ]),
+    );
+    this.materialSearchByItem = Object.fromEntries(
+      this.createForm.productItems.map((item, index) => [
+        String(index),
+        item.productType === 'ACM' ? item.materialName : '',
+      ]),
     );
   }
 

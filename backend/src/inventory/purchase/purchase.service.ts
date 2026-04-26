@@ -1,4 +1,4 @@
-import { BadRequestException, Injectable } from '@nestjs/common';
+import { BadRequestException, Injectable, OnModuleInit } from '@nestjs/common';
 import { CreatePurchaseDto } from './dto/create-purchase.dto';
 import { UpdatePurchaseDto } from './dto/update-purchase.dto';
 import { DatabaseService } from 'src/database/database.service';
@@ -55,6 +55,7 @@ type PurchaseDetailRow = {
   vendorContactNumber: string | null;
   totalAmount: string | null;
   status: string | null;
+  poType?: string | null;
   createdAt: string | null;
 };
 
@@ -86,6 +87,16 @@ type PurchaseProductRow = {
   purchaseId: string | null;
   salesId: string | null;
   status: string | null;
+  partsName?: string | null;
+  partsCode?: string | null;
+  partsModel?: string | null;
+  partsBrandId?: string | null;
+  partsBrandName?: string | null;
+  materialName?: string | null;
+  materialCode?: string | null;
+  materialUnit?: string | null;
+  materialBrandId?: string | null;
+  materialBrandName?: string | null;
 };
 
 type PurchaseSerialRow = {
@@ -109,6 +120,66 @@ export class PurchaseService {
     private readonly materialStockService: MaterialStockService,
     private readonly auditLogService: AuditLogService,
   ) {}
+
+  async onModuleInit() {
+    try {
+      await this.databaseService.query(`
+        ALTER TABLE tblpurchase_orders DROP CONSTRAINT IF EXISTS tblpurchase_orders_po_type_check;
+        ALTER TABLE tblpurchase_orders ADD CONSTRAINT tblpurchase_orders_po_type_check 
+        CHECK (po_type IN ('ACU', 'ACP', 'ACM', 'PO', 'PO_TYPE_ACU', 'PO_TYPE_ACP', 'PO_TYPE_ACM'));
+
+        -- Ensure capacity is nullable for parts/materials support (handle both legacy naming styles)
+        DO $$
+        BEGIN
+            IF EXISTS (
+                SELECT 1 FROM information_schema.columns
+                WHERE table_schema = current_schema()
+                  AND table_name='tbltransaction_product_items'
+                  AND column_name='capacity_id'
+            ) THEN
+                ALTER TABLE tbltransaction_product_items ALTER COLUMN capacity_id DROP NOT NULL;
+            ELSIF EXISTS (
+                SELECT 1 FROM information_schema.columns
+                WHERE table_schema = current_schema()
+                  AND table_name='tbltransaction_product_items'
+                  AND column_name='capacityId'
+            ) THEN
+                ALTER TABLE tbltransaction_product_items ALTER COLUMN "capacityId" DROP NOT NULL;
+            END IF;
+        END $$;
+
+        -- Create tbltransaction_parts_items if it doesn't exist
+        CREATE TABLE IF NOT EXISTS tbltransaction_parts_items (
+          id SERIAL PRIMARY KEY,
+          trans_type VARCHAR(50),
+          part_id INT,
+          quantity INT,
+          unit_price NUMERIC,
+          sell_price NUMERIC,
+          discount_price NUMERIC,
+          purchase_id INT,
+          sales_id INT,
+          status VARCHAR(50) DEFAULT 'pending',
+          unit_types_qty JSONB DEFAULT '[]'::jsonb,
+          created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+        );
+
+        -- Ensure tbltransaction_material_items has unit_types_qty and status
+        DO $$ 
+        BEGIN 
+            IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name='tbltransaction_material_items' AND column_name='unit_types_qty') THEN
+                ALTER TABLE tbltransaction_material_items ADD COLUMN unit_types_qty JSONB DEFAULT '[]'::jsonb;
+            END IF;
+            IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name='tbltransaction_material_items' AND column_name='status') THEN
+                ALTER TABLE tbltransaction_material_items ADD COLUMN status VARCHAR(50) DEFAULT 'pending';
+            END IF;
+        END $$;
+      `);
+      console.log('Successfully updated tblpurchase_orders_po_type_check constraint.');
+    } catch (error) {
+      console.error('Failed to update tblpurchase_orders_po_type_check constraint:', error.message);
+    }
+  }
 
   private async getPurchaseAuditSnapshot(id: number): Promise<Record<string, unknown> | null> {
     const purchaseResult = await this.databaseService.query<{
@@ -157,9 +228,25 @@ export class PurchaseService {
       [String(id)],
     );
 
+    const poRes = await this.databaseService.query(
+      `SELECT COALESCE(
+         po.po_type,
+         to_jsonb(po)->>'poType',
+         to_jsonb(po)->>'po_type',
+         'ACU'
+       ) AS po_type
+       FROM tblpurchase_orders po
+       WHERE po.id = $1`,
+      [id],
+    );
+    const poType = String(poRes.rows[0]?.po_type ?? 'ACU').toUpperCase();
+    let itemsTable = 'tbltransaction_product_items';
+    if (poType === 'ACP') itemsTable = 'tbltransaction_parts_items';
+    else if (poType === 'ACM') itemsTable = 'tbltransaction_material_items';
+
     const itemsResult = await this.databaseService.query<Record<string, unknown>>(
       `SELECT to_jsonb(tpi) AS row
-       FROM tbltransaction_product_items tpi
+       FROM ${itemsTable} tpi
        WHERE COALESCE(
          to_jsonb(tpi)->>'purchaseId',
          to_jsonb(tpi)->>'purchase_id',
@@ -1077,6 +1164,7 @@ export class PurchaseService {
 
         const purchaseColumns = await this.getTableColumns(client, 'tblpurchase_orders');
         const poNumberColumn = this.pickColumn(purchaseColumns, ['po_number', 'poNumber', 'po_no']);
+        const poTypeColumn = this.pickColumn(purchaseColumns, ['po_type', 'poType', 'poType']);
         const purchaseVendorIdColumn = this.pickColumn(purchaseColumns, ['vendor_id', 'vendorId']);
         const totalAmountColumn = this.pickColumn(purchaseColumns, ['total_amount', 'totalAmount']);
         const statusColumn = this.pickColumn(purchaseColumns, ['status']);
@@ -1092,6 +1180,14 @@ export class PurchaseService {
           [totalAmountColumn]: totalAmount,
           [statusColumn]: status,
         };
+
+        // Handle poType (ACU=Aircon Unit, ACP=Aircon Parts, ACM=Aircon Materials)
+        if (poTypeColumn) {
+          const poType = String(createPurchaseDto.poType ?? 'ACU').trim().toUpperCase();
+          if (['ACU', 'ACP', 'ACM'].includes(poType)) {
+            purchaseRecord[poTypeColumn] = poType;
+          }
+        }
 
         if (poNumberColumn && poNumber) {
           purchaseRecord[poNumberColumn] = poNumber;
@@ -1263,9 +1359,14 @@ export class PurchaseService {
           }
         }
 
+        const poType = String(createPurchaseDto.poType ?? 'ACU').trim().toUpperCase();
+        let itemsTable = 'tbltransaction_product_items';
+        if (poType === 'ACP') itemsTable = 'tbltransaction_parts_items';
+        if (poType === 'ACM') itemsTable = 'tbltransaction_material_items';
+
         const transactionItemColumns = await this.getTableColumns(
           client,
-          'tbltransaction_product_items',
+          itemsTable,
         );
         if (transactionItemColumns.length > 0) {
           const transTypeColumn = this.pickColumn(transactionItemColumns, [
@@ -1275,6 +1376,8 @@ export class PurchaseService {
           const productIdColumn = this.pickColumn(transactionItemColumns, [
             'productId',
             'product_id',
+            'part_id',
+            'material_id',
           ]);
           const capacityIdColumn = this.pickColumn(transactionItemColumns, [
             'capacityId',
@@ -1299,6 +1402,7 @@ export class PurchaseService {
           const totalSetQtyColumn = this.pickColumn(transactionItemColumns, [
             'totalSetQty',
             'total_set_qty',
+            'quantity',
           ]);
           const purchaseIdColumn = this.pickColumn(transactionItemColumns, [
             'purchaseId',
@@ -1318,7 +1422,7 @@ export class PurchaseService {
           const unitTypesQtyMeta = unitTypesQtyColumn
             ? await this.getColumnMeta(
                 client,
-                'tbltransaction_product_items',
+                itemsTable,
                 unitTypesQtyColumn,
               )
             : null;
@@ -1329,34 +1433,139 @@ export class PurchaseService {
               continue;
             }
 
-            const productId = this.toOptionalNumber(item.productId);
-            const capacityId = this.toOptionalNumber(item.capacityId);
-            if (productId === null || capacityId === null) {
-              throw new Error('productId and capacityId are required for purchase items');
-            }
+            const isProductItems = itemsTable === 'tbltransaction_product_items';
+            const isPartsItems = itemsTable === 'tbltransaction_parts_items';
+            const isMaterialItems = itemsTable === 'tbltransaction_material_items';
 
-            const productExistsResult = await client.query<{ id: string | number }>(
-              `SELECT id
-               FROM tblproducts
-               WHERE id::text = $1
-               LIMIT 1`,
-              [String(productId)],
-            );
+            let resolvedProductOrPartOrMaterialId: number | null = null;
+            let resolvedCapacityId: number | null = null;
 
-            if (productExistsResult.rowCount === 0) {
-              throw new Error(`Product ID ${productId} does not exist in tblproducts`);
-            }
+            if (isProductItems) {
+              const productId = this.toOptionalNumber(item.productId);
+              const capacityId = this.toOptionalNumber(item.capacityId);
+              if (productId === null || capacityId === null) {
+                throw new Error('productId and capacityId are required for ACU purchase items');
+              }
 
-            const capacityExistsResult = await client.query<{ id: string | number }>(
-              `SELECT id
-               FROM tblcapacity
-               WHERE id::text = $1
-               LIMIT 1`,
-              [String(capacityId)],
-            );
+              const productExistsResult = await client.query<{ id: string | number }>(
+                `SELECT id
+                 FROM tblproducts
+                 WHERE id::text = $1
+                 LIMIT 1`,
+                [String(productId)],
+              );
 
-            if (capacityExistsResult.rowCount === 0) {
-              throw new Error(`Capacity ID ${capacityId} does not exist in tblcapacity`);
+              if (productExistsResult.rowCount === 0) {
+                throw new Error(`Product ID ${productId} does not exist in tblproducts`);
+              }
+
+              const capacityExistsResult = await client.query<{ id: string | number }>(
+                `SELECT id
+                 FROM tblcapacity
+                 WHERE id::text = $1
+                 LIMIT 1`,
+                [String(capacityId)],
+              );
+
+              if (capacityExistsResult.rowCount === 0) {
+                throw new Error(`Capacity ID ${capacityId} does not exist in tblcapacity`);
+              }
+
+              resolvedProductOrPartOrMaterialId = productId;
+              resolvedCapacityId = capacityId;
+            } else if (isPartsItems) {
+              let partId = this.toOptionalNumber((item as any).partId ?? item.productId);
+
+              if (!partId) {
+                const partsName = String((item as any).partsName ?? (item as any).partName ?? '').trim();
+                const partsCode = String((item as any).partsCode ?? (item as any).partCode ?? '').trim();
+                const model = String((item as any).partsModel ?? (item as any).model ?? '').trim();
+                let brandId = this.toOptionalNumber(
+                  (item as any).partsBrandId ?? (item as any).brandId ?? (item as any).brand_id,
+                );
+                const brandName = String(
+                  (item as any).partsBrandName ?? (item as any).brandName ?? '',
+                ).trim();
+
+                if (!brandId && brandName) {
+                  const brandLookupResult = await client.query<{ id: string | number }>(
+                    `SELECT id
+                     FROM tblbrands
+                     WHERE LOWER(TRIM(name)) = LOWER(TRIM($1))
+                     LIMIT 1`,
+                    [brandName],
+                  );
+                  brandId = this.toOptionalNumber(brandLookupResult.rows[0]?.id);
+                }
+
+                if (!partsName) {
+                  throw new Error('partsName is required for ACP items when part id is not provided');
+                }
+
+                const srp = this.toOptionalNumber(item.sellPrice) ?? 0;
+                const discountedPrice = this.toOptionalNumber(item.discountPrice) ?? srp;
+
+                if (partsCode) {
+                  const insertPartResult = await client.query<{ id: string | number }>(
+                    `INSERT INTO tblparts (brand_id, parts_name, model, parts_code, srp, discounted_price, created_by, updated_at, updated_by)
+                     VALUES ($1, $2, NULLIF($3, ''), NULLIF($4, ''), $5, $6, $7, NOW(), $7)
+                     ON CONFLICT (parts_code) DO UPDATE
+                       SET brand_id = COALESCE(EXCLUDED.brand_id, tblparts.brand_id),
+                           parts_name = EXCLUDED.parts_name,
+                           model = COALESCE(EXCLUDED.model, tblparts.model),
+                           srp = EXCLUDED.srp,
+                           discounted_price = EXCLUDED.discounted_price,
+                           updated_at = NOW(),
+                           updated_by = $7
+                     RETURNING id`,
+                    [brandId, partsName, model, partsCode, srp, discountedPrice, userId ?? null],
+                  );
+                  partId = this.toOptionalNumber(insertPartResult.rows[0]?.id);
+                } else {
+                  const insertPartResult = await client.query<{ id: string | number }>(
+                    `INSERT INTO tblparts (brand_id, parts_name, model, srp, discounted_price, created_by, updated_at, updated_by)
+                     VALUES ($1, $2, NULLIF($3, ''), $4, $5, $6, NOW(), $6)
+                     ON CONFLICT (parts_name, brand_id) DO UPDATE
+                       SET model = COALESCE(EXCLUDED.model, tblparts.model),
+                           srp = EXCLUDED.srp,
+                           discounted_price = EXCLUDED.discounted_price,
+                           updated_at = NOW(),
+                           updated_by = $6
+                     RETURNING id`,
+                    [brandId, partsName, model, srp, discountedPrice, userId ?? null],
+                  );
+                  partId = this.toOptionalNumber(insertPartResult.rows[0]?.id);
+                }
+
+                if (!partId) {
+                  throw new Error('Failed to create/retrieve part id for ACP item');
+                }
+              }
+
+              const partExistsResult = await client.query<{ id: string | number }>(
+                `SELECT id FROM tblparts WHERE id::text = $1 AND deleted_at IS NULL LIMIT 1`,
+                [String(partId)],
+              );
+              if (partExistsResult.rowCount === 0) {
+                throw new Error(`Part ID ${partId} does not exist in tblparts`);
+              }
+
+              resolvedProductOrPartOrMaterialId = partId;
+            } else if (isMaterialItems) {
+              const materialId = this.toOptionalNumber((item as any).materialId ?? item.productId);
+              if (!materialId) {
+                throw new Error('materialId is required for ACM items');
+              }
+
+              const materialExistsResult = await client.query<{ id: string | number }>(
+                `SELECT id FROM tblmaterials WHERE id::text = $1 LIMIT 1`,
+                [String(materialId)],
+              );
+              if (materialExistsResult.rowCount === 0) {
+                throw new Error(`Material ID ${materialId} does not exist in tblmaterials`);
+              }
+
+              resolvedProductOrPartOrMaterialId = materialId;
             }
 
             const unitTypesQty = Array.isArray(item.unitTypesQty) ? item.unitTypesQty : [];
@@ -1372,10 +1581,10 @@ export class PurchaseService {
               itemRecord[transTypeColumn] = transType;
             }
             if (productIdColumn) {
-              itemRecord[productIdColumn] = productId;
+              itemRecord[productIdColumn] = resolvedProductOrPartOrMaterialId;
             }
-            if (capacityIdColumn) {
-              itemRecord[capacityIdColumn] = capacityId;
+            if (capacityIdColumn && resolvedCapacityId !== null) {
+              itemRecord[capacityIdColumn] = resolvedCapacityId;
             }
             if (unitPriceColumn) {
               itemRecord[unitPriceColumn] = this.toOptionalNumber(item.unitPrice) ?? 0;
@@ -1423,7 +1632,7 @@ export class PurchaseService {
             }
 
             if (Object.keys(itemRecord).length > 0) {
-              await this.runInsert(client, 'tbltransaction_product_items', itemRecord);
+              await this.runInsert(client, itemsTable, itemRecord);
             }
 
           }
@@ -1552,9 +1761,25 @@ export class PurchaseService {
         // If this PO is linked to a transfer SO, set SO status to 'transfer_received' when PO is received
         if (String(nextStatus).toLowerCase() === 'received') {
           // Find the linked sales order (SO) via tbltransaction_product_items.salesId
+          const poRes = await client.query(
+            `SELECT COALESCE(
+               po.po_type,
+               to_jsonb(po)->>'poType',
+               to_jsonb(po)->>'po_type',
+               'ACU'
+             ) AS po_type
+             FROM tblpurchase_orders po
+             WHERE po.id = $1`,
+            [id],
+          );
+          const poType = String(poRes.rows[0]?.po_type ?? 'ACU').toUpperCase();
+          let itemsTable = 'tbltransaction_product_items';
+          if (poType === 'ACP') itemsTable = 'tbltransaction_parts_items';
+          else if (poType === 'ACM') itemsTable = 'tbltransaction_material_items';
+
           const soResult = await client.query<{ salesId: number }>(
             `SELECT DISTINCT tpi."salesId" AS "salesId"
-             FROM tbltransaction_product_items tpi
+             FROM ${itemsTable} tpi
              WHERE tpi."purchaseId" = $1 AND tpi."salesId" IS NOT NULL
              LIMIT 1`,
             [id],
@@ -1694,10 +1919,26 @@ export class PurchaseService {
           throw new Error(`Purchase order ${id} not found`);
         }
 
+        const poTypeRes = await client.query(
+          `SELECT COALESCE(
+             po.po_type,
+             to_jsonb(po)->>'poType',
+             to_jsonb(po)->>'po_type',
+             'ACU'
+           ) AS po_type
+           FROM tblpurchase_orders po
+           WHERE po.id = $1`,
+          [id],
+        );
+        const poType = String(poTypeRes.rows[0]?.po_type ?? 'ACU').toUpperCase();
+        let itemsTable = 'tbltransaction_product_items';
+        if (poType === 'ACP') itemsTable = 'tbltransaction_parts_items';
+        else if (poType === 'ACM') itemsTable = 'tbltransaction_material_items';
+
         // 2. Find originating salesId from transaction items
         const soResult = await client.query<{ salesId: number }>(
           `SELECT DISTINCT tpi."salesId" AS "salesId"
-           FROM tbltransaction_product_items tpi
+           FROM ${itemsTable} tpi
            WHERE tpi."purchaseId" = $1 AND tpi."salesId" IS NOT NULL
            LIMIT 1`,
           [id],
@@ -2018,6 +2259,7 @@ export class PurchaseService {
         `SELECT
            po.id,
            po.po_number AS "poNumber",
+           COALESCE(to_jsonb(po)->>'po_type', to_jsonb(po)->>'poType', 'ACU') AS "poType",
            po.vendor_id::text AS "vendorId",
            COALESCE(to_jsonb(v)->>'name', to_jsonb(v)->>'vendor_name') AS "vendorName",
            COALESCE(to_jsonb(v)->>'address', '') AS "vendorAddress",
@@ -2127,6 +2369,12 @@ export class PurchaseService {
         [String(id)],
       );
 
+      const purchase = purchaseResult.rows[0];
+      const poType = String(purchase.poType ?? 'ACU').toUpperCase();
+      let itemsTable = 'tbltransaction_product_items';
+      if (poType === 'ACP') itemsTable = 'tbltransaction_parts_items';
+      else if (poType === 'ACM') itemsTable = 'tbltransaction_material_items';
+
       const productResult = await this.databaseService.query<PurchaseProductRow>(
         `SELECT
            tpi.id,
@@ -2137,7 +2385,9 @@ export class PurchaseService {
            ) AS "transType",
            COALESCE(
              to_jsonb(tpi)->>'productId',
-             to_jsonb(tpi)->>'product_id'
+             to_jsonb(tpi)->>'product_id',
+             to_jsonb(tpi)->>'part_id',
+             to_jsonb(tpi)->>'material_id'
            ) AS "productId",
            COALESCE(
              to_jsonb(tpi)->>'capacityId',
@@ -2174,18 +2424,21 @@ export class PurchaseService {
                WHEN COALESCE(
                  to_jsonb(tpi)->>'totalSetQty',
                  to_jsonb(tpi)->>'total_set_qty',
+                 to_jsonb(tpi)->>'quantity',
                  ''
                ) ~ '^-?\\d+$'
                  AND ABS(
                    COALESCE(
                      to_jsonb(tpi)->>'totalSetQty',
                      to_jsonb(tpi)->>'total_set_qty',
+                     to_jsonb(tpi)->>'quantity',
                      '0'
                    )::numeric
                  ) <= 2147483647
                  THEN COALESCE(
                    to_jsonb(tpi)->>'totalSetQty',
                    to_jsonb(tpi)->>'total_set_qty',
+                   to_jsonb(tpi)->>'quantity',
                    '0'
                  )::int
                ELSE 0
@@ -2201,8 +2454,23 @@ export class PurchaseService {
              to_jsonb(tpi)->>'salesId',
              to_jsonb(tpi)->>'sales_id'
            ) AS "salesId",
-           COALESCE(to_jsonb(tpi)->>'status', null) AS status
-         FROM tbltransaction_product_items tpi
+           COALESCE(to_jsonb(tpi)->>'status', null) AS status,
+           -- ACP/ACM specific fields fetched via joins
+           p.parts_name AS "partsName",
+           p.parts_code AS "partsCode",
+           p.model AS "partsModel",
+           p.brand_id::text AS "partsBrandId",
+           bp."brandName" AS "partsBrandName",
+           m.material_name AS "materialName",
+           m.material_code AS "materialCode",
+           m.unit AS "materialUnit",
+           m.brand_id::text AS "materialBrandId",
+           bm."brandName" AS "materialBrandName"
+         FROM ${itemsTable} tpi
+         LEFT JOIN tblparts p ON p.id::text = COALESCE(to_jsonb(tpi)->>'productId', to_jsonb(tpi)->>'product_id', to_jsonb(tpi)->>'part_id')
+         LEFT JOIN tblbrands bp ON bp.id = p.brand_id
+         LEFT JOIN tblmaterials m ON m.id::text = COALESCE(to_jsonb(tpi)->>'productId', to_jsonb(tpi)->>'product_id', to_jsonb(tpi)->>'material_id')
+         LEFT JOIN tblbrands bm ON bm.id = m.brand_id
          WHERE COALESCE(
            to_jsonb(tpi)->>'purchaseId',
            to_jsonb(tpi)->>'purchase_id',
@@ -2302,13 +2570,13 @@ export class PurchaseService {
         serialMap.set(key, existing);
       }
 
-      const purchase = purchaseResult.rows[0];
       const mappedProductItems = productResult.rows.map((product) => {
         const normalizedProductId = String(product.productId ?? '').trim();
         const normalizedCapacityId = String(product.capacityId ?? '').trim();
         const serialKey = `${normalizedProductId}::${normalizedCapacityId}`;
 
         return {
+          ...product,
           id: product.id,
           transType: product.transType ?? 'purchase',
           productId: normalizedProductId,
@@ -2497,6 +2765,7 @@ export class PurchaseService {
           vendorContactNumber: purchase.vendorContactNumber,
           totalAmount: this.toOptionalNumber(purchase.totalAmount) ?? 0,
           status: purchase.status,
+          poType: purchase.poType,
           paymentDetails: paymentResult.rows.map((payment) => ({
             method: payment.method ?? '',
             amount: this.toOptionalNumber(payment.amount) ?? 0,
@@ -2659,6 +2928,15 @@ export class PurchaseService {
         purchaseParams.push(status);
         purchaseUpdates.push(`"${statusColumn}" = $${purchaseParams.length}`);
 
+        const poTypeColumn = this.pickColumn(purchaseColumns, ['po_type', 'poType', 'poType']);
+        if (poTypeColumn) {
+          const poType = String(payload.poType ?? existingPurchase.poType ?? 'ACU').trim().toUpperCase();
+          if (['ACU', 'ACP', 'ACM'].includes(poType)) {
+            purchaseParams.push(poType);
+            purchaseUpdates.push(`"${poTypeColumn}" = $${purchaseParams.length}`);
+          }
+        }
+
         if (poNumberColumn && poNumber) {
           purchaseParams.push(poNumber);
           purchaseUpdates.push(`"${poNumberColumn}" = $${purchaseParams.length}`);
@@ -2803,9 +3081,25 @@ export class PurchaseService {
         }
 
         if (productItems.length > 0) {
+          const poRes = await client.query(
+            `SELECT COALESCE(
+               po.po_type,
+               to_jsonb(po)->>'poType',
+               to_jsonb(po)->>'po_type',
+               'ACU'
+             ) AS po_type
+             FROM tblpurchase_orders po
+             WHERE po.id = $1`,
+            [id],
+          );
+          const poType = String(poRes.rows[0]?.po_type ?? 'ACU').toUpperCase();
+          let itemsTable = 'tbltransaction_product_items';
+          if (poType === 'ACP') itemsTable = 'tbltransaction_parts_items';
+          else if (poType === 'ACM') itemsTable = 'tbltransaction_material_items';
+
           const transactionItemColumns = await this.getTableColumns(
             client,
-            'tbltransaction_product_items',
+            itemsTable,
           );
 
           const transTypeColumn = this.pickColumn(transactionItemColumns, [
@@ -2815,6 +3109,8 @@ export class PurchaseService {
           const productIdColumn = this.pickColumn(transactionItemColumns, [
             'productId',
             'product_id',
+            'part_id',
+            'material_id',
           ]);
           const capacityIdColumn = this.pickColumn(transactionItemColumns, [
             'capacityId',
@@ -2839,6 +3135,7 @@ export class PurchaseService {
           const totalSetQtyColumn = this.pickColumn(transactionItemColumns, [
             'totalSetQty',
             'total_set_qty',
+            'quantity',
           ]);
           const purchaseIdColumn = this.pickColumn(transactionItemColumns, [
             'purchaseId',
@@ -2858,21 +3155,21 @@ export class PurchaseService {
           const unitTypesQtyMeta = unitTypesQtyColumn
             ? await this.getColumnMeta(
                 client,
-                'tbltransaction_product_items',
+                itemsTable,
                 unitTypesQtyColumn,
               )
             : null;
 
           await client.query(
-            `DELETE FROM tbltransaction_product_items
+            `DELETE FROM ${itemsTable}
              WHERE COALESCE(
-               to_jsonb(tbltransaction_product_items)->>'purchaseId',
-               to_jsonb(tbltransaction_product_items)->>'purchase_id',
-               to_jsonb(tbltransaction_product_items)->>'po_id'
+               to_jsonb(${itemsTable})->>'purchaseId',
+               to_jsonb(${itemsTable})->>'purchase_id',
+               to_jsonb(${itemsTable})->>'po_id'
              ) = $1
              AND LOWER(COALESCE(
-               to_jsonb(tbltransaction_product_items)->>'transType',
-               to_jsonb(tbltransaction_product_items)->>'trans_type',
+               to_jsonb(${itemsTable})->>'transType',
+               to_jsonb(${itemsTable})->>'trans_type',
                'purchase'
              )) = 'purchase'`,
             [String(id)],
@@ -2998,7 +3295,7 @@ export class PurchaseService {
             }
 
             if (Object.keys(itemRecord).length > 0) {
-              await this.runInsert(client, 'tbltransaction_product_items', itemRecord);
+              await this.runInsert(client, itemsTable, itemRecord);
             }
 
             const serialPayload =
@@ -3317,14 +3614,30 @@ export class PurchaseService {
   async deletePurchase(id: number): Promise<{ success: boolean; message: string }> {
     try {
       const result = await this.databaseService.withTransaction(async (client) => {
-        const poResult = await client.query<{ status: string | null; po_number: string | null }>(
-          `SELECT status, po_number FROM tblpurchase_orders WHERE id = $1 LIMIT 1`,
+        const poResult = await client.query<{ status: string | null; po_number: string | null; po_type: string | null }>(
+          `SELECT
+             status,
+             po_number,
+             COALESCE(
+               po.po_type,
+               to_jsonb(po)->>'poType',
+               to_jsonb(po)->>'po_type',
+               'ACU'
+             ) as po_type
+           FROM tblpurchase_orders po
+           WHERE po.id = $1
+           LIMIT 1`,
           [id],
         );
 
         if (poResult.rows.length === 0) {
           throw new Error('Purchase order not found');
         }
+
+        const poType = String(poResult.rows[0].po_type ?? 'ACU').toUpperCase();
+        let itemsTable = 'tbltransaction_product_items';
+        if (poType === 'ACP') itemsTable = 'tbltransaction_parts_items';
+        else if (poType === 'ACM') itemsTable = 'tbltransaction_material_items';
 
         const currentStatus = String(poResult.rows[0].status ?? '').trim().toLowerCase();
         const nonDeletable = ['approved', 'completed'];
@@ -3349,7 +3662,7 @@ export class PurchaseService {
           );
         }
 
-        const transItemColumns = await this.getTableColumns(client, 'tbltransaction_product_items');
+        const transItemColumns = await this.getTableColumns(client, itemsTable);
         const itemPurchaseIdColumn = this.pickColumn(transItemColumns, [
           'purchaseId',
           'purchase_id',
@@ -3357,7 +3670,7 @@ export class PurchaseService {
 
         if (itemPurchaseIdColumn) {
           await client.query(
-            `DELETE FROM tbltransaction_product_items WHERE "${itemPurchaseIdColumn}" = $1`,
+            `DELETE FROM ${itemsTable} WHERE "${itemPurchaseIdColumn}" = $1`,
             [id],
           );
         }
@@ -3439,46 +3752,55 @@ export class PurchaseService {
 
     const baseCte = `
       WITH serial_counts AS (
-        SELECT
-          COALESCE(
-            to_jsonb(tpi)->>'purchaseId',
-            to_jsonb(tpi)->>'purchase_id',
-            to_jsonb(tpi)->>'po_id'
-          ) AS po_id,
-          SUM(
-            CASE
-              WHEN COALESCE(
-                to_jsonb(tpi)->>'totalSetQty',
-                to_jsonb(tpi)->>'total_set_qty',
-                ''
-              ) ~ '^-?\\d+$'
-                AND ABS(
-                  COALESCE(
-                    to_jsonb(tpi)->>'totalSetQty',
-                    to_jsonb(tpi)->>'total_set_qty',
-                    '0'
-                  )::numeric
-                ) <= 2147483647
-                THEN COALESCE(
-                  to_jsonb(tpi)->>'totalSetQty',
-                  to_jsonb(tpi)->>'total_set_qty',
-                  '0'
-                )::int
-              ELSE 0
-            END
-          )::int AS serial_count
-        FROM tbltransaction_product_items tpi
-        WHERE LOWER(COALESCE(to_jsonb(tpi)->>'transType', to_jsonb(tpi)->>'trans_type', 'purchase')) = 'purchase'
-        GROUP BY COALESCE(
-          to_jsonb(tpi)->>'purchaseId',
-          to_jsonb(tpi)->>'purchase_id',
-          to_jsonb(tpi)->>'po_id'
-        )
+        SELECT po_id, SUM(item_qty)::int AS serial_count
+        FROM (
+          SELECT 
+            COALESCE(to_jsonb(tpi)->>'purchaseId', to_jsonb(tpi)->>'purchase_id', to_jsonb(tpi)->>'po_id') AS po_id,
+            COALESCE(
+              CASE 
+                WHEN COALESCE(to_jsonb(tpi)->>'totalSetQty', to_jsonb(tpi)->>'total_set_qty', to_jsonb(tpi)->>'quantity', '') ~ '^-?\\d+$'
+                THEN COALESCE(to_jsonb(tpi)->>'totalSetQty', to_jsonb(tpi)->>'total_set_qty', to_jsonb(tpi)->>'quantity', '0')::int
+                ELSE 0
+              END, 0
+            ) as item_qty
+          FROM tbltransaction_product_items tpi
+          WHERE LOWER(COALESCE(to_jsonb(tpi)->>'transType', to_jsonb(tpi)->>'trans_type', 'purchase')) = 'purchase'
+          UNION ALL
+          SELECT 
+            COALESCE(to_jsonb(tpi)->>'purchaseId', to_jsonb(tpi)->>'purchase_id', to_jsonb(tpi)->>'po_id') AS po_id,
+            COALESCE(
+              CASE 
+                WHEN COALESCE(to_jsonb(tpi)->>'totalSetQty', to_jsonb(tpi)->>'total_set_qty', to_jsonb(tpi)->>'quantity', '') ~ '^-?\\d+$'
+                THEN COALESCE(to_jsonb(tpi)->>'totalSetQty', to_jsonb(tpi)->>'total_set_qty', to_jsonb(tpi)->>'quantity', '0')::int
+                ELSE 0
+              END, 0
+            ) as item_qty
+          FROM tbltransaction_parts_items tpi
+          WHERE LOWER(COALESCE(to_jsonb(tpi)->>'transType', to_jsonb(tpi)->>'trans_type', 'purchase')) = 'purchase'
+          UNION ALL
+          SELECT 
+            COALESCE(to_jsonb(tpi)->>'purchaseId', to_jsonb(tpi)->>'purchase_id', to_jsonb(tpi)->>'po_id') AS po_id,
+            COALESCE(
+              CASE 
+                WHEN COALESCE(to_jsonb(tpi)->>'totalSetQty', to_jsonb(tpi)->>'total_set_qty', to_jsonb(tpi)->>'quantity', '') ~ '^-?\\d+$'
+                THEN COALESCE(to_jsonb(tpi)->>'totalSetQty', to_jsonb(tpi)->>'total_set_qty', to_jsonb(tpi)->>'quantity', '0')::int
+                ELSE 0
+              END, 0
+            ) as item_qty
+          FROM tbltransaction_material_items tpi
+          WHERE LOWER(COALESCE(to_jsonb(tpi)->>'transType', to_jsonb(tpi)->>'trans_type', 'purchase')) = 'purchase'
+        ) all_items
+        GROUP BY po_id
       ),
       base AS (
         SELECT
           po.id,
           po.po_number,
+          COALESCE(
+            to_jsonb(po)->>'po_type',
+            to_jsonb(po)->>'poType',
+            'ACU'
+          ) AS po_type,
           COALESCE(
             to_jsonb(po)->>'branchId',
             to_jsonb(po)->>'branch_id',
@@ -3524,6 +3846,7 @@ export class PurchaseService {
       SELECT
         base.id,
         base.po_number AS "poNumber",
+        base.po_type AS "poType",
         base.vendor_id AS "vendorId",
         base.vendor_name AS "vendorName",
         COALESCE(to_jsonb(v)->>'address', '') AS "vendorAddress",

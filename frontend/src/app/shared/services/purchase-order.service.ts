@@ -62,11 +62,22 @@ export interface PurchaseOrderDetailProductItem {
   salesId: number | null;
   status: string;
   serialNumbers: Record<string, string[]>;
+  partsName?: string;
+  partsCode?: string;
+  partsModel?: string;
+  partsBrandId?: string;
+  partsBrandName?: string;
+  materialName?: string;
+  materialCode?: string;
+  materialUnit?: string;
+  materialBrandId?: string;
+  materialBrandName?: string;
 }
 
 export interface PurchaseOrderDetailItem {
   id: number;
   poNumber: string | null;
+  poType: 'ACU' | 'ACP' | 'ACM' | null;
   vendorId: string | null;
   vendorName: string | null;
   vendorAddress: string | null;
@@ -168,6 +179,7 @@ export interface PurchaseOrderListResult {
 
 export interface CreatePurchaseRequestPayload {
   poNumber?: string;
+  poType?: 'ACU' | 'ACP' | 'ACM';
   vendorId?: string;
   vendor?: {
     name: string;
@@ -251,6 +263,12 @@ export interface VendorOption {
   address?: string;
   contact_person?: string;
   contact_number?: string;
+}
+
+export interface BrandOption {
+  id: number;
+  name: string;
+  type?: string;
 }
 
 export interface VendorDetail {
@@ -388,6 +406,37 @@ export class PurchaseOrderService {
       },
     });
 
+    return response.data.items ?? [];
+  }
+
+  async getBrands(search?: string, type?: string): Promise<BrandOption[]> {
+    const response = await apiClient.get<{ success: boolean; items?: BrandOption[] }>('/brands', {
+      params: {
+        search: search?.trim() || undefined,
+        type: type || undefined,
+      },
+    });
+
+    return response.data.items ?? [];
+  }
+
+  async getParts(search?: string, brandId?: string | number): Promise<any[]> {
+    const response = await apiClient.get<{ success: boolean; items?: any[] }>('/parts/search', {
+      params: {
+        q: search?.trim() || '',
+        brandId: brandId || undefined,
+      },
+    });
+    return response.data.items ?? [];
+  }
+
+  async getMaterials(search?: string, brandId?: string | number): Promise<any[]> {
+    const response = await apiClient.get<{ success: boolean; items?: any[] }>('/inventory/materials', {
+      params: {
+        search: search?.trim() || undefined,
+        brandId: brandId || undefined,
+      },
+    });
     return response.data.items ?? [];
   }
 

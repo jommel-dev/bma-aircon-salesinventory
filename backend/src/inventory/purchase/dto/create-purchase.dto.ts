@@ -43,6 +43,7 @@ export class CreatePurchaseProductItemDto {
 
 export class CreatePurchaseDto {
 	poNumber?: string;
+	poType?: 'ACU' | 'ACP' | 'ACM'; // ACU=Aircon Unit, ACP=Aircon Parts, ACM=Aircon Materials
 	vendorId?: string;
 	vendor?: CreatePurchaseVendorDto;
 	paymentDetails?:

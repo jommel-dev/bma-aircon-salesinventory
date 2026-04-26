@@ -205,8 +205,8 @@
             </div>
 
             <div class="flex flex-wrap gap-2">
-              <input type="date" [(ngModel)]="chequeVoucherListDateFrom" class="h-9 rounded-lg border border-gray-300 bg-transparent px-3 text-sm dark:border-gray-700" />
-              <input type="date" [(ngModel)]="chequeVoucherListDateTo" class="h-9 rounded-lg border border-gray-300 bg-transparent px-3 text-sm dark:border-gray-700" />
+              <app-date-picker [defaultDate]="chequeVoucherListDateFrom" (dateChange)="chequeVoucherListDateFrom = $event.dateStr" class="block"></app-date-picker>
+              <app-date-picker [defaultDate]="chequeVoucherListDateTo" (dateChange)="chequeVoucherListDateTo = $event.dateStr" class="block"></app-date-picker>
               <button
                 type="button"
                 (click)="applyChequeVoucherFilters()"
@@ -442,7 +442,7 @@
                       </div>
                       <div>
                         <label class="mb-1 block text-xs font-medium text-gray-600 dark:text-gray-300">Voucher Date</label>
-                        <input type="date" [(ngModel)]="editingVoucherForm.voucherDate" class="h-10 w-full rounded-lg border border-gray-300 bg-transparent px-3 text-sm dark:border-gray-700" />
+                        <app-date-picker [defaultDate]="editingVoucherForm.voucherDate" (dateChange)="editingVoucherForm.voucherDate = $event.dateStr" class="block w-full"></app-date-picker>
                       </div>
                       <div class="col-span-2">
                         <label class="mb-1 block text-xs font-medium text-gray-600 dark:text-gray-300">Payee</label>
@@ -495,7 +495,7 @@
                           <div class="grid grid-cols-1 gap-3 md:grid-cols-3 lg:grid-cols-5 items-end">
                             <input [(ngModel)]="deposit.bankName" placeholder="Bank name" class="h-10 rounded-lg border border-gray-300 bg-transparent px-3 text-sm dark:border-gray-700" />
                             <input [(ngModel)]="deposit.chequeNo" placeholder="Cheque no." class="h-10 rounded-lg border border-gray-300 bg-transparent px-3 text-sm dark:border-gray-700" />
-                            <input type="date" [(ngModel)]="deposit.chequeDate" class="h-10 rounded-lg border border-gray-300 bg-transparent px-3 text-sm dark:border-gray-700" />
+                            <app-date-picker [defaultDate]="deposit.chequeDate" (dateChange)="deposit.chequeDate = $event.dateStr" class="block w-full"></app-date-picker>
                             <input type="number" [(ngModel)]="deposit.amount" placeholder="Amount" class="h-10 rounded-lg border border-gray-300 bg-transparent px-3 text-sm dark:border-gray-700" />
                             <button type="button" (click)="removeEditDeposit($index)" class="h-10 rounded-md border border-error-300 px-3 text-xs font-medium text-error-600">Remove</button>
                           </div>
@@ -512,7 +512,7 @@
                         @for (invoice of editingVoucherForm.invoices; track $index) {
                           <div class="grid grid-cols-1 gap-3 md:grid-cols-2 lg:grid-cols-5 items-end">
                             <input [(ngModel)]="invoice.invoiceNo" placeholder="Invoice no." class="h-10 rounded-lg border border-gray-300 bg-transparent px-3 text-sm dark:border-gray-700" />
-                            <input type="date" [(ngModel)]="invoice.invoiceDate" class="h-10 rounded-lg border border-gray-300 bg-transparent px-3 text-sm dark:border-gray-700" />
+                            <app-date-picker [defaultDate]="invoice.invoiceDate" (dateChange)="invoice.invoiceDate = $event.dateStr" class="block w-full"></app-date-picker>
                             <input [(ngModel)]="invoice.description" placeholder="Description" class="h-10 lg:col-span-1 rounded-lg border border-gray-300 bg-transparent px-3 text-sm dark:border-gray-700" />
                             <input type="number" [(ngModel)]="invoice.amount" placeholder="Amount" class="h-10 rounded-lg border border-gray-300 bg-transparent px-3 text-sm dark:border-gray-700" />
                             <button type="button" (click)="removeEditInvoice($index)" class="h-10 rounded-md border border-error-300 px-3 text-xs font-medium text-error-600">Remove</button>
@@ -1036,6 +1036,11 @@
                   </div>
 
                   <div class="flex-1 space-y-4 overflow-y-auto px-6 py-5">
+                    @if (reportError) {
+                      <div class="rounded-lg border border-error-300 bg-error-50 px-4 py-3 text-sm text-error-600 dark:border-error-500/30 dark:bg-error-500/10 dark:text-error-400">
+                        {{ reportError }}
+                      </div>
+                    }
                     <div class="grid grid-cols-1 gap-3 md:grid-cols-2 xl:grid-cols-4">
                       <div>
                         <label class="mb-1 block text-xs font-medium text-gray-600 dark:text-gray-300">CV No.</label>
@@ -1051,11 +1056,36 @@
                       </div>
                       <div>
                         <label class="mb-1 block text-xs font-medium text-gray-600 dark:text-gray-300">Payee</label>
-                        <input [(ngModel)]="chequeVoucherForm.payee" class="h-10 w-full rounded-lg border border-gray-300 bg-transparent px-3 text-sm dark:border-gray-700" />
+                        <div class="relative">
+                          <input
+                            [ngModel]="chequeVoucherForm.payee"
+                            (input)="onPayeeInput($any($event.target).value)"
+                            (blur)="closePayeeDropdown()"
+                            placeholder="Type to search or enter manually"
+                            class="h-10 w-full rounded-lg border border-gray-300 bg-transparent px-3 text-sm dark:border-gray-700"
+                          />
+                          @if (isPayeeDropdownOpen && payeeSearchResults.length > 0) {
+                            <div class="absolute z-50 mt-1 w-full min-w-80 rounded-lg border border-gray-200 bg-white shadow-lg dark:border-gray-700 dark:bg-gray-900">
+                              @for (vendor of payeeSearchResults; track vendor.id) {
+                                <button
+                                  type="button"
+                                  (mousedown)="selectPayee(vendor)"
+                                  class="w-full px-3 py-2 text-left text-sm hover:bg-gray-100 dark:hover:bg-gray-800"
+                                >
+                                  <div class="font-medium text-gray-800 dark:text-white/90">{{ vendor.name }}</div>
+                                  <div class="text-[10px] text-gray-500 dark:text-gray-400">
+                                    {{ vendor.tin_number ? 'TIN: ' + vendor.tin_number : '' }} 
+                                    {{ vendor.address ? ' | ' + vendor.address : '' }}
+                                  </div>
+                                </button>
+                              }
+                            </div>
+                          }
+                        </div>
                       </div>
                       <div>
                         <label class="mb-1 block text-xs font-medium text-gray-600 dark:text-gray-300">Voucher Date</label>
-                        <input type="date" [(ngModel)]="chequeVoucherForm.voucherDate" class="h-10 w-full rounded-lg border border-gray-300 bg-transparent px-3 text-sm dark:border-gray-700" />
+                        <app-date-picker [defaultDate]="chequeVoucherForm.voucherDate" (dateChange)="chequeVoucherForm.voucherDate = $event.dateStr" class="block w-full"></app-date-picker>
                       </div>
                       <div>
                         <label class="mb-1 block text-xs font-medium text-gray-600 dark:text-gray-300">TIN Number</label>
@@ -1105,7 +1135,7 @@
                           <div class="grid grid-cols-1 gap-3 md:grid-cols-[1.2fr_1fr_1fr_120px_auto]">
                             <input [(ngModel)]="deposit.bankName" placeholder="Bank name" class="h-10 rounded-lg border border-gray-300 bg-transparent px-3 text-sm dark:border-gray-700" />
                             <input [(ngModel)]="deposit.chequeNo" placeholder="Cheque no." class="h-10 rounded-lg border border-gray-300 bg-transparent px-3 text-sm dark:border-gray-700" />
-                            <input type="date" [(ngModel)]="deposit.chequeDate" class="h-10 rounded-lg border border-gray-300 bg-transparent px-3 text-sm dark:border-gray-700" />
+                            <app-date-picker [defaultDate]="deposit.chequeDate" (dateChange)="deposit.chequeDate = $event.dateStr" class="block w-full"></app-date-picker>
                             <input type="number" [(ngModel)]="deposit.amount" placeholder="Amount" class="h-10 rounded-lg border border-gray-300 bg-transparent px-3 text-sm dark:border-gray-700" />
                             <button type="button" (click)="removeChequeDeposit($index)" [disabled]="!canEditSelectedReportDraft()" class="rounded-md border border-error-300 px-3 py-1 text-xs font-medium text-error-600 disabled:opacity-50">Remove</button>
                           </div>
@@ -1122,7 +1152,7 @@
                         @for (invoice of chequeVoucherForm.invoices; track $index) {
                           <div class="grid grid-cols-1 gap-3 md:grid-cols-[1fr_1fr_1.5fr_120px_auto]">
                             <input [(ngModel)]="invoice.invoiceNo" placeholder="Invoice no." class="h-10 rounded-lg border border-gray-300 bg-transparent px-3 text-sm dark:border-gray-700" />
-                            <input type="date" [(ngModel)]="invoice.invoiceDate" class="h-10 rounded-lg border border-gray-300 bg-transparent px-3 text-sm dark:border-gray-700" />
+                            <app-date-picker [defaultDate]="invoice.invoiceDate" (dateChange)="invoice.invoiceDate = $event.dateStr" class="block w-full"></app-date-picker>
                             <input [(ngModel)]="invoice.description" placeholder="Description" class="h-10 rounded-lg border border-gray-300 bg-transparent px-3 text-sm dark:border-gray-700" />
                             <input type="number" [(ngModel)]="invoice.amount" placeholder="Amount" class="h-10 rounded-lg border border-gray-300 bg-transparent px-3 text-sm dark:border-gray-700" />
                             <button type="button" (click)="removeChequeInvoice($index)" [disabled]="!canEditSelectedReportDraft()" class="rounded-md border border-error-300 px-3 py-1 text-xs font-medium text-error-600 disabled:opacity-50">Remove</button>
@@ -1199,8 +1229,8 @@
 
             <div class="rounded-lg border border-gray-200 p-4 dark:border-gray-700">
               <div class="mb-3 flex flex-wrap items-center gap-2">
-                <input type="date" [(ngModel)]="generalJournalListDateFrom" class="h-9 rounded-lg border border-gray-300 bg-transparent px-3 text-sm dark:border-gray-700" />
-                <input type="date" [(ngModel)]="generalJournalListDateTo" class="h-9 rounded-lg border border-gray-300 bg-transparent px-3 text-sm dark:border-gray-700" />
+                <app-date-picker [defaultDate]="generalJournalListDateFrom" (dateChange)="generalJournalListDateFrom = $event.dateStr" class="block"></app-date-picker>
+                <app-date-picker [defaultDate]="generalJournalListDateTo" (dateChange)="generalJournalListDateTo = $event.dateStr" class="block"></app-date-picker>
                 <button
                   type="button"
                   (click)="applyGeneralJournalFilters()"
@@ -1310,7 +1340,7 @@
                     </div>
                     <div>
                       <label class="mb-1 block text-xs font-medium text-gray-600 dark:text-gray-300">Journal Date</label>
-                      <input type="date" [(ngModel)]="generalJournalForm.journalDate" class="h-10 w-full rounded-lg border border-gray-300 bg-transparent px-3 text-sm dark:border-gray-700" />
+                      <app-date-picker [defaultDate]="generalJournalForm.journalDate" (dateChange)="generalJournalForm.journalDate = $event.dateStr" class="block w-full"></app-date-picker>
                     </div>
                   </div>
                   <div>
@@ -1463,7 +1493,7 @@
                       </div>
                       <div>
                         <label class="mb-1 block text-xs font-medium text-gray-600 dark:text-gray-300">Journal Date</label>
-                        <input type="date" [(ngModel)]="editingGeneralJournalForm.journalDate" class="h-10 w-full rounded-lg border border-gray-300 bg-transparent px-3 text-sm dark:border-gray-700" />
+                        <app-date-picker [defaultDate]="editingGeneralJournalForm.journalDate" (dateChange)="editingGeneralJournalForm.journalDate = $event.dateStr" class="block w-full"></app-date-picker>
                       </div>
                     </div>
                     <div>
@@ -2742,8 +2772,8 @@
             </div>
 
             <div class="flex flex-wrap gap-2">
-              <input type="date" [(ngModel)]="tax2307DateFrom" class="h-9 rounded-lg border border-gray-300 bg-transparent px-3 text-sm dark:border-gray-700" />
-              <input type="date" [(ngModel)]="tax2307DateTo" class="h-9 rounded-lg border border-gray-300 bg-transparent px-3 text-sm dark:border-gray-700" />
+              <app-date-picker [defaultDate]="tax2307DateFrom" (dateChange)="tax2307DateFrom = $event.dateStr" class="block"></app-date-picker>
+              <app-date-picker [defaultDate]="tax2307DateTo" (dateChange)="tax2307DateTo = $event.dateStr" class="block"></app-date-picker>
               <select
                 [(ngModel)]="tax2307SupplierFilter"
                 class="h-9 min-w-72 rounded-lg border border-gray-300 bg-transparent px-3 text-sm dark:border-gray-700"
