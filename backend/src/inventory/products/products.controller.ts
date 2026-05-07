@@ -54,4 +54,13 @@ export class ProductsController {
   remove(@Param('id') id: string) {
     return this.productsService.remove(+id);
   }
+
+  @Post('bulk-upload')
+  bulkUpload(
+    @Body() payload: { rows: Array<Record<string, unknown>> },
+    @Req() request: AuthenticatedRequest,
+  ) {
+    const userId = Number(request.user?.sub);
+    return this.productsService.bulkUpload(payload.rows ?? [], userId);
+  }
 }

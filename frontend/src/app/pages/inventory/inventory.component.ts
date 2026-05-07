@@ -279,6 +279,288 @@ export class InventoryComponent implements OnInit {
     private readonly rbacService: RbacService,
   ) {}
 
+  // Bulk upload state
+  isBulkUploadModalOpen = false;
+  isBulkUploadParsing = false;
+  isBulkUploadSubmitting = false;
+  bulkUploadError = '';
+  bulkUploadSuccess = '';
+  bulkUploadPreviewRows: Array<Record<string, string>> = [];
+  bulkUploadResults: Array<{ row: number; status: string; message: string }> | null = null;
+  bulkUploadSummary: { created: number; skipped: number; failed: number; total: number } | null = null;
+
+  readonly bulkUploadColumns = [
+    'brand', 'product', 'unit', 'unitTypes', 'capacity',
+    'srp', 'netPrice', 'cashPrice', 'ccPrice', 'unitPrice',
+    'indoorModel', 'outdoorModel',
+  ];
+
+  openBulkUploadModal(): void {
+    this.isBulkUploadModalOpen = true;
+    this.bulkUploadError = '';
+    this.bulkUploadSuccess = '';
+    this.bulkUploadPreviewRows = [];
+    this.bulkUploadResults = null;
+    this.bulkUploadSummary = null;
+  }
+
+  closeBulkUploadModal(): void {
+    this.isBulkUploadModalOpen = false;
+    this.bulkUploadPreviewRows = [];
+    this.bulkUploadResults = null;
+    this.bulkUploadSummary = null;
+  }
+
+  downloadBulkUploadTemplate(): void {
+    const header = this.bulkUploadColumns.join(',');
+    const sampleRows = [
+      'Daikin,Wall Mounted Inverter,SET,"Indoor,Outdoor",1.0 HP,35000,28000,33000,36000,28000,FTKF25A,RKF25A',
+      'Daikin,Wall Mounted Inverter,SET,"Indoor,Outdoor",1.5 HP,42000,34000,40000,43000,34000,FTKF35B,RKF35B',
+    ];
+    const csv = [header, ...sampleRows].join('\n');
+    const blob = new Blob([csv], { type: 'text/csv' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = 'inventory-bulk-upload-template.csv';
+    a.click();
+    URL.revokeObjectURL(url);
+  }
+
+  async downloadBulkUploadTemplateExcel(): Promise<void> {
+    const excelJs = await import('exceljs');
+    const workbook = new excelJs.Workbook();
+    const ws = workbook.addWorksheet('Inventory Upload');
+
+    ws.addRow(this.bulkUploadColumns);
+    const headerRow = ws.getRow(1);
+    headerRow.font = { bold: true };
+    headerRow.eachCell((cell) => {
+      cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFE2E8F0' } };
+      cell.border = { bottom: { style: 'thin' } };
+    });
+
+    ws.addRow(['Daikin', 'Wall Mounted Inverter', 'SET', 'Indoor,Outdoor', '1.0 HP', 35000, 28000, 33000, 36000, 28000, 'FTKF25A', 'RKF25A']);
+    ws.addRow(['Daikin', 'Wall Mounted Inverter', 'SET', 'Indoor,Outdoor', '1.5 HP', 42000, 34000, 40000, 43000, 34000, 'FTKF35B', 'RKF35B']);
+    ws.addRow(['Carrier', 'Cassette Type', 'SET', 'Indoor,Outdoor', '3 TR', 95000, 78000, 90000, 97000, 78000, 'CT3-IN', 'CT3-OUT']);
+
+    ws.columns = [
+      { width: 14 }, { width: 24 }, { width: 8 }, { width: 18 }, { width: 10 },
+      { width: 12 }, { width: 12 }, { width: 12 }, { width: 12 }, { width: 12 },
+      { width: 16 }, { width: 16 },
+    ];
+
+    const buffer = await workbook.xlsx.writeBuffer();
+    const blob = new Blob([buffer], {
+      type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+    });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = 'inventory-bulk-upload-template.xlsx';
+    a.click();
+    URL.revokeObjectURL(url);
+  }
+
+  triggerBulkUploadFileInput(): void {
+    const input = document.getElementById('bulkUploadFileInput') as HTMLInputElement | null;
+    input?.click();
+  }
+
+  async onBulkUploadFileSelected(event: Event): Promise<void> {
+    const file = (event.target as HTMLInputElement).files?.[0];
+    if (!file) return;
+
+    this.isBulkUploadParsing = true;
+    this.bulkUploadError = '';
+    this.bulkUploadSuccess = '';
+    this.bulkUploadPreviewRows = [];
+    this.bulkUploadResults = null;
+    this.bulkUploadSummary = null;
+
+    try {
+      const isExcel = file.name.endsWith('.xlsx') || file.name.endsWith('.xls');
+      let parsed: Array<Record<string, string>>;
+
+      if (isExcel) {
+        parsed = await this.parseExcelFile(file);
+      } else {
+        const text = await file.text();
+        parsed = this.parseCsvText(text);
+      }
+
+      if (parsed.length === 0) {
+        this.bulkUploadError = 'No valid rows found in the file.';
+        return;
+      }
+      if (parsed.length > 500) {
+        this.bulkUploadError = 'Maximum 500 rows allowed per upload.';
+        return;
+      }
+      this.bulkUploadPreviewRows = parsed;
+    } catch {
+      this.bulkUploadError = 'Failed to read or parse the file.';
+    } finally {
+      this.isBulkUploadParsing = false;
+      (event.target as HTMLInputElement).value = '';
+    }
+  }
+
+  private async parseExcelFile(file: File): Promise<Array<Record<string, string>>> {
+    const excelJs = await import('exceljs');
+    const workbook = new excelJs.Workbook();
+    const buffer = await file.arrayBuffer();
+    await workbook.xlsx.load(buffer);
+
+    const worksheet = workbook.worksheets[0];
+    if (!worksheet || worksheet.rowCount < 2) return [];
+
+    const headers: string[] = [];
+    worksheet.getRow(1).eachCell((cell, colNumber) => {
+      headers[colNumber - 1] = String(cell.value ?? '').trim();
+    });
+
+    const columnMap = new Map<number, string>();
+    for (let i = 0; i < headers.length; i++) {
+      const h = headers[i].toLowerCase().replace(/[\s_-]/g, '');
+      if (h.includes('brand')) columnMap.set(i, 'brand');
+      else if (h.includes('product')) columnMap.set(i, 'product');
+      else if (h === 'unit') columnMap.set(i, 'unit');
+      else if (h.includes('unittype')) columnMap.set(i, 'unitTypes');
+      else if (h.includes('capacity')) columnMap.set(i, 'capacity');
+      else if (h === 'srp') columnMap.set(i, 'srp');
+      else if (h.includes('netprice')) columnMap.set(i, 'netPrice');
+      else if (h.includes('cashprice')) columnMap.set(i, 'cashPrice');
+      else if (h.includes('ccprice')) columnMap.set(i, 'ccPrice');
+      else if (h.includes('unitprice')) columnMap.set(i, 'unitPrice');
+      else if (h.includes('indoor')) columnMap.set(i, 'indoorModel');
+      else if (h.includes('outdoor')) columnMap.set(i, 'outdoorModel');
+      else columnMap.set(i, headers[i]);
+    }
+
+    const rows: Array<Record<string, string>> = [];
+    for (let rowIdx = 2; rowIdx <= worksheet.rowCount; rowIdx++) {
+      const row = worksheet.getRow(rowIdx);
+      const record: Record<string, string> = {};
+      let hasData = false;
+
+      for (const [colIndex, colName] of columnMap.entries()) {
+        const cellValue = row.getCell(colIndex + 1).value;
+        const strValue = cellValue != null ? String(cellValue).trim() : '';
+        record[colName] = strValue;
+        if (strValue) hasData = true;
+      }
+
+      if (hasData && (record['brand'] || record['product'] || record['capacity'])) {
+        rows.push(record);
+      }
+    }
+
+    return rows;
+  }
+
+  async submitBulkUpload(): Promise<void> {
+    if (this.bulkUploadPreviewRows.length === 0 || this.isBulkUploadSubmitting) return;
+
+    this.isBulkUploadSubmitting = true;
+    this.bulkUploadError = '';
+    this.bulkUploadSuccess = '';
+
+    try {
+      const response = await apiClient.post<{
+        success: boolean;
+        message?: string;
+        summary?: { created: number; skipped: number; failed: number; total: number };
+        results?: Array<{ row: number; status: string; message: string }>;
+      }>('/products/bulk-upload', { rows: this.bulkUploadPreviewRows });
+
+      if (!response.data.success) {
+        this.bulkUploadError = response.data.message ?? 'Bulk upload failed';
+        return;
+      }
+
+      this.bulkUploadSuccess = response.data.message ?? 'Bulk upload complete';
+      this.bulkUploadSummary = response.data.summary ?? null;
+      this.bulkUploadResults = response.data.results ?? null;
+      await this.loadInventoryFolders();
+    } catch (error: unknown) {
+      if (axios.isAxiosError(error)) {
+        this.bulkUploadError =
+          (error.response?.data as { message?: string } | undefined)?.message ?? 'Bulk upload failed';
+      } else {
+        this.bulkUploadError = 'Bulk upload failed';
+      }
+    } finally {
+      this.isBulkUploadSubmitting = false;
+    }
+  }
+
+  private parseCsvText(text: string): Array<Record<string, string>> {
+    const lines = text.split(/\r?\n/).map((l) => l.trim()).filter((l) => l.length > 0);
+    if (lines.length < 2) return [];
+
+    const headerLine = lines[0];
+    const headers = this.parseCsvLine(headerLine).map((h) => h.trim());
+
+    // Map headers to expected column names
+    const columnMap = new Map<number, string>();
+    for (let i = 0; i < headers.length; i++) {
+      const h = headers[i].toLowerCase().replace(/[\s_-]/g, '');
+      if (h.includes('brand')) columnMap.set(i, 'brand');
+      else if (h.includes('product')) columnMap.set(i, 'product');
+      else if (h === 'unit') columnMap.set(i, 'unit');
+      else if (h.includes('unittype')) columnMap.set(i, 'unitTypes');
+      else if (h.includes('capacity')) columnMap.set(i, 'capacity');
+      else if (h === 'srp') columnMap.set(i, 'srp');
+      else if (h.includes('netprice')) columnMap.set(i, 'netPrice');
+      else if (h.includes('cashprice')) columnMap.set(i, 'cashPrice');
+      else if (h.includes('ccprice')) columnMap.set(i, 'ccPrice');
+      else if (h.includes('unitprice')) columnMap.set(i, 'unitPrice');
+      else if (h.includes('indoor')) columnMap.set(i, 'indoorModel');
+      else if (h.includes('outdoor')) columnMap.set(i, 'outdoorModel');
+      else columnMap.set(i, headers[i]);
+    }
+
+    const rows: Array<Record<string, string>> = [];
+    for (let i = 1; i < lines.length; i++) {
+      const values = this.parseCsvLine(lines[i]);
+      const record: Record<string, string> = {};
+      for (const [colIndex, colName] of columnMap.entries()) {
+        record[colName] = (values[colIndex] ?? '').trim();
+      }
+      if (record['brand'] || record['product'] || record['capacity']) {
+        rows.push(record);
+      }
+    }
+
+    return rows;
+  }
+
+  private parseCsvLine(line: string): string[] {
+    const result: string[] = [];
+    let current = '';
+    let inQuotes = false;
+
+    for (let i = 0; i < line.length; i++) {
+      const char = line[i];
+      if (char === '"') {
+        if (inQuotes && line[i + 1] === '"') {
+          current += '"';
+          i++;
+        } else {
+          inQuotes = !inQuotes;
+        }
+      } else if (char === ',' && !inQuotes) {
+        result.push(current);
+        current = '';
+      } else {
+        current += char;
+      }
+    }
+    result.push(current);
+    return result;
+  }
+
   // Material creation modal state
   isMaterialModalOpen = false;
   materialForm = { code: '', name: '', unit: '' };

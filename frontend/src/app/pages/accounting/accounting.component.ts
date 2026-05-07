@@ -1,6 +1,7 @@
 import { CommonModule } from '@angular/common';
 import { Component, OnInit } from '@angular/core';
 import { FormsModule } from '@angular/forms';
+import { DomSanitizer, SafeResourceUrl } from '@angular/platform-browser';
 import { PageBreadcrumbComponent } from '../../shared/components/common/page-breadcrumb/page-breadcrumb.component';
 import { DatePickerComponent } from '../../shared/components/form/date-picker/date-picker.component';
 import {
@@ -310,6 +311,10 @@ export class AccountingComponent implements OnInit {
 
   private businessProfile: BusinessProfileSettings | null = null;
 
+  tax2307PreviewObjectUrl: string | null = null;
+  tax2307PreviewUrl: SafeResourceUrl | null = null;
+  tax2307PreviewFilename = '';
+
   treeSearch = '';
   selectedReportKey: AccountingReportKey | null = null;
   expandedFolders = new Set<string>();
@@ -595,6 +600,7 @@ export class AccountingComponent implements OnInit {
     private readonly salesOrderService: SalesOrderService,
     private readonly rbacService: RbacService,
     private readonly businessSettingsService: BusinessSettingsService,
+    private readonly sanitizer: DomSanitizer,
   ) {}
 
   ngOnInit(): void {
@@ -835,6 +841,11 @@ export class AccountingComponent implements OnInit {
 
     if (reportKey === 'disbursement-register') {
       void this.loadDisbursementRegister();
+    }
+
+    if (reportKey === 'tax-2307-report') {
+      this.applyDefaultTax2307DateRange();
+      void this.loadReleasedChequeVouchers();
     }
   }
 
@@ -1223,11 +1234,32 @@ export class AccountingComponent implements OnInit {
 
   closeTax2307PrintPreview(): void {
     this.isTax2307PrintPreviewOpen = false;
+    this.revokeTax2307PreviewUrl();
+  }
+
+  printTax2307Preview(): void {
+    const frame = document.getElementById('tax2307-preview-frame') as HTMLIFrameElement | null;
+    frame?.contentWindow?.focus();
+    frame?.contentWindow?.print();
   }
 
   executeTax2307PrintFromPreview(): void {
+    if (this.tax2307PreviewUrl) {
+      this.printTax2307Preview();
+      return;
+    }
+
     this.printTax2307Report();
     this.closeTax2307PrintPreview();
+  }
+
+  private revokeTax2307PreviewUrl(): void {
+    if (this.tax2307PreviewObjectUrl) {
+      URL.revokeObjectURL(this.tax2307PreviewObjectUrl);
+      this.tax2307PreviewObjectUrl = null;
+    }
+    this.tax2307PreviewUrl = null;
+    this.tax2307PreviewFilename = '';
   }
 
   openGeneralJournalPrintPreview(): void {
@@ -1752,6 +1784,8 @@ export class AccountingComponent implements OnInit {
     }
 
     this.reportError = '';
+    // Reload cheque voucher data with the new date range
+    void this.loadReleasedChequeVouchers(this.tax2307DateFrom, this.tax2307DateTo);
   }
 
   clearTax2307Filters(): void {
@@ -1772,7 +1806,7 @@ export class AccountingComponent implements OnInit {
       return;
     }
 
-    await this.generateTax2307FormsPdf([summary], true);
+    await this.generateTax2307FormsPdf([summary], false, true);
   }
 
   async generateTax2307Forms(): Promise<void> {
@@ -4255,8 +4289,13 @@ export class AccountingComponent implements OnInit {
     `;
   }
 
-  private async generateTax2307FormsPdf(summaries: Tax2307SupplierSummary[], openInNewTab: boolean): Promise<void> {
+  private async generateTax2307FormsPdf(
+    summaries: Tax2307SupplierSummary[],
+    openInNewTab: boolean,
+    previewInModal = false,
+  ): Promise<void> {
     try {
+      this.revokeTax2307PreviewUrl();
       const { PDFDocument, rgb, StandardFonts } = await import('pdf-lib');
       const templateBytes = await fetch('/docs/2307Form.pdf').then(async (response) => {
         if (!response.ok) {
@@ -4278,12 +4317,29 @@ export class AccountingComponent implements OnInit {
         const height = page.getHeight();
         const yFromTop = (topOffset: number) => height - topOffset;
 
-        const draw = (text: string, x: number, topOffset: number, options?: { size?: number; bold?: boolean }) => {
+        const draw = (
+          text: string,
+          x: number,
+          topOffset: number,
+          options?: { size?: number; bold?: boolean; align?: 'left' | 'center' | 'right' },
+        ) => {
+          const usedFont = options?.bold ? boldFont : font;
+          const fontSize = options?.size ?? 9;
+          let drawX = x;
+          if (options?.align && options.align !== 'left') {
+            const textWidth = usedFont.widthOfTextAtSize(String(text || ''), fontSize);
+            if (options.align === 'center') {
+              drawX = x - textWidth / 2;
+            } else if (options.align === 'right') {
+              drawX = x - textWidth;
+            }
+          }
+
           page.drawText(String(text || ''), {
-            x,
+            x: drawX,
             y: yFromTop(topOffset),
-            size: options?.size ?? 9,
-            font: options?.bold ? boldFont : font,
+            size: fontSize,
+            font: usedFont,
             color: rgb(0, 0, 0),
           });
         };
@@ -4293,36 +4349,98 @@ export class AccountingComponent implements OnInit {
         const formatForForm = (isoDate: string) => {
           const parsedDate = new Date(isoDate);
           if (Number.isNaN(parsedDate.getTime())) {
-            return isoDate;
+            return isoDate.replace(/\//g, '  ').replace(/\s+/g, '  ');
           }
           const month = String(parsedDate.getMonth() + 1).padStart(2, '0');
           const day = String(parsedDate.getDate()).padStart(2, '0');
           const year = String(parsedDate.getFullYear());
-          return `${month}/${day}/${year}`;
+          return `${month}    ${day}     ${year}`;
         };
 
-        draw(formatForForm(fromDate), width * 0.30, 112, { size: 10 });
-        draw(formatForForm(toDate), width * 0.57, 112, { size: 10 });
+        const normalizeTinForBoxes = (rawTin: string) => {
+          const digits = String(rawTin || '').replace(/\D/g, '');
+          const normalizedDigits = digits.slice(0, 9);
+          if (!normalizedDigits) {
+            return '000   000   000';
+          }
+          const parts = [];
+          for (let i = 0; i < normalizedDigits.length; i += 3) {
+            parts.push(normalizedDigits.slice(i, i + 3));
+          }
+          return parts.join('          ');
+        };
 
-        draw(summary.tin || '-', width * 0.31, 154, { size: 10 });
-        draw(summary.supplierName || '-', width * 0.03, 192, { size: 9 });
-        draw(summary.supplierAddress || '-', width * 0.03, 232, { size: 9 });
+        draw(formatForForm(fromDate), width * 0.31, 108, { size: 10, align: 'center', bold: true });
+        draw(formatForForm(toDate), width * 0.68, 108, { size: 10, align: 'center', bold: true });
 
-        draw('00000000000000', width * 0.31, 311, { size: 10 });
-        draw('AIR SUMMIT HVAC AND REFRIGERATION SERVICES', width * 0.03, 350, { size: 9 });
-        draw('TRAMO MESULO, ARAYAT, PAMPANGA', width * 0.03, 391, { size: 9 });
+        draw(normalizeTinForBoxes(summary.tin || ''), width * 0.43, 139, { size: 10, align: 'center', bold: true });
+        draw(summary.supplierName || '-', width * 0.08, 163, { size: 9, bold: true });
+        draw(summary.supplierAddress || '-', width * 0.08, 189, { size: 9, bold: true });
 
-        draw('WC158', width * 0.30, 435, { size: 9 });
-        draw(summary.vatableAmount.toFixed(2), width * 0.67, 435, { size: 9 });
-        draw(summary.taxWithheld.toFixed(2), width * 0.83, 435, { size: 9, bold: true });
+        const businessTin = normalizeTinForBoxes(String(this.businessProfile?.businessTinNumber ?? '').trim() || '00000000000000');
+        const businessName = String(this.businessProfile?.businessName ?? '').trim() || '';
+        const businessAddress = String(this.businessProfile?.businessAddress ?? '').trim() || '';
 
-        const referencesText = `Ref: ${summary.references.filter(Boolean).join(', ')}`;
-        draw(referencesText.slice(0, 120), width * 0.03, 543, { size: 8 });
+        draw(businessTin, width * 0.43, 245, { size: 10, align: 'center', bold: true });
+        draw(businessName, width * 0.08, 272, { size: 9, bold: true });
+        draw(businessAddress || 'test address', width * 0.08, 297, { size: 9, bold: true });
+
+        // Quarterly column logic based on voucher date month
+        const firstRefDate = this.getTax2307BaseRows().find(
+          (r: Tax2307ReportRow) => r.referenceNo === summary.references[0],
+        )?.voucherDate;
+        const voucherDate = new Date(firstRefDate || fromDate);
+        const monthNames = ['January', 'February', 'March', 'April', 'May', 'June', 'July', 'August', 'September', 'October', 'November', 'December'];
+        const monthOf = monthNames[voucherDate.getMonth()] || 'January';
+
+        const quarters = [
+          { quarter: '1st Q', months: ['January', 'April', 'July', 'October'] },
+          { quarter: '2nd Q', months: ['February', 'May', 'August', 'November'] },
+          { quarter: '3rd Q', months: ['March', 'June', 'September', 'December'] },
+          { quarter: 'Total', months: [] },
+          { quarter: 'taxWithHeld', months: [] },
+        ];
+
+        let quarterX = 210;
+        let quarterY = 352;
+        let qBottomX = 210;
+        let qBottomY = 478;
+
+        const fmtAmount = (val: number) => val.toLocaleString('en-US', {
+          style: 'decimal',
+          minimumFractionDigits: 2,
+          maximumFractionDigits: 2,
+        });
+
+        for (const q of quarters) {
+          if (q.months.includes(monthOf)) {
+            draw(fmtAmount(summary.vatableAmount), quarterX, quarterY, { size: 9 });
+            draw(fmtAmount(summary.vatableAmount), qBottomX, qBottomY, { size: 9 });
+          } else if (q.quarter === 'Total') {
+            draw(fmtAmount(summary.vatableAmount), quarterX, quarterY, { size: 9 });
+            draw(fmtAmount(summary.vatableAmount), qBottomX, qBottomY, { size: 9 });
+          } else if (q.quarter === 'taxWithHeld') {
+            draw(fmtAmount(summary.taxWithheld), quarterX + 20, quarterY, { size: 9 });
+            draw(fmtAmount(summary.taxWithheld), qBottomX + 20, qBottomY, { size: 9 });
+          }
+
+          quarterX += 63;
+          qBottomX += 63;
+        }
+
       }
 
       const pdfBytes = await outputDoc.save();
       const blob = new Blob([pdfBytes.buffer as ArrayBuffer], { type: 'application/pdf' });
       const url = URL.createObjectURL(blob);
+
+      if (previewInModal) {
+        this.tax2307PreviewFilename = `2307-Tax-Form-${this.tax2307MonthLabel.replace(/\s+/g, '-')}.pdf`;
+        this.tax2307PreviewObjectUrl = url;
+        this.tax2307PreviewUrl = this.sanitizer.bypassSecurityTrustResourceUrl(url);
+        this.isTax2307PrintPreviewOpen = true;
+        return;
+      }
 
       if (openInNewTab) {
         window.open(url, '_blank');

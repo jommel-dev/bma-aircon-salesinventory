@@ -771,4 +771,224 @@ export class ProductsService {
   remove(id: number) {
     return `This action removes a #${id} product`;
   }
+
+  async bulkUpload(rows: Array<Record<string, unknown>>, userId: number) {
+    if (!Array.isArray(rows) || rows.length === 0) {
+      return { success: false, message: 'No rows provided' };
+    }
+
+    if (rows.length > 500) {
+      return { success: false, message: 'Maximum 500 rows per upload' };
+    }
+
+    const results: Array<{ row: number; status: string; message: string }> = [];
+    let created = 0;
+    let skipped = 0;
+    let failed = 0;
+
+    try {
+      await this.databaseService.withTransaction(async (client) => {
+        // Cache brand lookups within this transaction
+        const brandCache = new Map<string, number>();
+
+        const findOrCreateBrand = async (brandName: string): Promise<number> => {
+          const normalized = brandName.trim();
+          const cacheKey = normalized.toLowerCase();
+          if (brandCache.has(cacheKey)) {
+            return brandCache.get(cacheKey)!;
+          }
+
+          const columns = await this.getTableColumns(client, 'tblbrands');
+          const nameColumn = this.pickColumn(columns, ['name', 'brandName', 'brand_name']);
+          if (!nameColumn) {
+            throw new Error('tblbrands name column not found');
+          }
+
+          const existing = await client.query<{ id: number }>(
+            `SELECT b.id FROM tblbrands b
+             WHERE LOWER(TRIM(COALESCE(to_jsonb(b)->>$1, ''))) = LOWER(TRIM($2))
+             LIMIT 1`,
+            [nameColumn, normalized],
+          );
+
+          if ((existing.rowCount ?? 0) > 0) {
+            brandCache.set(cacheKey, existing.rows[0].id);
+            return existing.rows[0].id;
+          }
+
+          const insertResult = await client.query<{ id: number }>(
+            `INSERT INTO tblbrands ("${nameColumn}") VALUES ($1) RETURNING id`,
+            [normalized],
+          );
+
+          const brandId = insertResult.rows[0].id;
+          brandCache.set(cacheKey, brandId);
+          return brandId;
+        };
+
+        // Cache product lookups
+        const productCache = new Map<string, number>();
+
+        const findOrCreateProduct = async (
+          brandId: number,
+          productName: string,
+          unit: string,
+          unitTypes: string,
+        ): Promise<number> => {
+          const cacheKey = `${brandId}::${productName.toLowerCase().trim()}`;
+          if (productCache.has(cacheKey)) {
+            return productCache.get(cacheKey)!;
+          }
+
+          const existing = await client.query<{ id: number }>(
+            `SELECT p.id FROM tblproducts p
+             WHERE LOWER(TRIM(COALESCE(
+               to_jsonb(p)->>'productName',
+               to_jsonb(p)->>'product_name',
+               to_jsonb(p)->>'productname', ''
+             ))) = LOWER(TRIM($1))
+             AND COALESCE(
+               to_jsonb(p)->>'brandId',
+               to_jsonb(p)->>'brand_id',
+               to_jsonb(p)->>'brandid'
+             ) = $2::text
+             LIMIT 1`,
+            [productName.trim(), String(brandId)],
+          );
+
+          if ((existing.rowCount ?? 0) > 0) {
+            productCache.set(cacheKey, existing.rows[0].id);
+            return existing.rows[0].id;
+          }
+
+          const availableColumns = await this.getTableColumns(client, 'tblproducts');
+          const brandColumn = this.pickColumn(availableColumns, ['brandId', 'brand_id', 'brandid']);
+          const productNameColumn = this.pickColumn(availableColumns, ['productName', 'product_name', 'productname']);
+          const unitTypesColumn = this.pickColumn(availableColumns, ['unitTypes', 'unit_types', 'unittypes']);
+          const unitColumn = this.pickColumn(availableColumns, ['unit']);
+          const createdByColumn = this.pickColumn(availableColumns, ['created_by', 'createdBy', 'createdby']);
+
+          if (!brandColumn || !productNameColumn || !unitTypesColumn || !unitColumn) {
+            throw new Error('tblproducts columns not aligned');
+          }
+
+          const insertRecord: Record<string, unknown> = {
+            [brandColumn]: brandId,
+            [productNameColumn]: productName.trim(),
+            [unitTypesColumn]: unitTypes,
+            [unitColumn]: unit.trim().toUpperCase() || 'SET',
+          };
+          if (createdByColumn) {
+            insertRecord[createdByColumn] = userId;
+          }
+
+          const productResult = await this.runInsert(client, 'tblproducts', insertRecord);
+          const productId = productResult.rows[0].id;
+          productCache.set(cacheKey, productId);
+          return productId;
+        };
+
+        for (let i = 0; i < rows.length; i++) {
+          const row = rows[i];
+          const rowNum = i + 1;
+
+          const brandName = String(row['brand'] ?? row['Brand'] ?? '').trim();
+          const productName = String(row['product'] ?? row['Product'] ?? '').trim();
+          const unit = String(row['unit'] ?? row['Unit'] ?? 'SET').trim();
+          const unitTypes = String(row['unitTypes'] ?? row['UnitTypes'] ?? row['unitType'] ?? 'Indoor,Outdoor').trim();
+          const capacity = String(row['capacity'] ?? row['Capacity'] ?? '').trim();
+          const srp = Number(row['srp'] ?? row['SRP'] ?? 0) || 0;
+          const netPrice = Number(row['netPrice'] ?? row['NetPrice'] ?? row['net_price'] ?? 0) || 0;
+          const cashPrice = Number(row['cashPrice'] ?? row['CashPrice'] ?? row['cash_price'] ?? 0) || 0;
+          const ccPrice = Number(row['ccPrice'] ?? row['CCPrice'] ?? row['cc_price'] ?? 0) || 0;
+          const unitPrice = Number(row['unitPrice'] ?? row['UnitPrice'] ?? row['unit_price'] ?? 0) || 0;
+          const indoorModel = String(row['indoorModel'] ?? row['IndoorModel'] ?? row['indoor_model'] ?? '').trim();
+          const outdoorModel = String(row['outdoorModel'] ?? row['OutdoorModel'] ?? row['outdoor_model'] ?? '').trim();
+
+          if (!brandName) {
+            results.push({ row: rowNum, status: 'failed', message: 'Brand is required' });
+            failed++;
+            continue;
+          }
+
+          if (!productName) {
+            results.push({ row: rowNum, status: 'failed', message: 'Product is required' });
+            failed++;
+            continue;
+          }
+
+          if (!capacity) {
+            results.push({ row: rowNum, status: 'failed', message: 'Capacity is required' });
+            failed++;
+            continue;
+          }
+
+          try {
+            const brandId = await findOrCreateBrand(brandName);
+            const productId = await findOrCreateProduct(brandId, productName, unit, unitTypes);
+
+            // Check if capacity already exists for this product
+            const capacityColumns = await this.getTableColumns(client, 'tblcapacity');
+            const capProductIdCol = this.pickColumn(capacityColumns, ['prodId', 'productId', 'prod_id', 'product_id']);
+            const capValueCol = this.pickColumn(capacityColumns, ['capacity', 'capacityValue']);
+
+            if (!capProductIdCol || !capValueCol) {
+              results.push({ row: rowNum, status: 'failed', message: 'Capacity table misconfigured' });
+              failed++;
+              continue;
+            }
+
+            const existingCap = await client.query<{ id: number }>(
+              `SELECT id FROM tblcapacity
+               WHERE COALESCE(to_jsonb(tblcapacity)->>$1, '') = $2::text
+               AND LOWER(TRIM(COALESCE(to_jsonb(tblcapacity)->>$3, ''))) = LOWER(TRIM($4))
+               LIMIT 1`,
+              [capProductIdCol, String(productId), capValueCol, capacity],
+            );
+
+            if ((existingCap.rowCount ?? 0) > 0) {
+              results.push({ row: rowNum, status: 'skipped', message: `Capacity "${capacity}" already exists for this product` });
+              skipped++;
+              continue;
+            }
+
+            await this.insertCapacityAndPriceHistory(client, productId, userId, {
+              capacity,
+              indoorModel,
+              outdoorModel,
+              srp,
+              netPrice,
+              cashPrice,
+              ccPrice,
+              unitPrice,
+            });
+
+            results.push({ row: rowNum, status: 'created', message: `${brandName} > ${productName} > ${capacity}` });
+            created++;
+          } catch (rowError) {
+            results.push({
+              row: rowNum,
+              status: 'failed',
+              message: rowError instanceof Error ? rowError.message : 'Unknown error',
+            });
+            failed++;
+          }
+        }
+      });
+
+      return {
+        success: true,
+        message: `Bulk upload complete: ${created} created, ${skipped} skipped, ${failed} failed`,
+        summary: { created, skipped, failed, total: rows.length },
+        results,
+      };
+    } catch (error) {
+      return {
+        success: false,
+        message: error instanceof Error ? error.message : 'Bulk upload failed',
+        summary: { created: 0, skipped: 0, failed: rows.length, total: rows.length },
+        results,
+      };
+    }
+  }
 }

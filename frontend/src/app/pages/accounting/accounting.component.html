@@ -1074,7 +1074,7 @@
                                 >
                                   <div class="font-medium text-gray-800 dark:text-white/90">{{ vendor.name }}</div>
                                   <div class="text-[10px] text-gray-500 dark:text-gray-400">
-                                    {{ vendor.tin_number ? 'TIN: ' + vendor.tin_number : '' }} 
+                                    {{ vendor.tin_number ? 'TIN: ' + vendor.tin_number : '' }}
                                     {{ vendor.address ? ' | ' + vendor.address : '' }}
                                   </div>
                                 </button>
@@ -3058,74 +3058,85 @@
                 </div>
 
                 <div class="h-[calc(90vh-64px)] overflow-auto bg-gray-100 p-4 dark:bg-gray-950/40">
-                  <div class="mx-auto w-full max-w-210 rounded-lg border border-gray-200 bg-white p-6 shadow-sm dark:border-gray-700 dark:bg-gray-900">
-                    @if (tax2307PrintSettings.showHeader) {
-                      <div class="mb-4 flex items-start justify-between gap-4 border-b border-gray-200 pb-3 dark:border-gray-700">
-                        <div class="min-w-0">
-                          @if (tax2307PrintSettings.showLogo && getTax2307PrintLogoSrc()) {
-                            <img [src]="getTax2307PrintLogoSrc()" alt="Business Logo" class="h-10 object-contain" />
-                          }
-                        </div>
-                        <div class="text-right text-xs leading-5 text-gray-500 dark:text-gray-400">
-                          @if (tax2307PrintSettings.showAddress) {
-                            @for (line of getTax2307HeaderLines(); track line + '_' + $index) {
-                              <p>{{ line }}</p>
+                  @if (tax2307PreviewUrl) {
+                    <div class="h-full overflow-hidden rounded-xl border border-gray-200 bg-white dark:border-gray-700 dark:bg-gray-900">
+                      <iframe
+                        id="tax2307-preview-frame"
+                        [src]="tax2307PreviewUrl"
+                        class="h-full w-full border-0"
+                        title="2307 PDF Preview"
+                      ></iframe>
+                    </div>
+                  } @else {
+                    <div class="mx-auto w-full max-w-210 rounded-lg border border-gray-200 bg-white p-6 shadow-sm dark:border-gray-700 dark:bg-gray-900">
+                      @if (tax2307PrintSettings.showHeader) {
+                        <div class="mb-4 flex items-start justify-between gap-4 border-b border-gray-200 pb-3 dark:border-gray-700">
+                          <div class="min-w-0">
+                            @if (tax2307PrintSettings.showLogo && getTax2307PrintLogoSrc()) {
+                              <img [src]="getTax2307PrintLogoSrc()" alt="Business Logo" class="h-10 object-contain" />
                             }
-                          }
+                          </div>
+                          <div class="text-right text-xs leading-5 text-gray-500 dark:text-gray-400">
+                            @if (tax2307PrintSettings.showAddress) {
+                              @for (line of getTax2307HeaderLines(); track line + '_' + $index) {
+                                <p>{{ line }}</p>
+                              }
+                            }
+                          </div>
                         </div>
+                      }
+
+                      <div class="mb-4 text-right">
+                        <p class="text-base font-semibold text-gray-800 dark:text-white/90">2307 TAX REPORT</p>
+                        <p class="text-xs text-gray-500 dark:text-gray-400">For the Month of {{ tax2307MonthLabel }}</p>
                       </div>
-                    }
 
-                    <div class="mb-4 text-right">
-                      <p class="text-base font-semibold text-gray-800 dark:text-white/90">2307 TAX REPORT</p>
-                      <p class="text-xs text-gray-500 dark:text-gray-400">For the Month of {{ tax2307MonthLabel }}</p>
-                    </div>
-
-                    <div class="overflow-hidden rounded-lg border border-gray-200 dark:border-gray-700">
-                      <table class="min-w-full text-xs">
-                        <thead class="bg-gray-50 text-gray-600 dark:bg-gray-800/70 dark:text-gray-300">
-                          <tr>
-                            <th class="px-3 py-2 text-left">Reference No. (CV No.)</th>
-                            <th class="px-3 py-2 text-left">TIN</th>
-                            <th class="px-3 py-2 text-left">Supplier Name</th>
-                            <th class="px-3 py-2 text-right">Vatable Amount</th>
-                            <th class="px-3 py-2 text-right">Tax Withheld</th>
-                          </tr>
-                        </thead>
-                        <tbody>
-                          @for (row of withholdingTaxRows; track row.referenceNo + '_' + row.tin + '_' + $index) {
-                            <tr class="border-t border-gray-200 dark:border-gray-700">
-                              <td class="px-3 py-2 text-gray-700 dark:text-gray-300">{{ row.referenceNo || '-' }}</td>
-                              <td class="px-3 py-2 text-gray-700 dark:text-gray-300">{{ row.tin || '-' }}</td>
-                              <td class="px-3 py-2 text-gray-700 dark:text-gray-300">{{ row.supplierName || '-' }}</td>
-                              <td class="px-3 py-2 text-right text-gray-700 dark:text-gray-300">{{ row.vatableAmount | currency:'PHP':'symbol':'1.2-2' }}</td>
-                              <td class="px-3 py-2 text-right text-gray-700 dark:text-gray-300">{{ row.taxWithheld | currency:'PHP':'symbol':'1.2-2' }}</td>
-                            </tr>
-                          } @empty {
+                      <div class="overflow-hidden rounded-lg border border-gray-200 dark:border-gray-700">
+                        <table class="min-w-full text-xs">
+                          <thead class="bg-gray-50 text-gray-600 dark:bg-gray-800/70 dark:text-gray-300">
                             <tr>
-                              <td colspan="5" class="px-3 py-6 text-center text-sm text-gray-500 dark:text-gray-400">No 2307 tax lines for the selected date range.</td>
+                              <th class="px-3 py-2 text-left">Reference No. (CV No.)</th>
+                              <th class="px-3 py-2 text-left">TIN</th>
+                              <th class="px-3 py-2 text-left">Supplier Name</th>
+                              <th class="px-3 py-2 text-right">Vatable Amount</th>
+                              <th class="px-3 py-2 text-right">Tax Withheld</th>
                             </tr>
-                          }
+                          </thead>
+                          <tbody>
+                            @for (row of withholdingTaxRows; track row.referenceNo + '_' + row.tin + '_' + $index) {
+                              <tr class="border-t border-gray-200 dark:border-gray-700">
+                                <td class="px-3 py-2 text-gray-700 dark:text-gray-300">{{ row.referenceNo || '-' }}</td>
+                                <td class="px-3 py-2 text-gray-700 dark:text-gray-300">{{ row.tin || '-' }}</td>
+                                <td class="px-3 py-2 text-gray-700 dark:text-gray-300">{{ row.supplierName || '-' }}</td>
+                                <td class="px-3 py-2 text-right text-gray-700 dark:text-gray-300">{{ row.vatableAmount | currency:'PHP':'symbol':'1.2-2' }}</td>
+                                <td class="px-3 py-2 text-right text-gray-700 dark:text-gray-300">{{ row.taxWithheld | currency:'PHP':'symbol':'1.2-2' }}</td>
+                              </tr>
+                            } @empty {
+                              <tr>
+                                <td colspan="5" class="px-3 py-6 text-center text-sm text-gray-500 dark:text-gray-400">No 2307 tax lines for the selected date range.</td>
+                              </tr>
+                            }
 
-                          @if (withholdingTaxRows.length > 0) {
-                            <tr class="border-t-2 border-gray-300 bg-gray-50 font-semibold dark:border-gray-600 dark:bg-gray-800/70">
-                              <td colspan="3" class="px-3 py-2 text-gray-800 dark:text-white/90">Grand Total</td>
-                              <td class="px-3 py-2 text-right text-gray-800 dark:text-white/90">{{ withholdingVatableTotal | currency:'PHP':'symbol':'1.2-2' }}</td>
-                              <td class="px-3 py-2 text-right text-gray-800 dark:text-white/90">{{ withholdingTaxTotal | currency:'PHP':'symbol':'1.2-2' }}</td>
-                            </tr>
-                          }
-                        </tbody>
-                      </table>
-                    </div>
-
-                    @if (tax2307PrintSettings.footerLeft || tax2307PrintSettings.footerCenter || tax2307PrintSettings.footerRight) {
-                      <div class="mt-4 grid grid-cols-3 gap-2 border-t border-dashed border-gray-300 pt-2 text-xs text-gray-500 dark:border-gray-700 dark:text-gray-400">
-                        <p>{{ tax2307PrintSettings.footerLeft || '' }}</p>
-                        <p class="text-center">{{ tax2307PrintSettings.footerCenter || '' }}</p>
-                        <p class="text-right">{{ tax2307PrintSettings.footerRight || '' }}</p>
+                            @if (withholdingTaxRows.length > 0) {
+                              <tr class="border-t-2 border-gray-300 bg-gray-50 font-semibold dark:border-gray-600 dark:bg-gray-800/70">
+                                <td colspan="3" class="px-3 py-2 text-gray-800 dark:text-white/90">Grand Total</td>
+                                <td class="px-3 py-2 text-right text-gray-800 dark:text-white/90">{{ withholdingVatableTotal | currency:'PHP':'symbol':'1.2-2' }}</td>
+                                <td class="px-3 py-2 text-right text-gray-800 dark:text-white/90">{{ withholdingTaxTotal | currency:'PHP':'symbol':'1.2-2' }}</td>
+                              </tr>
+                            }
+                          </tbody>
+                        </table>
                       </div>
-                    }
-                  </div>
+
+                      @if (tax2307PrintSettings.footerLeft || tax2307PrintSettings.footerCenter || tax2307PrintSettings.footerRight) {
+                        <div class="mt-4 grid grid-cols-3 gap-2 border-t border-dashed border-gray-300 pt-2 text-xs text-gray-500 dark:border-gray-700 dark:text-gray-400">
+                          <p>{{ tax2307PrintSettings.footerLeft || '' }}</p>
+                          <p class="text-center">{{ tax2307PrintSettings.footerCenter || '' }}</p>
+                          <p class="text-right">{{ tax2307PrintSettings.footerRight || '' }}</p>
+                        </div>
+                      }
+                    </div>
+                  }
                 </div>
               </aside>
             }

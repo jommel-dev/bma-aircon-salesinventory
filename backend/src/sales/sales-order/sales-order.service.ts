@@ -2475,12 +2475,12 @@ export class SalesOrderService {
       whereParts.push(`LOWER(COALESCE(base.original_status, '')) IN ('complete', 'completed')`);
     }
 
-    if (Number.isFinite(branchId) && branchId > 0) {
-      params.push(String(branchId));
-      const branchIndex = params.length;
-      // Include NULL branch_id (legacy records without branch assignment)
-      whereParts.push(`(base.branch_id = $${branchIndex} OR base.branch_id IS NULL)`);
-    }
+    // if (Number.isFinite(branchId) && branchId > 0) {
+    //   params.push(String(branchId));
+    //   const branchIndex = params.length;
+    //   // Include NULL branch_id (legacy records without branch assignment)
+    //   whereParts.push(`(base.branch_id = $${branchIndex} OR base.branch_id IS NULL)`);
+    // }
 
     if (search) {
       params.push(`%${search}%`);

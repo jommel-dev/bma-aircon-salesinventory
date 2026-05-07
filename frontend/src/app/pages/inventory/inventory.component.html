@@ -8,13 +8,22 @@
         <p class="mt-1 text-sm text-gray-500 dark:text-gray-400">Brand List Folder → Product List → Capacity List</p>
       </div>
 
-      <button
-        type="button"
-        (click)="openCreationDrawer('all-in-one')"
-        class="inline-flex items-center rounded-lg bg-brand-500 px-4 py-2 text-sm font-medium text-white hover:bg-brand-600"
-      >
-        Create Brand/Product/Capacity
-      </button>
+      <div class="flex flex-wrap gap-2">
+        <button
+          type="button"
+          (click)="openCreationDrawer('all-in-one')"
+          class="inline-flex items-center rounded-lg bg-brand-500 px-4 py-2 text-sm font-medium text-white hover:bg-brand-600"
+        >
+          Create Brand/Product/Capacity
+        </button>
+        <button
+          type="button"
+          (click)="openBulkUploadModal()"
+          class="inline-flex items-center rounded-lg border border-brand-300 px-4 py-2 text-sm font-medium text-brand-700 hover:bg-brand-50 dark:border-brand-500/40 dark:text-brand-300 dark:hover:bg-brand-500/10"
+        >
+          Bulk Upload CSV
+        </button>
+      </div>
       <!-- <button
         type="button"
         (click)="openMaterialModal()"
@@ -1140,6 +1149,164 @@
     (save)="onEditModalSave($event)"
   />
 </div>
+
+<!-- Bulk Upload Modal -->
+@if (isBulkUploadModalOpen) {
+  <div class="fixed inset-0 z-100000 flex items-center justify-center bg-black/50 p-4">
+    <div class="flex max-h-[90vh] w-full max-w-4xl flex-col rounded-xl bg-white shadow-xl dark:bg-gray-900">
+
+      <div class="flex items-center justify-between border-b border-gray-200 px-6 py-4 dark:border-gray-700">
+        <div>
+          <h3 class="text-base font-semibold text-gray-800 dark:text-white">Bulk Upload Inventory</h3>
+          <p class="mt-0.5 text-xs text-gray-500 dark:text-gray-400">Upload a CSV with columns: brand, product, unit, unitTypes, capacity, srp, netPrice, cashPrice, ccPrice, unitPrice, indoorModel, outdoorModel</p>
+        </div>
+        <button type="button" (click)="closeBulkUploadModal()" class="text-gray-400 hover:text-gray-600 dark:hover:text-gray-200">
+          <svg class="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"/></svg>
+        </button>
+      </div>
+
+      <div class="border-b border-gray-200 px-6 py-4 dark:border-gray-700">
+        <input type="file" id="bulkUploadFileInput" accept=".csv,.txt,.xlsx,.xls" class="hidden" (change)="onBulkUploadFileSelected($event)" />
+        @if (bulkUploadPreviewRows.length === 0 && !bulkUploadResults) {
+          <div class="flex flex-col items-center gap-3 rounded-lg border-2 border-dashed border-gray-300 py-8 dark:border-gray-600">
+            <svg class="h-10 w-10 text-gray-400" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M9 13h6m-3-3v6m5 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z"/></svg>
+            <p class="text-sm text-gray-500 dark:text-gray-400">Upload a CSV or Excel file with product inventory data</p>
+            <div class="flex flex-wrap items-center justify-center gap-2">
+              <button type="button" (click)="downloadBulkUploadTemplate()"
+                class="rounded-lg border border-gray-300 px-4 py-2 text-sm font-medium text-gray-700 transition hover:bg-gray-50 dark:border-gray-600 dark:text-gray-300 dark:hover:bg-gray-800">
+                Template (CSV)
+              </button>
+              <button type="button" (click)="downloadBulkUploadTemplateExcel()"
+                class="rounded-lg border border-gray-300 px-4 py-2 text-sm font-medium text-gray-700 transition hover:bg-gray-50 dark:border-gray-600 dark:text-gray-300 dark:hover:bg-gray-800">
+                Template (Excel)
+              </button>
+              <button type="button" (click)="triggerBulkUploadFileInput()" [disabled]="isBulkUploadParsing"
+                class="rounded-lg border border-brand-300 bg-brand-500 px-4 py-2 text-sm font-medium text-white hover:bg-brand-600 disabled:opacity-60">
+                {{ isBulkUploadParsing ? 'Processing...' : 'Choose File' }}
+              </button>
+            </div>
+          </div>
+        }
+
+        @if (bulkUploadError) {
+          <p class="mt-2 text-xs text-error-600 dark:text-error-400">{{ bulkUploadError }}</p>
+        }
+        @if (bulkUploadSuccess) {
+          <p class="mt-2 text-xs text-success-600 dark:text-success-400">{{ bulkUploadSuccess }}</p>
+        }
+
+        @if (bulkUploadSummary) {
+          <div class="mt-3 grid grid-cols-2 gap-3 sm:grid-cols-4">
+            <div class="rounded-lg border border-gray-200 p-3 text-center dark:border-gray-700">
+              <p class="text-2xl font-bold text-gray-800 dark:text-white">{{ bulkUploadSummary.total }}</p>
+              <p class="mt-1 text-xs text-gray-500">Total Rows</p>
+            </div>
+            <div class="rounded-lg border border-success-200 bg-success-50 p-3 text-center dark:border-success-800 dark:bg-success-900/20">
+              <p class="text-2xl font-bold text-success-600 dark:text-success-400">{{ bulkUploadSummary.created }}</p>
+              <p class="mt-1 text-xs text-gray-500">Created</p>
+            </div>
+            <div class="rounded-lg border border-warning-200 bg-warning-50 p-3 text-center dark:border-warning-800 dark:bg-warning-900/20">
+              <p class="text-2xl font-bold text-warning-600 dark:text-warning-400">{{ bulkUploadSummary.skipped }}</p>
+              <p class="mt-1 text-xs text-gray-500">Skipped</p>
+            </div>
+            <div class="rounded-lg border border-error-200 bg-error-50 p-3 text-center dark:border-error-800 dark:bg-error-900/20">
+              <p class="text-2xl font-bold text-error-600 dark:text-error-400">{{ bulkUploadSummary.failed }}</p>
+              <p class="mt-1 text-xs text-gray-500">Failed</p>
+            </div>
+          </div>
+        }
+      </div>
+
+      <div class="min-h-0 flex-1 overflow-y-auto px-6 py-3">
+        @if (bulkUploadPreviewRows.length > 0 && !bulkUploadResults) {
+          <p class="mb-2 text-xs font-medium text-gray-500 dark:text-gray-400">Preview ({{ bulkUploadPreviewRows.length }} rows)</p>
+          <div class="overflow-x-auto rounded-lg border border-gray-200 dark:border-gray-700">
+            <table class="w-full text-xs">
+              <thead>
+                <tr class="border-b border-gray-200 bg-gray-50 dark:border-gray-700 dark:bg-gray-800/50">
+                  <th class="px-2 py-2 text-left font-medium text-gray-500">#</th>
+                  <th class="px-2 py-2 text-left font-medium text-gray-500">Brand</th>
+                  <th class="px-2 py-2 text-left font-medium text-gray-500">Product</th>
+                  <th class="px-2 py-2 text-left font-medium text-gray-500">Capacity</th>
+                  <th class="px-2 py-2 text-right font-medium text-gray-500">SRP</th>
+                  <th class="px-2 py-2 text-right font-medium text-gray-500">Net Price</th>
+                  <th class="px-2 py-2 text-left font-medium text-gray-500">Indoor</th>
+                  <th class="px-2 py-2 text-left font-medium text-gray-500">Outdoor</th>
+                </tr>
+              </thead>
+              <tbody>
+                @for (row of bulkUploadPreviewRows; track $index) {
+                  <tr class="border-b border-gray-100 last:border-b-0 dark:border-gray-800">
+                    <td class="px-2 py-1.5 text-gray-500">{{ $index + 1 }}</td>
+                    <td class="px-2 py-1.5 text-gray-700 dark:text-gray-300">{{ row['brand'] || '-' }}</td>
+                    <td class="px-2 py-1.5 text-gray-700 dark:text-gray-300">{{ row['product'] || '-' }}</td>
+                    <td class="px-2 py-1.5 text-gray-700 dark:text-gray-300">{{ row['capacity'] || '-' }}</td>
+                    <td class="px-2 py-1.5 text-right text-gray-700 dark:text-gray-300">{{ row['srp'] || '0' }}</td>
+                    <td class="px-2 py-1.5 text-right text-gray-700 dark:text-gray-300">{{ row['netPrice'] || '0' }}</td>
+                    <td class="px-2 py-1.5 text-gray-700 dark:text-gray-300">{{ row['indoorModel'] || '-' }}</td>
+                    <td class="px-2 py-1.5 text-gray-700 dark:text-gray-300">{{ row['outdoorModel'] || '-' }}</td>
+                  </tr>
+                }
+              </tbody>
+            </table>
+          </div>
+        }
+
+        @if (bulkUploadResults) {
+          <p class="mb-2 text-xs font-medium text-gray-500 dark:text-gray-400">Results</p>
+          <div class="space-y-1">
+            @for (result of bulkUploadResults; track result.row) {
+              <div class="flex items-center gap-2 rounded-md border px-3 py-1.5 text-xs"
+                [ngClass]="result.status === 'created' ? 'border-success-200 bg-success-50 dark:border-success-800 dark:bg-success-900/20'
+                  : result.status === 'skipped' ? 'border-warning-200 bg-warning-50 dark:border-warning-800 dark:bg-warning-900/20'
+                  : 'border-error-200 bg-error-50 dark:border-error-800 dark:bg-error-900/20'">
+                <span class="font-medium text-gray-500">Row {{ result.row }}</span>
+                <span class="rounded-full px-2 py-0.5 text-[10px] font-semibold uppercase"
+                  [ngClass]="result.status === 'created' ? 'bg-success-100 text-success-700 dark:bg-success-900/40 dark:text-success-300'
+                    : result.status === 'skipped' ? 'bg-warning-100 text-warning-700 dark:bg-warning-900/40 dark:text-warning-300'
+                    : 'bg-error-100 text-error-700 dark:bg-error-900/40 dark:text-error-300'">
+                  {{ result.status }}
+                </span>
+                <span class="text-gray-600 dark:text-gray-300">{{ result.message }}</span>
+              </div>
+            }
+          </div>
+        }
+      </div>
+
+      <div class="flex items-center justify-between border-t border-gray-200 px-6 py-4 dark:border-gray-700">
+        <div class="flex gap-2">
+          <button type="button" (click)="downloadBulkUploadTemplate()"
+            class="rounded-lg border border-gray-300 px-4 py-2 text-sm font-medium text-gray-700 transition hover:bg-gray-50 dark:border-gray-600 dark:text-gray-300 dark:hover:bg-gray-800">
+            Template (CSV)
+          </button>
+          <button type="button" (click)="downloadBulkUploadTemplateExcel()"
+            class="rounded-lg border border-gray-300 px-4 py-2 text-sm font-medium text-gray-700 transition hover:bg-gray-50 dark:border-gray-600 dark:text-gray-300 dark:hover:bg-gray-800">
+            Template (Excel)
+          </button>
+          @if (bulkUploadResults) {
+            <button type="button" (click)="triggerBulkUploadFileInput()"
+              class="rounded-lg border border-gray-300 px-4 py-2 text-sm font-medium text-gray-600 transition hover:bg-gray-50 dark:border-gray-600 dark:text-gray-300">
+              Upload Another
+            </button>
+          }
+        </div>
+        <div class="flex gap-2">
+          <button type="button" (click)="closeBulkUploadModal()"
+            class="rounded-lg border border-gray-300 px-4 py-2 text-sm font-medium text-gray-700 transition hover:bg-gray-50 dark:border-gray-600 dark:text-gray-300">
+            Close
+          </button>
+          @if (bulkUploadPreviewRows.length > 0 && !bulkUploadResults) {
+            <button type="button" (click)="submitBulkUpload()" [disabled]="isBulkUploadSubmitting"
+              class="rounded-lg bg-brand-500 px-4 py-2 text-sm font-medium text-white hover:bg-brand-600 disabled:opacity-60">
+              {{ isBulkUploadSubmitting ? 'Uploading...' : 'Confirm Upload (' + bulkUploadPreviewRows.length + ' rows)' }}
+            </button>
+          }
+        </div>
+      </div>
+    </div>
+  </div>
+}
 
 <!-- CSV Upload Modal -->
 @if (isCsvModalOpen) {
