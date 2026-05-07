@@ -115,6 +115,7 @@ export class SettingsService {
         businessContact: string | null;
         businessEmail: string | null;
         businessOwner: string | null;
+        businessTinNumber: string | null;
         businessLogo: string | null;
         businessLogoLight: string | null;
         businessLogoDark: string | null;
@@ -159,6 +160,7 @@ export class SettingsService {
            COALESCE(to_jsonb(s)->>'businessContact', to_jsonb(s)->>'business_contact', null) AS "businessContact",
            COALESCE(to_jsonb(s)->>'businessEmail', to_jsonb(s)->>'business_email', null) AS "businessEmail",
            COALESCE(to_jsonb(s)->>'businessOwner', to_jsonb(s)->>'business_owner', null) AS "businessOwner",
+           COALESCE(to_jsonb(s)->>'businessTinNumber', to_jsonb(s)->>'business_tin_number', null) AS "businessTinNumber",
            COALESCE(to_jsonb(s)->>'businessLogo', to_jsonb(s)->>'business_logo', null) AS "businessLogo",
            COALESCE(to_jsonb(s)->>'businessLogoLight', to_jsonb(s)->>'business_logo_light', null) AS "businessLogoLight",
            COALESCE(to_jsonb(s)->>'businessLogoDark', to_jsonb(s)->>'business_logo_dark', null) AS "businessLogoDark",
@@ -269,6 +271,7 @@ export class SettingsService {
         businessContact: ['businessContact', 'business_contact'],
         businessEmail: ['businessEmail', 'business_email'],
         businessOwner: ['businessOwner', 'business_owner'],
+        businessTinNumber: ['businessTinNumber', 'business_tin_number'],
         businessLogo: ['businessLogo', 'business_logo'],
         businessLogoLight: ['businessLogoLight', 'business_logo_light'],
         businessLogoDark: ['businessLogoDark', 'business_logo_dark'],
@@ -331,6 +334,7 @@ export class SettingsService {
       appendUpdate('businessContact');
       appendUpdate('businessEmail');
       appendUpdate('businessOwner');
+      appendUpdate('businessTinNumber');
       appendUpdate('businessLogo');
       appendUpdate('businessLogoLight');
       appendUpdate('businessLogoDark');

@@ -6,6 +6,7 @@ export class UpdateBusinessProfileDto {
   businessContact?: string | null;
   businessEmail?: string | null;
   businessOwner?: string | null;
+  businessTinNumber?: string | null;
   businessLogo?: string | null;
   businessLogoLight?: string | null;
   businessLogoDark?: string | null;

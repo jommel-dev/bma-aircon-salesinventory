@@ -112,6 +112,7 @@ export class SettingsComponent implements OnInit {
     businessContact: string;
     businessEmail: string;
     businessOwner: string;
+    businessTinNumber: string;
   } = {
     websiteTabName: '',
     routingTabName: '{route}',
@@ -120,6 +121,7 @@ export class SettingsComponent implements OnInit {
     businessContact: '',
     businessEmail: '',
     businessOwner: '',
+    businessTinNumber: '',
   };
 
   preview: {
@@ -790,6 +792,7 @@ export class SettingsComponent implements OnInit {
         businessContact: this.toNullable(this.form.businessContact),
         businessEmail: this.toNullable(this.form.businessEmail),
         businessOwner: this.toNullable(this.form.businessOwner),
+        businessTinNumber: this.toNullable(this.form.businessTinNumber),
       });
 
       if (!response.success) {
@@ -991,6 +994,7 @@ export class SettingsComponent implements OnInit {
       businessContact: item?.businessContact ?? '',
       businessEmail: item?.businessEmail ?? '',
       businessOwner: item?.businessOwner ?? '',
+      businessTinNumber: item?.businessTinNumber ?? '',
     };
 
     this.preview = {
