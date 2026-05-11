@@ -1828,6 +1828,13 @@ export class AccountingComponent implements OnInit {
     return voucher.deposits.reduce((sum, item) => sum + (Number(item.amount) || 0), 0);
   }
 
+  getVoucherPurchasesDebit(voucher: ChequeVoucherReleasedRecord): number {
+    const purchasesRow = voucher.accountTitles.find(
+      (at) => String(at.description ?? '').toLowerCase().includes('purchases'),
+    );
+    return Number(purchasesRow?.debit) || 0;
+  }
+
   getVoucherAccountTitleDebitTotal(voucher: ChequeVoucherReleasedRecord): number {
     return voucher.accountTitles.reduce((sum, row) => sum + (Number(row.debit) || 0), 0);
   }
@@ -3372,7 +3379,7 @@ export class AccountingComponent implements OnInit {
           tin: String(voucher.tinNumber ?? '').trim(),
           supplierName: String(voucher.payee ?? '').trim(),
           supplierAddress: `${String(voucher.address ?? '').trim()}${voucher.zipCode ? `, ${String(voucher.zipCode).trim()}` : ''}`.trim(),
-          vatableAmount: this.getReleasedVoucherAmountTotal(voucher),
+          vatableAmount: this.getVoucherPurchasesDebit(voucher),
           taxWithheld,
           voucherDate: String(voucher.voucherDate ?? voucher.releasedAt ?? '').trim(),
         };
