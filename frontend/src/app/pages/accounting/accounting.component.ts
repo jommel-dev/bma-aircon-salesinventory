@@ -2999,8 +2999,8 @@ export class AccountingComponent implements OnInit {
         '/accounting/cheque-vouchers',
         {
           params: {
-            dateFrom: dateFrom || undefined,
-            dateTo: dateTo || undefined,
+            dateFrom: searchTerm ? undefined : (dateFrom || undefined),
+            dateTo: searchTerm ? undefined : (dateTo || undefined),
             invoice: searchTerm,
             particulars: searchTerm,
             chequeNo: searchTerm,

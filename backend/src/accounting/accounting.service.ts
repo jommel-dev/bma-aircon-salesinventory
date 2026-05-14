@@ -241,16 +241,18 @@ export class AccountingService {
     let dateFrom = this.normalizeDateOrNull(filters.dateFrom);
     let dateTo = this.normalizeDateOrNull(filters.dateTo);
 
-    if (!dateFrom && !dateTo) {
+    const normalizedInvoice = this.normalizeTextFilter(filters.invoice, 100, 'truncate');
+    const normalizedParticulars = this.normalizeTextFilter(filters.particulars, 500, 'reject', 'Particulars filter exceeds maximum length of 500 characters');
+    const normalizedChequeNo = this.normalizeTextFilter(filters.chequeNo, 50, 'reject', 'Cheque number filter exceeds maximum length of 50 characters');
+
+    const hasSearchFilter = !!(normalizedInvoice || normalizedParticulars || normalizedChequeNo);
+
+    if (!dateFrom && !dateTo && !hasSearchFilter) {
       const currentDate = new Date();
       const firstDateOfMonth = new Date(currentDate.getFullYear(), currentDate.getMonth(), 1);
       dateFrom = this.normalizeDateOrNull(firstDateOfMonth.toISOString());
       dateTo = this.normalizeDateOrNull(currentDate.toISOString());
     }
-
-    const normalizedInvoice = this.normalizeTextFilter(filters.invoice, 100, 'truncate');
-    const normalizedParticulars = this.normalizeTextFilter(filters.particulars, 500, 'reject', 'Particulars filter exceeds maximum length of 500 characters');
-    const normalizedChequeNo = this.normalizeTextFilter(filters.chequeNo, 50, 'reject', 'Cheque number filter exceeds maximum length of 50 characters');
 
     const { text, params } = this.buildChequeVoucherFilterQuery({
       dateFrom,
