@@ -233,7 +233,7 @@ export class AccountingService {
     return this.buildGeneralJournalNumber(nextSequence, prefix, suffix);
   }
 
-  async listChequeVouchers(filters: { dateFrom?: string; dateTo?: string }): Promise<Array<ChequeVoucherRow & {
+  async listChequeVouchers(filters: { dateFrom?: string; dateTo?: string; invoice?: string; particulars?: string; chequeNo?: string }): Promise<Array<ChequeVoucherRow & {
     deposits: Array<{ bankName: string; chequeNo: string; chequeDate: string | null; amount: number }>;
     invoices: Array<{ invoiceNo: string; invoiceDate: string | null; description: string; amount: number }>;
     accountTitles: Array<{ accountNumber: string; description: string; debit: number; credit: number }>;
@@ -248,25 +248,19 @@ export class AccountingService {
       dateTo = this.normalizeDateOrNull(currentDate.toISOString());
     }
 
-    const voucherResult = await this.db.query<ChequeVoucherRow>(
-      `SELECT
-          id,
-          cv_no AS "cvNo",
-          voucher_type AS "voucherType",
-          payee,
-          voucher_date::text AS "voucherDate",
-          tin_number AS "tinNumber",
-          address,
-          zip_code AS "zipCode",
-          particulars,
-          released_at::text AS "releasedAt",
-          prepared_by AS "preparedBy"
-        FROM tblcheque_vouchers
-        WHERE ($1::date IS NULL OR voucher_date >= $1::date)
-          AND ($2::date IS NULL OR voucher_date <= $2::date)
-        ORDER BY voucher_date DESC, id DESC`,
-      [dateFrom, dateTo],
-    );
+    const normalizedInvoice = this.normalizeTextFilter(filters.invoice, 100, 'truncate');
+    const normalizedParticulars = this.normalizeTextFilter(filters.particulars, 500, 'reject', 'Particulars filter exceeds maximum length of 500 characters');
+    const normalizedChequeNo = this.normalizeTextFilter(filters.chequeNo, 50, 'reject', 'Cheque number filter exceeds maximum length of 50 characters');
+
+    const { text, params } = this.buildChequeVoucherFilterQuery({
+      dateFrom,
+      dateTo,
+      invoice: normalizedInvoice,
+      particulars: normalizedParticulars,
+      chequeNo: normalizedChequeNo,
+    });
+
+    const voucherResult = await this.db.query<ChequeVoucherRow>(text, params);
 
     if (voucherResult.rows.length === 0) {
       return [];
@@ -1623,6 +1617,73 @@ export class AccountingService {
       baseColumns: this.normalizeDisbursementBaseColumns(source.baseColumns),
       defaultColumns: this.normalizeDisbursementDefaultColumns(source.defaultColumns),
     };
+  }
+
+  private normalizeTextFilter(value: unknown, maxLength: number, mode: 'truncate' | 'reject', errorMessage?: string): string | null {
+    const trimmed = String(value ?? '').trim();
+    if (!trimmed) {
+      return null;
+    }
+
+    if (trimmed.length > maxLength) {
+      if (mode === 'truncate') {
+        return trimmed.slice(0, maxLength);
+      }
+      throw new BadRequestException(
+        errorMessage ?? `Filter value exceeds maximum length of ${maxLength} characters`,
+      );
+    }
+
+    return trimmed;
+  }
+
+  private buildChequeVoucherFilterQuery(filters: {
+    dateFrom: string | null;
+    dateTo: string | null;
+    invoice: string | null;
+    particulars: string | null;
+    chequeNo: string | null;
+  }): { text: string; params: unknown[] } {
+    const params: unknown[] = [
+      filters.dateFrom,
+      filters.dateTo,
+      filters.particulars,
+      filters.invoice,
+      filters.chequeNo,
+    ];
+
+    const text = `SELECT
+          id,
+          cv_no AS "cvNo",
+          voucher_type AS "voucherType",
+          payee,
+          voucher_date::text AS "voucherDate",
+          tin_number AS "tinNumber",
+          address,
+          zip_code AS "zipCode",
+          particulars,
+          released_at::text AS "releasedAt",
+          prepared_by AS "preparedBy"
+        FROM tblcheque_vouchers
+        WHERE ($1::date IS NULL OR voucher_date >= $1::date)
+          AND ($2::date IS NULL OR voucher_date <= $2::date)
+          AND (
+            ($3::text IS NULL AND $4::text IS NULL AND $5::text IS NULL)
+            OR (particulars ILIKE '%' || $3 || '%')
+            OR EXISTS (
+              SELECT 1 FROM tblcheque_voucher_invoices
+              WHERE voucher_id = tblcheque_vouchers.id
+                AND invoice_no ILIKE '%' || $4 || '%'
+            )
+            OR EXISTS (
+              SELECT 1 FROM tblcheque_voucher_deposits
+              WHERE voucher_id = tblcheque_vouchers.id
+                AND cheque_no ILIKE '%' || $5 || '%'
+            )
+          )
+        ORDER BY voucher_date DESC, id DESC`;
+
+    return { text, params };
   }
 
   private normalizeDateOrNull(value: unknown): string | null {

@@ -224,13 +224,30 @@
             </div>
 
             <div class="overflow-hidden rounded-lg border border-gray-200 dark:border-gray-700">
-              <div class="border-b border-gray-200 px-3 py-2 dark:border-gray-700">
+              <div class="flex items-center gap-2 border-b border-gray-200 px-3 py-2 dark:border-gray-700">
                 <input
                   type="text"
                   [(ngModel)]="voucherSearchQuery"
-                  placeholder="Search by CV No., payee, or prepared by..."
+                  placeholder="Search by CV No., payee, invoice no., particulars, cheque no..."
+                  (keydown.enter)="applyChequeVoucherFilters()"
                   class="h-9 w-full rounded-lg border border-gray-300 bg-transparent px-3 text-sm dark:border-gray-700 dark:text-gray-200 dark:placeholder-gray-500"
                 />
+                <button
+                  type="button"
+                  (click)="applyChequeVoucherFilters()"
+                  class="shrink-0 rounded-md border border-brand-300 px-3 py-1.5 text-xs font-medium text-brand-700 hover:bg-brand-50 dark:border-brand-500/40 dark:text-brand-300 dark:hover:bg-brand-500/10"
+                >
+                  Search
+                </button>
+                @if (voucherSearchQuery) {
+                  <button
+                    type="button"
+                    (click)="clearChequeVoucherSearchFilters()"
+                    class="shrink-0 rounded-md border border-gray-300 px-3 py-1.5 text-xs font-medium text-gray-700 hover:bg-gray-50 dark:border-gray-700 dark:text-gray-300 dark:hover:bg-gray-800"
+                  >
+                    Clear
+                  </button>
+                }
               </div>
               <div class="overflow-x-auto">
                 <table class="min-w-full text-left text-sm">

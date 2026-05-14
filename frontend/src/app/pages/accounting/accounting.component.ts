@@ -619,19 +619,7 @@ export class AccountingComponent implements OnInit {
   }
 
   get filteredReleasedChequeVouchers(): ChequeVoucherReleasedRecord[] {
-    const query = this.voucherSearchQuery.trim().toLowerCase();
-    return this.releasedChequeVouchers
-      .filter((record) => this.isVoucherWithinDateRange(record.voucherDate))
-      .filter((record) => {
-        if (!query) {
-          return true;
-        }
-        return (
-          record.cvNo.toLowerCase().includes(query) ||
-          record.payee.toLowerCase().includes(query) ||
-          (record.preparedBy ?? '').toLowerCase().includes(query)
-        );
-      });
+    return this.releasedChequeVouchers.filter((record) => this.isVoucherWithinDateRange(record.voucherDate));
   }
 
   get releasedChequeVoucherAmountTotal(): number {
@@ -1766,7 +1754,13 @@ export class AccountingComponent implements OnInit {
 
   clearChequeVoucherFilters(): void {
     this.applyDefaultChequeVoucherDateRange();
+    this.voucherSearchQuery = '';
     void this.loadReleasedChequeVouchers();
+  }
+
+  clearChequeVoucherSearchFilters(): void {
+    this.voucherSearchQuery = '';
+    void this.loadReleasedChequeVouchers(this.chequeVoucherListDateFrom, this.chequeVoucherListDateTo);
   }
 
   applyChequeVoucherFilters(): void {
@@ -3000,12 +2994,16 @@ export class AccountingComponent implements OnInit {
 
   private async loadReleasedChequeVouchers(dateFrom?: string, dateTo?: string): Promise<void> {
     try {
+      const searchTerm = this.voucherSearchQuery.trim() || undefined;
       const response = await apiClient.get<{ success: boolean; data?: ChequeVoucherReleasedRecord[] }>(
         '/accounting/cheque-vouchers',
         {
           params: {
             dateFrom: dateFrom || undefined,
             dateTo: dateTo || undefined,
+            invoice: searchTerm,
+            particulars: searchTerm,
+            chequeNo: searchTerm,
           },
         },
       );

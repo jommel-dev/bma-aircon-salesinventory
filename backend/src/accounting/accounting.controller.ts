@@ -83,8 +83,11 @@ export class AccountingController {
   async listChequeVouchers(
     @Query('dateFrom') dateFrom?: string,
     @Query('dateTo') dateTo?: string,
+    @Query('invoice') invoice?: string,
+    @Query('particulars') particulars?: string,
+    @Query('chequeNo') chequeNo?: string,
   ): Promise<{ success: boolean; data: unknown }> {
-    const data = await this.accountingService.listChequeVouchers({ dateFrom, dateTo });
+    const data = await this.accountingService.listChequeVouchers({ dateFrom, dateTo, invoice, particulars, chequeNo });
     return {
       success: true,
       data,
