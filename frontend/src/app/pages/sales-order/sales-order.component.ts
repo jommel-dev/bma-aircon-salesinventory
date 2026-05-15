@@ -1638,7 +1638,7 @@ export class SalesOrderComponent {
         : (businessProfile?.businessLogoLight ?? businessProfile?.businessLogo ?? ''),
     ).trim();
 
-    return [preferredLogo, '/images/air-summit-logo.png', '/images/logo/logo.svg']
+    return [preferredLogo, '/images/fwdslogo.png', '/images/logo/logo.svg']
       .map((path) => this.resolveAssetUrl(path))
       .filter((path) => String(path || '').trim().length > 0);
   }

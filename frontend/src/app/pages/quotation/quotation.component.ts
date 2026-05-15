@@ -1682,8 +1682,8 @@ export class QuotationComponent implements OnInit, OnDestroy {
     const businessProfile = await this.loadBusinessProfileSettings();
     const headerProfile = await this.buildQuotationHeaderProfile(businessProfile);
     const logoSources = headerProfile.logoSrc
-      ? [headerProfile.logoSrc, '/images/air-summit-logo.png', '/images/logo/logo.svg']
-      : ['/images/air-summit-logo.png', '/images/logo/logo.svg'];
+      ? [headerProfile.logoSrc, '/images/fwdslogo.png', '/images/logo/logo.svg']
+      : ['/images/fwdslogo.png', '/images/logo/logo.svg'];
 
     const logoBytes = await this.loadLogoPngBytes(logoSources);
     if (logoBytes) {
@@ -1953,7 +1953,7 @@ export class QuotationComponent implements OnInit, OnDestroy {
         : (businessProfile?.businessLogoLight ?? businessProfile?.businessLogo ?? ''),
     ).trim();
 
-    const candidates = [preferredLogo, '/images/fwdslogo.png', '/images/air-summit-logo.png', '/images/logo/logo.svg'].filter(
+    const candidates = [preferredLogo, '/images/fwdslogo.png', '/images/logo/logo.svg'].filter(
       (path) => String(path || '').trim().length > 0,
     );
 

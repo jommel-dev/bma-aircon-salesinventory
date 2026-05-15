@@ -12,6 +12,7 @@ import {
   SalesOrderService,
 } from '../../shared/services/sales-order.service';
 import { RbacService } from '../../shared/services/rbac.service';
+import { BusinessSettingsService } from '../../shared/services/business-settings.service';
 import { apiClient } from '../../shared/services/api-client';
 import axios from 'axios';
 
@@ -134,6 +135,7 @@ export class InventoryComponent implements OnInit {
 
   isLoading = false;
   errorMessage = '';
+  businessName = '';
 
   brandFolders: BrandFolder[] = [];
   treeSearch = '';
@@ -277,6 +279,7 @@ export class InventoryComponent implements OnInit {
   constructor(
     private readonly salesOrderService: SalesOrderService,
     private readonly rbacService: RbacService,
+    private readonly businessSettingsService: BusinessSettingsService,
   ) {}
 
   // Bulk upload state
@@ -601,6 +604,16 @@ export class InventoryComponent implements OnInit {
   ngOnInit(): void {
     this.initializeLandCostingDateRange();
     void this.loadInventoryFolders();
+    void this.loadBusinessName();
+  }
+
+  private async loadBusinessName(): Promise<void> {
+    try {
+      const settings = await this.businessSettingsService.getBusinessProfile();
+      this.businessName = settings?.businessName || 'FWDS HVAC';
+    } catch {
+      this.businessName = 'FWDS HVAC';
+    }
   }
 
   selectBrand(name: string): void {
@@ -704,7 +717,7 @@ export class InventoryComponent implements OnInit {
     const workbook = new excelJs.Workbook();
     const worksheet = workbook.addWorksheet('Land Costing Report');
 
-    worksheet.addRow(['Air Summit']);
+    worksheet.addRow([this.businessName || 'FWDS HVAC']);
     worksheet.addRow([`Date Range: ${this.landCostingDateFrom} to ${this.landCostingDateTo}`]);
     worksheet.addRow(['Land Costing Report']);
     worksheet.addRow([]);
@@ -784,7 +797,7 @@ export class InventoryComponent implements OnInit {
     let y = pageHeight - 40;
 
     const drawHeader = () => {
-      page.drawText('Air Summit', { x: 40, y, size: 14, font: fontBold });
+      page.drawText(this.businessName || 'FWDS HVAC', { x: 40, y, size: 14, font: fontBold });
       y -= 18;
       page.drawText(`Date Range: ${this.landCostingDateFrom} to ${this.landCostingDateTo}`, {
         x: 40,
