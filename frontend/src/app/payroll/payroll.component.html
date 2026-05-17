@@ -1,0 +1,1519 @@
+<div>
+  <app-page-breadcrumb pageTitle="Payroll" />
+
+  <div class="rounded-xl border border-gray-200 bg-white p-5 dark:border-gray-700 dark:bg-white/2">
+    <div class="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+      <div>
+        <h3 class="text-2xl font-semibold text-gray-800 dark:text-white/90">Payroll Reports</h3>
+        <p class="mt-1 text-sm text-gray-500 dark:text-gray-400">
+          Manage employee payroll records, generate payroll cutoffs, and view payout summaries.
+        </p>
+      </div>
+
+      <div class="flex flex-wrap items-center gap-2">
+        <!-- Add Employee Button -->
+        @if (canCreateEmployee()) {
+          <button
+            type="button"
+            (click)="openAddEmployeeForm()"
+            class="inline-flex items-center gap-1.5 rounded-lg bg-brand-500 px-4 py-2 text-sm font-medium text-white transition hover:bg-brand-600 dark:bg-brand-600 dark:hover:bg-brand-700"
+          >
+            <svg xmlns="http://www.w3.org/2000/svg" class="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
+              <path stroke-linecap="round" stroke-linejoin="round" d="M12 4v16m8-8H4" />
+            </svg>
+            Add Employee
+          </button>
+        }
+
+        <!-- Create Payroll Button -->
+        @if (canCreatePayroll()) {
+          <button
+            type="button"
+            (click)="openCreatePayrollForm()"
+            class="inline-flex items-center gap-1.5 rounded-lg bg-success-500 px-4 py-2 text-sm font-medium text-white transition hover:bg-success-600 dark:bg-success-600 dark:hover:bg-success-700"
+          >
+            <svg xmlns="http://www.w3.org/2000/svg" class="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
+              <path stroke-linecap="round" stroke-linejoin="round" d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
+            </svg>
+            Create Payroll
+          </button>
+        }
+
+        <!-- Position Filter -->
+        <select
+          [(ngModel)]="positionFilter"
+          (ngModelChange)="onPositionFilterChange()"
+          class="h-10 rounded-lg border border-gray-300 bg-transparent px-3 text-sm text-gray-800 focus:border-brand-300 focus:outline-none dark:border-gray-700 dark:text-white/90"
+        >
+          <option value="">All Positions</option>
+          @for (position of positions; track position) {
+            <option [value]="position">{{ position }}</option>
+          }
+        </select>
+
+        <!-- Project Filter -->
+        <select
+          [(ngModel)]="projectFilter"
+          (ngModelChange)="onProjectFilterChange()"
+          class="h-10 rounded-lg border border-gray-300 bg-transparent px-3 text-sm text-gray-800 focus:border-brand-300 focus:outline-none dark:border-gray-700 dark:text-white/90"
+        >
+          <option value="">All Projects</option>
+          @for (project of projects; track project.id) {
+            <option [value]="project.id">{{ project.name }}</option>
+          }
+        </select>
+      </div>
+    </div>
+  </div>
+
+  @if (errorMessage) {
+    <div class="mt-4 rounded-lg border border-error-300 bg-error-50 px-4 py-3 text-sm text-error-600 dark:border-error-500/30 dark:bg-error-500/10 dark:text-error-400">
+      {{ errorMessage }}
+    </div>
+  }
+
+  <div class="mt-5 grid grid-cols-1 gap-4 xl:grid-cols-[340px_minmax(0,1fr)]">
+    <!-- Left Sidebar: Employee List -->
+    <section class="rounded-xl border border-gray-200 p-4 dark:border-gray-800">
+      <h4 class="mb-3 text-sm font-semibold text-gray-700 dark:text-gray-200">Employees</h4>
+
+      <!-- Smart Search -->
+      <div class="mb-3">
+        <input
+          type="text"
+          [(ngModel)]="searchTerm"
+          placeholder="Search employees..."
+          class="h-9 w-full rounded-lg border border-gray-300 bg-transparent px-3 text-sm text-gray-800 placeholder-gray-400 focus:border-brand-300 focus:outline-none dark:border-gray-700 dark:text-white/90 dark:placeholder-gray-500"
+        />
+      </div>
+
+      <div class="space-y-2">
+        @if (isLoading) {
+          <p class="rounded-lg border border-dashed border-gray-300 px-3 py-4 text-center text-sm text-gray-500 dark:border-gray-700 dark:text-gray-400">
+            Loading employees...
+          </p>
+        } @else {
+          @for (employee of filteredEmployees; track employee.id) {
+            <button
+              type="button"
+              (click)="selectEmployee(employee)"
+              class="block w-full rounded-lg border px-3 py-2 text-left transition"
+              [class.border-brand-300]="isSelectedEmployee(employee)"
+              [class.bg-brand-50]="isSelectedEmployee(employee)"
+              [class.text-brand-800]="isSelectedEmployee(employee)"
+              [class.border-gray-200]="!isSelectedEmployee(employee)"
+              [class.text-gray-700]="!isSelectedEmployee(employee)"
+              [class.hover:bg-gray-50]="!isSelectedEmployee(employee)"
+              [class.dark:border-gray-700]="!isSelectedEmployee(employee)"
+              [class.dark:text-gray-300]="!isSelectedEmployee(employee)"
+              [class.dark:hover:bg-gray-800]="!isSelectedEmployee(employee)"
+            >
+              <p class="text-sm font-medium">{{ employee.fullName }}</p>
+              <p class="mt-0.5 text-xs text-gray-500 dark:text-gray-400">{{ employee.position }}</p>
+            </button>
+          } @empty {
+            <p class="rounded-lg border border-dashed border-gray-300 px-3 py-4 text-center text-sm text-gray-500 dark:border-gray-700 dark:text-gray-400">
+              No employees found.
+            </p>
+          }
+        }
+      </div>
+    </section>
+
+    <!-- Right Content Area -->
+    <section class="rounded-xl border border-gray-200 p-5 dark:border-gray-800">
+      @if (selectedEmployee) {
+        <!-- Employee Heading with Settings Button -->
+        <div class="flex items-center justify-between">
+          <div>
+            <h4 class="text-lg font-semibold text-gray-800 dark:text-white/90">{{ selectedEmployee.fullName }}</h4>
+            <p class="mt-1 text-sm text-gray-500 dark:text-gray-400">{{ selectedEmployee.position }}</p>
+          </div>
+          <div class="flex items-center gap-2">
+            @if (canCreatePayroll()) {
+              <button
+                type="button"
+                (click)="openPayrollCreator()"
+                class="inline-flex items-center gap-1.5 rounded-lg bg-success-500 px-3 py-2 text-sm font-medium text-white transition hover:bg-success-600 dark:bg-success-600 dark:hover:bg-success-700"
+              >
+                <svg xmlns="http://www.w3.org/2000/svg" class="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
+                  <path stroke-linecap="round" stroke-linejoin="round" d="M12 4v16m8-8H4" />
+                </svg>
+                Create Payroll
+              </button>
+            }
+            @if (canEditEmployee()) {
+              <button
+                type="button"
+                (click)="openEditEmployeeForm()"
+                class="inline-flex items-center gap-1.5 rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm font-medium text-gray-700 transition hover:bg-gray-50 dark:border-gray-600 dark:bg-gray-800 dark:text-gray-300 dark:hover:bg-gray-700"
+              >
+                <svg xmlns="http://www.w3.org/2000/svg" class="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
+                  <path stroke-linecap="round" stroke-linejoin="round" d="M10.325 4.317c.426-1.756 2.924-1.756 3.35 0a1.724 1.724 0 002.573 1.066c1.543-.94 3.31.826 2.37 2.37a1.724 1.724 0 001.066 2.573c1.756.426 1.756 2.924 0 3.35a1.724 1.724 0 00-1.066 2.573c.94 1.543-.826 3.31-2.37 2.37a1.724 1.724 0 00-2.573 1.066c-.426 1.756-2.924 1.756-3.35 0a1.724 1.724 0 00-2.573-1.066c-1.543.94-3.31-.826-2.37-2.37a1.724 1.724 0 00-1.066-2.573c-1.756-.426-1.756-2.924 0-3.35a1.724 1.724 0 001.066-2.573c-.94-1.543.826-3.31 2.37-2.37.996.608 2.296.07 2.572-1.065z" />
+                  <path stroke-linecap="round" stroke-linejoin="round" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" />
+                </svg>
+              </button>
+            }
+          </div>
+        </div>
+
+        <!-- Summary Cards -->
+        <div class="mt-5 grid grid-cols-1 gap-4 sm:grid-cols-3">
+          @if (isSummaryLoading) {
+            <div class="col-span-3 rounded-lg border border-dashed border-gray-300 px-4 py-6 text-center text-sm text-gray-500 dark:border-gray-700 dark:text-gray-400">
+              Loading summary...
+            </div>
+          } @else {
+            <!-- Generated Payroll Count -->
+            <div class="rounded-lg border border-gray-200 p-4 dark:border-gray-700">
+              <p class="text-xs font-medium uppercase tracking-wide text-gray-500 dark:text-gray-400">Generated Payroll Count</p>
+              <p class="mt-2 text-2xl font-semibold text-gray-800 dark:text-white/90">{{ employeeSummary?.generatedPayrollCount ?? 0 }}</p>
+            </div>
+
+            <!-- Current Payout -->
+            <div class="rounded-lg border border-gray-200 p-4 dark:border-gray-700">
+              <p class="text-xs font-medium uppercase tracking-wide text-gray-500 dark:text-gray-400">Current Payout</p>
+              <p class="mt-2 text-2xl font-semibold text-gray-800 dark:text-white/90">{{ formatCurrency(employeeSummary?.currentPayout ?? 0) }}</p>
+            </div>
+
+            <!-- Total Payout -->
+            <div class="rounded-lg border border-gray-200 p-4 dark:border-gray-700">
+              <p class="text-xs font-medium uppercase tracking-wide text-gray-500 dark:text-gray-400">Total Payout</p>
+              <p class="mt-2 text-2xl font-semibold text-gray-800 dark:text-white/90">{{ formatCurrency(employeeSummary?.totalPayout ?? 0) }}</p>
+            </div>
+          }
+        </div>
+
+        <!-- Cutoff List -->
+        <div class="mt-5">
+          <h5 class="mb-3 text-sm font-semibold text-gray-700 dark:text-gray-200">Payroll Cutoffs</h5>
+          <div class="space-y-2">
+            @for (cutoff of employeeCutoffs; track cutoff.id) {
+              <div class="flex items-center justify-between rounded-lg border border-gray-200 px-4 py-3 dark:border-gray-700">
+                <div>
+                  <p class="text-sm font-medium text-gray-800 dark:text-white/90">{{ formatDateRange(cutoff.cutoffStart, cutoff.cutoffEnd) }}</p>
+                  <p class="mt-0.5 text-xs text-gray-500 dark:text-gray-400">{{ formatCurrency(cutoff.payoutAmount) }}</p>
+                </div>
+                <button
+                  type="button"
+                  (click)="viewCutoffDetail(cutoff.id, cutoff.recordId)"
+                  class="rounded-lg border border-brand-300 px-3 py-1.5 text-xs font-medium text-brand-600 transition hover:bg-brand-50 dark:border-brand-500/30 dark:text-brand-400 dark:hover:bg-brand-500/10"
+                >
+                  View
+                </button>
+              </div>
+            } @empty {
+              <p class="rounded-lg border border-dashed border-gray-300 px-4 py-4 text-center text-sm text-gray-500 dark:border-gray-700 dark:text-gray-400">
+                No payroll cutoffs found for this employee.
+              </p>
+            }
+          </div>
+        </div>
+      } @else {
+        <div class="flex h-full items-center justify-center">
+          <p class="text-sm text-gray-500 dark:text-gray-400">Select an employee from the list to view their payroll details.</p>
+        </div>
+      }
+    </section>
+  </div>
+
+  <!-- Add Employee Drawer -->
+  @if (showAddEmployeeForm) {
+    <div class="fixed inset-0 z-[100010]">
+      <!-- Backdrop -->
+      <div class="absolute inset-0 bg-black/50" (click)="closeAddEmployeeForm()"></div>
+      <!-- Drawer Panel -->
+      <div class="absolute inset-y-0 right-0 w-full sm:max-w-[600px] flex flex-col bg-white dark:bg-gray-900 shadow-xl transform transition-transform duration-300 ease-in-out translate-x-0">
+        <!-- Fixed Header -->
+        <div class="flex items-center justify-between border-b border-gray-200 dark:border-gray-700 px-6 py-4">
+          <h3 class="text-lg font-semibold text-gray-800 dark:text-white/90">Add Employee</h3>
+          <button
+            type="button"
+            (click)="closeAddEmployeeForm()"
+            class="rounded-lg p-1 text-gray-400 transition hover:bg-gray-100 hover:text-gray-600 dark:hover:bg-gray-800 dark:hover:text-gray-300"
+          >
+            <svg xmlns="http://www.w3.org/2000/svg" class="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
+              <path stroke-linecap="round" stroke-linejoin="round" d="M6 18L18 6M6 6l12 12" />
+            </svg>
+          </button>
+        </div>
+        <!-- Scrollable Body -->
+        <div class="flex-1 overflow-y-auto px-6 py-5">
+          @if (addEmployeeApiError) {
+            <div class="mb-4 rounded-lg border border-error-300 bg-error-50 px-3 py-2 text-sm text-error-600 dark:border-error-500/30 dark:bg-error-500/10 dark:text-error-400">
+              {{ addEmployeeApiError }}
+            </div>
+          }
+
+          <form class="grid grid-cols-1 sm:grid-cols-6 gap-4">
+          <!-- Row 1: Full Name + Department -->
+          <!-- Full Name -->
+          <div class="sm:col-span-3">
+            <label for="addEmpFullName" class="mb-1 block text-sm font-medium text-gray-700 dark:text-gray-300">Full Name <span class="text-error-500">*</span></label>
+            <input
+              id="addEmpFullName"
+              type="text"
+              [(ngModel)]="addEmployeeFullName"
+              name="fullName"
+              placeholder="Enter full name"
+              class="h-10 w-full rounded-lg border px-3 text-sm text-gray-800 placeholder-gray-400 focus:outline-none dark:text-white/90 dark:placeholder-gray-500"
+              [class.border-error-300]="addEmployeeErrors.fullName"
+              [class.border-gray-300]="!addEmployeeErrors.fullName"
+              [class.focus:border-error-500]="addEmployeeErrors.fullName"
+              [class.focus:border-brand-300]="!addEmployeeErrors.fullName"
+              [class.dark:border-error-500]="addEmployeeErrors.fullName"
+              [class.dark:border-gray-700]="!addEmployeeErrors.fullName"
+            />
+            @if (addEmployeeErrors.fullName) {
+              <p class="mt-1 text-xs text-error-500">{{ addEmployeeErrors.fullName }}</p>
+            }
+          </div>
+
+          <!-- Department -->
+          <div class="sm:col-span-3">
+            <label for="addEmpDepartment" class="mb-1 block text-sm font-medium text-gray-700 dark:text-gray-300">Department <span class="text-error-500">*</span></label>
+            <select
+              id="addEmpDepartment"
+              [(ngModel)]="addEmployeeDepartment"
+              name="department"
+              class="h-10 w-full rounded-lg border bg-transparent px-3 text-sm text-gray-800 focus:outline-none dark:text-white/90"
+              [class.border-error-300]="addEmployeeErrors.department"
+              [class.border-gray-300]="!addEmployeeErrors.department"
+              [class.focus:border-error-500]="addEmployeeErrors.department"
+              [class.focus:border-brand-300]="!addEmployeeErrors.department"
+              [class.dark:border-error-500]="addEmployeeErrors.department"
+              [class.dark:border-gray-700]="!addEmployeeErrors.department"
+            >
+              <option value="">Select department</option>
+              <option value="Driver">Driver</option>
+              <option value="Installer">Installer</option>
+              <option value="Helper">Helper</option>
+              <option value="Office">Office</option>
+              <option value="Project Assigned">Project Assigned</option>
+            </select>
+            @if (addEmployeeErrors.department) {
+              <p class="mt-1 text-xs text-error-500">{{ addEmployeeErrors.department }}</p>
+            }
+          </div>
+
+          <!-- Row 2: Position + Base Salary -->
+          <!-- Position -->
+          <div class="sm:col-span-3">
+            <label for="addEmpPosition" class="mb-1 block text-sm font-medium text-gray-700 dark:text-gray-300">Position <span class="text-error-500">*</span></label>
+            <input
+              id="addEmpPosition"
+              type="text"
+              [(ngModel)]="addEmployeePosition"
+              name="position"
+              placeholder="Enter position"
+              class="h-10 w-full rounded-lg border px-3 text-sm text-gray-800 placeholder-gray-400 focus:outline-none dark:text-white/90 dark:placeholder-gray-500"
+              [class.border-error-300]="addEmployeeErrors.position"
+              [class.border-gray-300]="!addEmployeeErrors.position"
+              [class.focus:border-error-500]="addEmployeeErrors.position"
+              [class.focus:border-brand-300]="!addEmployeeErrors.position"
+              [class.dark:border-error-500]="addEmployeeErrors.position"
+              [class.dark:border-gray-700]="!addEmployeeErrors.position"
+            />
+            @if (addEmployeeErrors.position) {
+              <p class="mt-1 text-xs text-error-500">{{ addEmployeeErrors.position }}</p>
+            }
+          </div>
+
+          <!-- Base Salary -->
+          <div class="sm:col-span-3">
+            <label for="addEmpSalary" class="mb-1 block text-sm font-medium text-gray-700 dark:text-gray-300">Base Salary <span class="text-error-500">*</span></label>
+            <input
+              id="addEmpSalary"
+              type="number"
+              [(ngModel)]="addEmployeeBaseSalary"
+              name="baseSalary"
+              placeholder="Enter base salary"
+              min="0.01"
+              step="0.01"
+              class="h-10 w-full rounded-lg border px-3 text-sm text-gray-800 placeholder-gray-400 focus:outline-none dark:text-white/90 dark:placeholder-gray-500"
+              [class.border-error-300]="addEmployeeErrors.baseSalary"
+              [class.border-gray-300]="!addEmployeeErrors.baseSalary"
+              [class.focus:border-error-500]="addEmployeeErrors.baseSalary"
+              [class.focus:border-brand-300]="!addEmployeeErrors.baseSalary"
+              [class.dark:border-error-500]="addEmployeeErrors.baseSalary"
+              [class.dark:border-gray-700]="!addEmployeeErrors.baseSalary"
+            />
+            @if (addEmployeeErrors.baseSalary) {
+              <p class="mt-1 text-xs text-error-500">{{ addEmployeeErrors.baseSalary }}</p>
+            }
+          </div>
+
+          <!-- Row 3: Project (left-aligned) -->
+          <!-- Project -->
+          <div class="sm:col-span-6">
+            <label for="addEmpProject" class="mb-1 block text-sm font-medium text-gray-700 dark:text-gray-300">Project</label>
+            <select
+              id="addEmpProject"
+              [(ngModel)]="addEmployeeProjectId"
+              name="projectId"
+              class="h-10 w-full rounded-lg border border-gray-300 bg-transparent px-3 text-sm text-gray-800 focus:border-brand-300 focus:outline-none dark:border-gray-700 dark:text-white/90"
+            >
+              <option [ngValue]="null">No project assigned</option>
+              @for (project of projects; track project.id) {
+                <option [ngValue]="project.id">{{ project.name }}</option>
+              }
+            </select>
+          </div>
+
+          <!-- Row 4: Pag-Ibig + Philhealth + SSS -->
+          <!-- Pag-Ibig -->
+          <div class="sm:col-span-2">
+            <label for="addEmpPagIbig" class="mb-1 block text-sm font-medium text-gray-700 dark:text-gray-300">Pag-Ibig</label>
+            <input
+              id="addEmpPagIbig"
+              type="number"
+              [(ngModel)]="addEmployeePagIbig"
+              name="pagIbig"
+              placeholder="0"
+              min="0"
+              step="0.01"
+              class="h-10 w-full rounded-lg border px-3 text-sm text-gray-800 placeholder-gray-400 focus:outline-none dark:text-white/90 dark:placeholder-gray-500"
+              [class.border-error-300]="addEmployeeErrors.pagIbig"
+              [class.border-gray-300]="!addEmployeeErrors.pagIbig"
+              [class.focus:border-error-500]="addEmployeeErrors.pagIbig"
+              [class.focus:border-brand-300]="!addEmployeeErrors.pagIbig"
+              [class.dark:border-error-500]="addEmployeeErrors.pagIbig"
+              [class.dark:border-gray-700]="!addEmployeeErrors.pagIbig"
+            />
+            @if (addEmployeeErrors.pagIbig) {
+              <p class="mt-1 text-xs text-error-500">{{ addEmployeeErrors.pagIbig }}</p>
+            }
+          </div>
+
+          <!-- Philhealth -->
+          <div class="sm:col-span-2">
+            <label for="addEmpPhilhealth" class="mb-1 block text-sm font-medium text-gray-700 dark:text-gray-300">Philhealth</label>
+            <input
+              id="addEmpPhilhealth"
+              type="number"
+              [(ngModel)]="addEmployeePhilhealth"
+              name="philhealth"
+              placeholder="0"
+              min="0"
+              step="0.01"
+              class="h-10 w-full rounded-lg border px-3 text-sm text-gray-800 placeholder-gray-400 focus:outline-none dark:text-white/90 dark:placeholder-gray-500"
+              [class.border-error-300]="addEmployeeErrors.philhealth"
+              [class.border-gray-300]="!addEmployeeErrors.philhealth"
+              [class.focus:border-error-500]="addEmployeeErrors.philhealth"
+              [class.focus:border-brand-300]="!addEmployeeErrors.philhealth"
+              [class.dark:border-error-500]="addEmployeeErrors.philhealth"
+              [class.dark:border-gray-700]="!addEmployeeErrors.philhealth"
+            />
+            @if (addEmployeeErrors.philhealth) {
+              <p class="mt-1 text-xs text-error-500">{{ addEmployeeErrors.philhealth }}</p>
+            }
+          </div>
+
+          <!-- SSS -->
+          <div class="sm:col-span-2">
+            <label for="addEmpSss" class="mb-1 block text-sm font-medium text-gray-700 dark:text-gray-300">SSS</label>
+            <input
+              id="addEmpSss"
+              type="number"
+              [(ngModel)]="addEmployeeSss"
+              name="sss"
+              placeholder="0"
+              min="0"
+              step="0.01"
+              class="h-10 w-full rounded-lg border px-3 text-sm text-gray-800 placeholder-gray-400 focus:outline-none dark:text-white/90 dark:placeholder-gray-500"
+              [class.border-error-300]="addEmployeeErrors.sss"
+              [class.border-gray-300]="!addEmployeeErrors.sss"
+              [class.focus:border-error-500]="addEmployeeErrors.sss"
+              [class.focus:border-brand-300]="!addEmployeeErrors.sss"
+              [class.dark:border-error-500]="addEmployeeErrors.sss"
+              [class.dark:border-gray-700]="!addEmployeeErrors.sss"
+            />
+            @if (addEmployeeErrors.sss) {
+              <p class="mt-1 text-xs text-error-500">{{ addEmployeeErrors.sss }}</p>
+            }
+          </div>
+
+          <!-- Row 5: Contact Number (full width) -->
+          <!-- Contact Number -->
+          <div class="sm:col-span-6">
+            <label for="addEmpContactNumber" class="mb-1 block text-sm font-medium text-gray-700 dark:text-gray-300">Contact Number</label>
+            <input
+              id="addEmpContactNumber"
+              type="text"
+              [(ngModel)]="addEmployeeContactNumber"
+              name="contactNumber"
+              placeholder="Enter contact number"
+              class="h-10 w-full rounded-lg border border-gray-300 px-3 text-sm text-gray-800 placeholder-gray-400 focus:border-brand-300 focus:outline-none dark:border-gray-700 dark:text-white/90 dark:placeholder-gray-500"
+            />
+          </div>
+
+          <!-- Row 6: Address (full width) -->
+          <!-- Address -->
+          <div class="sm:col-span-6">
+            <label for="addEmpAddress" class="mb-1 block text-sm font-medium text-gray-700 dark:text-gray-300">Address</label>
+            <textarea
+              id="addEmpAddress"
+              [(ngModel)]="addEmployeeAddress"
+              name="address"
+              placeholder="Enter address"
+              rows="3"
+              class="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm text-gray-800 placeholder-gray-400 focus:border-brand-300 focus:outline-none dark:border-gray-700 dark:text-white/90 dark:placeholder-gray-500"
+            ></textarea>
+          </div>
+
+          </form>
+        </div>
+        <!-- Fixed Footer -->
+        <div class="flex items-center justify-end gap-3 border-t border-gray-200 dark:border-gray-700 px-6 py-4">
+          <button
+            type="button"
+            (click)="closeAddEmployeeForm()"
+            class="rounded-lg border border-gray-300 px-4 py-2 text-sm font-medium text-gray-700 transition hover:bg-gray-50 dark:border-gray-600 dark:text-gray-300 dark:hover:bg-gray-800"
+          >
+            Cancel
+          </button>
+          <button
+            type="button"
+            (click)="submitAddEmployee()"
+            [disabled]="isAddEmployeeSubmitting"
+            class="rounded-lg bg-brand-500 px-4 py-2 text-sm font-medium text-white transition hover:bg-brand-600 disabled:cursor-not-allowed disabled:opacity-50 dark:bg-brand-600 dark:hover:bg-brand-700"
+          >
+            {{ isAddEmployeeSubmitting ? 'Saving...' : 'Save Employee' }}
+          </button>
+        </div>
+      </div>
+    </div>
+  }
+
+  <!-- Edit Employee Drawer -->
+  @if (showEditEmployeeForm) {
+    <div class="fixed inset-0 z-[100010]">
+      <!-- Backdrop -->
+      <div class="absolute inset-0 bg-black/50" (click)="closeEditEmployeeForm()"></div>
+      <!-- Drawer Panel -->
+      <div class="absolute inset-y-0 right-0 w-full sm:max-w-[600px] flex flex-col bg-white dark:bg-gray-900 shadow-xl transform transition-transform duration-300 ease-in-out translate-x-0">
+        <!-- Fixed Header -->
+        <div class="flex items-center justify-between border-b border-gray-200 dark:border-gray-700 px-6 py-4">
+          <h3 class="text-lg font-semibold text-gray-800 dark:text-white/90">Edit Employee</h3>
+          <button type="button" (click)="closeEditEmployeeForm()" class="rounded-lg p-1 text-gray-400 transition hover:bg-gray-100 hover:text-gray-600 dark:hover:bg-gray-800 dark:hover:text-gray-300">
+            <svg xmlns="http://www.w3.org/2000/svg" class="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
+              <path stroke-linecap="round" stroke-linejoin="round" d="M6 18L18 6M6 6l12 12" />
+            </svg>
+          </button>
+        </div>
+        <!-- Scrollable Body -->
+        <div class="flex-1 overflow-y-auto px-6 py-5">
+          @if (editErrors.general) {
+            <div class="mb-4 rounded-lg border border-error-300 bg-error-50 px-3 py-2 text-sm text-error-600 dark:border-error-500/30 dark:bg-error-500/10 dark:text-error-400">
+              {{ editErrors.general }}
+            </div>
+          }
+          <form class="grid grid-cols-1 sm:grid-cols-6 gap-4">
+          <!-- Row 1: Full Name + Department -->
+          <!-- Full Name -->
+          <div class="sm:col-span-3">
+            <label for="editEmpFullName" class="mb-1 block text-sm font-medium text-gray-700 dark:text-gray-300">Full Name <span class="text-error-500">*</span></label>
+            <input
+              id="editEmpFullName"
+              type="text"
+              [(ngModel)]="editFullName"
+              name="editFullName"
+              placeholder="Enter full name"
+              class="h-10 w-full rounded-lg border px-3 text-sm text-gray-800 placeholder-gray-400 focus:outline-none dark:text-white/90 dark:placeholder-gray-500"
+              [class.border-error-300]="editErrors.fullName"
+              [class.border-gray-300]="!editErrors.fullName"
+              [class.focus:border-error-500]="editErrors.fullName"
+              [class.focus:border-brand-300]="!editErrors.fullName"
+              [class.dark:border-error-500]="editErrors.fullName"
+              [class.dark:border-gray-700]="!editErrors.fullName"
+            />
+            @if (editErrors.fullName) {
+              <p class="mt-1 text-xs text-error-500">{{ editErrors.fullName }}</p>
+            }
+          </div>
+
+          <!-- Department -->
+          <div class="sm:col-span-3">
+            <label for="editEmpDepartment" class="mb-1 block text-sm font-medium text-gray-700 dark:text-gray-300">Department <span class="text-error-500">*</span></label>
+            <select
+              id="editEmpDepartment"
+              [(ngModel)]="editEmployeeDepartment"
+              name="editDepartment"
+              class="h-10 w-full rounded-lg border bg-transparent px-3 text-sm text-gray-800 focus:outline-none dark:text-white/90"
+              [class.border-error-300]="editErrors.department"
+              [class.border-gray-300]="!editErrors.department"
+              [class.focus:border-error-500]="editErrors.department"
+              [class.focus:border-brand-300]="!editErrors.department"
+              [class.dark:border-error-500]="editErrors.department"
+              [class.dark:border-gray-700]="!editErrors.department"
+            >
+              <option value="">Select department</option>
+              <option value="Driver">Driver</option>
+              <option value="Installer">Installer</option>
+              <option value="Helper">Helper</option>
+              <option value="Office">Office</option>
+              <option value="Project Assigned">Project Assigned</option>
+            </select>
+            @if (editErrors.department) {
+              <p class="mt-1 text-xs text-error-500">{{ editErrors.department }}</p>
+            }
+          </div>
+
+          <!-- Row 2: Position + Base Salary -->
+          <!-- Position -->
+          <div class="sm:col-span-3">
+            <label for="editEmpPosition" class="mb-1 block text-sm font-medium text-gray-700 dark:text-gray-300">Position <span class="text-error-500">*</span></label>
+            <input
+              id="editEmpPosition"
+              type="text"
+              [(ngModel)]="editPosition"
+              name="editPosition"
+              placeholder="Enter position"
+              class="h-10 w-full rounded-lg border px-3 text-sm text-gray-800 placeholder-gray-400 focus:outline-none dark:text-white/90 dark:placeholder-gray-500"
+              [class.border-error-300]="editErrors.position"
+              [class.border-gray-300]="!editErrors.position"
+              [class.focus:border-error-500]="editErrors.position"
+              [class.focus:border-brand-300]="!editErrors.position"
+              [class.dark:border-error-500]="editErrors.position"
+              [class.dark:border-gray-700]="!editErrors.position"
+            />
+            @if (editErrors.position) {
+              <p class="mt-1 text-xs text-error-500">{{ editErrors.position }}</p>
+            }
+          </div>
+
+          <!-- Base Salary -->
+          <div class="sm:col-span-3">
+            <label for="editEmpSalary" class="mb-1 block text-sm font-medium text-gray-700 dark:text-gray-300">Base Salary <span class="text-error-500">*</span></label>
+            <input
+              id="editEmpSalary"
+              type="number"
+              [(ngModel)]="editBaseSalary"
+              name="editBaseSalary"
+              placeholder="Enter base salary"
+              min="0.01"
+              step="0.01"
+              class="h-10 w-full rounded-lg border px-3 text-sm text-gray-800 placeholder-gray-400 focus:outline-none dark:text-white/90 dark:placeholder-gray-500"
+              [class.border-error-300]="editErrors.baseSalary"
+              [class.border-gray-300]="!editErrors.baseSalary"
+              [class.focus:border-error-500]="editErrors.baseSalary"
+              [class.focus:border-brand-300]="!editErrors.baseSalary"
+              [class.dark:border-error-500]="editErrors.baseSalary"
+              [class.dark:border-gray-700]="!editErrors.baseSalary"
+            />
+            @if (editErrors.baseSalary) {
+              <p class="mt-1 text-xs text-error-500">{{ editErrors.baseSalary }}</p>
+            }
+          </div>
+
+          <!-- Row 3: Project (left-aligned) -->
+          <!-- Project -->
+          <div class="sm:col-span-3">
+            <label for="editEmpProject" class="mb-1 block text-sm font-medium text-gray-700 dark:text-gray-300">Project</label>
+            <select
+              id="editEmpProject"
+              [(ngModel)]="editProjectId"
+              name="editProjectId"
+              class="h-10 w-full rounded-lg border border-gray-300 bg-transparent px-3 text-sm text-gray-800 focus:border-brand-300 focus:outline-none dark:border-gray-700 dark:text-white/90"
+            >
+              <option [ngValue]="null">No project assigned</option>
+              @for (project of projects; track project.id) {
+                <option [ngValue]="project.id">{{ project.name }}</option>
+              }
+            </select>
+          </div>
+
+          <!-- Row 4: Pag-Ibig + Philhealth + SSS -->
+          <!-- Pag-Ibig -->
+          <div class="sm:col-span-2">
+            <label for="editEmpPagIbig" class="mb-1 block text-sm font-medium text-gray-700 dark:text-gray-300">Pag-Ibig</label>
+            <input
+              id="editEmpPagIbig"
+              type="number"
+              [(ngModel)]="editEmployeePagIbig"
+              name="editPagIbig"
+              placeholder="0"
+              min="0"
+              step="0.01"
+              class="h-10 w-full rounded-lg border px-3 text-sm text-gray-800 placeholder-gray-400 focus:outline-none dark:text-white/90 dark:placeholder-gray-500"
+              [class.border-error-300]="editErrors.pagIbig"
+              [class.border-gray-300]="!editErrors.pagIbig"
+              [class.focus:border-error-500]="editErrors.pagIbig"
+              [class.focus:border-brand-300]="!editErrors.pagIbig"
+              [class.dark:border-error-500]="editErrors.pagIbig"
+              [class.dark:border-gray-700]="!editErrors.pagIbig"
+            />
+            @if (editErrors.pagIbig) {
+              <p class="mt-1 text-xs text-error-500">{{ editErrors.pagIbig }}</p>
+            }
+          </div>
+
+          <!-- Philhealth -->
+          <div class="sm:col-span-2">
+            <label for="editEmpPhilhealth" class="mb-1 block text-sm font-medium text-gray-700 dark:text-gray-300">Philhealth</label>
+            <input
+              id="editEmpPhilhealth"
+              type="number"
+              [(ngModel)]="editEmployeePhilhealth"
+              name="editPhilhealth"
+              placeholder="0"
+              min="0"
+              step="0.01"
+              class="h-10 w-full rounded-lg border px-3 text-sm text-gray-800 placeholder-gray-400 focus:outline-none dark:text-white/90 dark:placeholder-gray-500"
+              [class.border-error-300]="editErrors.philhealth"
+              [class.border-gray-300]="!editErrors.philhealth"
+              [class.focus:border-error-500]="editErrors.philhealth"
+              [class.focus:border-brand-300]="!editErrors.philhealth"
+              [class.dark:border-error-500]="editErrors.philhealth"
+              [class.dark:border-gray-700]="!editErrors.philhealth"
+            />
+            @if (editErrors.philhealth) {
+              <p class="mt-1 text-xs text-error-500">{{ editErrors.philhealth }}</p>
+            }
+          </div>
+
+          <!-- SSS -->
+          <div class="sm:col-span-2">
+            <label for="editEmpSss" class="mb-1 block text-sm font-medium text-gray-700 dark:text-gray-300">SSS</label>
+            <input
+              id="editEmpSss"
+              type="number"
+              [(ngModel)]="editEmployeeSss"
+              name="editSss"
+              placeholder="0"
+              min="0"
+              step="0.01"
+              class="h-10 w-full rounded-lg border px-3 text-sm text-gray-800 placeholder-gray-400 focus:outline-none dark:text-white/90 dark:placeholder-gray-500"
+              [class.border-error-300]="editErrors.sss"
+              [class.border-gray-300]="!editErrors.sss"
+              [class.focus:border-error-500]="editErrors.sss"
+              [class.focus:border-brand-300]="!editErrors.sss"
+              [class.dark:border-error-500]="editErrors.sss"
+              [class.dark:border-gray-700]="!editErrors.sss"
+            />
+            @if (editErrors.sss) {
+              <p class="mt-1 text-xs text-error-500">{{ editErrors.sss }}</p>
+            }
+          </div>
+
+          <!-- Row 5: Contact Number (full width) -->
+          <!-- Contact Number -->
+          <div class="sm:col-span-6">
+            <label for="editEmpContactNumber" class="mb-1 block text-sm font-medium text-gray-700 dark:text-gray-300">Contact Number</label>
+            <input
+              id="editEmpContactNumber"
+              type="text"
+              [(ngModel)]="editEmployeeContactNumber"
+              name="editContactNumber"
+              placeholder="Enter contact number"
+              class="h-10 w-full rounded-lg border border-gray-300 px-3 text-sm text-gray-800 placeholder-gray-400 focus:border-brand-300 focus:outline-none dark:border-gray-700 dark:text-white/90 dark:placeholder-gray-500"
+            />
+          </div>
+
+          <!-- Row 6: Address (full width) -->
+          <!-- Address -->
+          <div class="sm:col-span-6">
+            <label for="editEmpAddress" class="mb-1 block text-sm font-medium text-gray-700 dark:text-gray-300">Address</label>
+            <textarea
+              id="editEmpAddress"
+              [(ngModel)]="editEmployeeAddress"
+              name="editAddress"
+              placeholder="Enter address"
+              rows="3"
+              class="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm text-gray-800 placeholder-gray-400 focus:border-brand-300 focus:outline-none dark:border-gray-700 dark:text-white/90 dark:placeholder-gray-500"
+            ></textarea>
+          </div>
+
+          </form>
+        </div>
+        <!-- Fixed Footer -->
+        <div class="flex items-center justify-end gap-3 border-t border-gray-200 dark:border-gray-700 px-6 py-4">
+          <button type="button" (click)="closeEditEmployeeForm()" class="rounded-lg border border-gray-300 px-4 py-2 text-sm font-medium text-gray-700 transition hover:bg-gray-50 dark:border-gray-600 dark:text-gray-300 dark:hover:bg-gray-800">
+            Cancel
+          </button>
+          <button type="button" (click)="submitEditEmployee()" [disabled]="isEditSubmitting" class="rounded-lg bg-brand-500 px-4 py-2 text-sm font-medium text-white transition hover:bg-brand-600 disabled:cursor-not-allowed disabled:opacity-50 dark:bg-brand-600 dark:hover:bg-brand-700">
+            {{ isEditSubmitting ? 'Saving...' : 'Save Changes' }}
+          </button>
+        </div>
+      </div>
+    </div>
+  }
+
+  <!-- Create Payroll Modal -->
+  @if (showCreatePayrollForm) {
+    <div class="fixed inset-0 z-50 flex items-center justify-center bg-black/50" (click)="closeCreatePayrollForm()">
+      <div class="w-full max-w-lg rounded-xl bg-white p-6 shadow-xl dark:bg-gray-900" (click)="$event.stopPropagation()">>
+        <div class="flex items-center justify-between">
+          <h3 class="text-lg font-semibold text-gray-800 dark:text-white/90">Create Payroll</h3>
+          <button
+            type="button"
+            (click)="closeCreatePayrollForm()"
+            class="rounded-lg p-1 text-gray-400 transition hover:bg-gray-100 hover:text-gray-600 dark:hover:bg-gray-800 dark:hover:text-gray-300"
+          >
+            <svg xmlns="http://www.w3.org/2000/svg" class="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
+              <path stroke-linecap="round" stroke-linejoin="round" d="M6 18L18 6M6 6l12 12" />
+            </svg>
+          </button>
+        </div>
+
+        @if (createPayrollApiError) {
+          <div class="mt-4 rounded-lg border border-error-300 bg-error-50 px-3 py-2 text-sm text-error-600 dark:border-error-500/30 dark:bg-error-500/10 dark:text-error-400">
+            {{ createPayrollApiError }}
+          </div>
+        }
+
+        <div class="mt-4 space-y-4">
+          <!-- Cutoff Start Date -->
+          <div>
+            <label for="payrollCutoffStart" class="mb-1 block text-sm font-medium text-gray-700 dark:text-gray-300">Cutoff Start Date <span class="text-error-500">*</span></label>
+            <input
+              id="payrollCutoffStart"
+              type="date"
+              [(ngModel)]="createPayrollCutoffStart"
+              class="h-10 w-full rounded-lg border px-3 text-sm text-gray-800 focus:outline-none dark:text-white/90"
+              [class.border-error-300]="createPayrollErrors.cutoffStart"
+              [class.border-gray-300]="!createPayrollErrors.cutoffStart"
+              [class.focus:border-error-500]="createPayrollErrors.cutoffStart"
+              [class.focus:border-brand-300]="!createPayrollErrors.cutoffStart"
+              [class.dark:border-error-500]="createPayrollErrors.cutoffStart"
+              [class.dark:border-gray-700]="!createPayrollErrors.cutoffStart"
+            />
+            @if (createPayrollErrors.cutoffStart) {
+              <p class="mt-1 text-xs text-error-500">{{ createPayrollErrors.cutoffStart }}</p>
+            }
+          </div>
+
+          <!-- Cutoff End Date -->
+          <div>
+            <label for="payrollCutoffEnd" class="mb-1 block text-sm font-medium text-gray-700 dark:text-gray-300">Cutoff End Date <span class="text-error-500">*</span></label>
+            <input
+              id="payrollCutoffEnd"
+              type="date"
+              [(ngModel)]="createPayrollCutoffEnd"
+              class="h-10 w-full rounded-lg border px-3 text-sm text-gray-800 focus:outline-none dark:text-white/90"
+              [class.border-error-300]="createPayrollErrors.cutoffEnd"
+              [class.border-gray-300]="!createPayrollErrors.cutoffEnd"
+              [class.focus:border-error-500]="createPayrollErrors.cutoffEnd"
+              [class.focus:border-brand-300]="!createPayrollErrors.cutoffEnd"
+              [class.dark:border-error-500]="createPayrollErrors.cutoffEnd"
+              [class.dark:border-gray-700]="!createPayrollErrors.cutoffEnd"
+            />
+            @if (createPayrollErrors.cutoffEnd) {
+              <p class="mt-1 text-xs text-error-500">{{ createPayrollErrors.cutoffEnd }}</p>
+            }
+          </div>
+
+          <!-- Employee Selection -->
+          <div>
+            <label class="mb-1 block text-sm font-medium text-gray-700 dark:text-gray-300">Select Employees <span class="text-error-500">*</span></label>
+            <div
+              class="max-h-48 overflow-y-auto rounded-lg border p-2"
+              [class.border-error-300]="createPayrollErrors.employeeIds"
+              [class.border-gray-300]="!createPayrollErrors.employeeIds"
+              [class.dark:border-error-500]="createPayrollErrors.employeeIds"
+              [class.dark:border-gray-700]="!createPayrollErrors.employeeIds"
+            >
+              @for (employee of employees; track employee.id) {
+                <label class="flex cursor-pointer items-center gap-2 rounded-md px-2 py-1.5 transition hover:bg-gray-50 dark:hover:bg-gray-800">
+                  <input
+                    type="checkbox"
+                    [checked]="isPayrollEmployeeSelected(employee.id)"
+                    (change)="togglePayrollEmployee(employee.id)"
+                    class="h-4 w-4 rounded border-gray-300 text-brand-500 focus:ring-brand-300 dark:border-gray-600"
+                  />
+                  <span class="text-sm text-gray-700 dark:text-gray-300">{{ employee.fullName }}</span>
+                  <span class="text-xs text-gray-400 dark:text-gray-500">{{ employee.position }}</span>
+                </label>
+              } @empty {
+                <p class="px-2 py-3 text-center text-sm text-gray-500 dark:text-gray-400">No employees available.</p>
+              }
+            </div>
+            @if (createPayrollErrors.employeeIds) {
+              <p class="mt-1 text-xs text-error-500">{{ createPayrollErrors.employeeIds }}</p>
+            }
+          </div>
+
+          <!-- Actions -->
+          <div class="flex items-center justify-end gap-3 pt-2">
+            <button
+              type="button"
+              (click)="closeCreatePayrollForm()"
+              class="rounded-lg border border-gray-300 px-4 py-2 text-sm font-medium text-gray-700 transition hover:bg-gray-50 dark:border-gray-600 dark:text-gray-300 dark:hover:bg-gray-800"
+            >
+              Cancel
+            </button>
+            <button
+              type="button"
+              (click)="submitCreatePayroll()"
+              [disabled]="isCreatePayrollSubmitting"
+              class="rounded-lg bg-brand-500 px-4 py-2 text-sm font-medium text-white transition hover:bg-brand-600 disabled:cursor-not-allowed disabled:opacity-50 dark:bg-brand-600 dark:hover:bg-brand-700"
+            >
+              {{ isCreatePayrollSubmitting ? 'Generating...' : 'Generate Payroll' }}
+            </button>
+          </div>
+        </div>
+      </div>
+    </div>
+  }
+
+  <!-- View Cutoff Detail Modal -->
+  @if (showCutoffDetail) {
+    <div class="fixed inset-0 z-[100010] flex items-center justify-center bg-black/50" (click)="closeCutoffDetail()">
+      <div class="w-full max-w-4xl max-h-[90vh] overflow-y-auto rounded-xl bg-white p-6 shadow-xl dark:bg-gray-900" (click)="$event.stopPropagation()">
+        <div class="flex items-center justify-between">
+          <h3 class="text-lg font-semibold text-gray-800 dark:text-white/90">Payroll Record Detail</h3>
+          <div class="flex items-center gap-2">
+            <button (click)="generatePayslipPdf()" [disabled]="!payrollRecordDetail"
+              class="inline-flex items-center gap-2 rounded-lg bg-brand-500 px-4 py-2 text-sm font-medium text-white transition hover:bg-brand-600 disabled:opacity-50 disabled:cursor-not-allowed">
+              Generate PDF
+            </button>
+            <button
+              type="button"
+              (click)="closeCutoffDetail()"
+              class="rounded-lg p-1 text-gray-400 transition hover:bg-gray-100 hover:text-gray-600 dark:hover:bg-gray-800 dark:hover:text-gray-300"
+            >
+              <svg xmlns="http://www.w3.org/2000/svg" class="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
+                <path stroke-linecap="round" stroke-linejoin="round" d="M6 18L18 6M6 6l12 12" />
+              </svg>
+            </button>
+          </div>
+        </div>
+
+        @if (isCutoffDetailLoading || isPayrollRecordDetailLoading) {
+          <div class="mt-4 rounded-lg border border-dashed border-gray-300 px-4 py-6 text-center text-sm text-gray-500 dark:border-gray-700 dark:text-gray-400">
+            Loading payroll details...
+          </div>
+        } @else if (payrollRecordDetail) {
+          <!-- Header: Employee info, department, cutoff period, generation date -->
+          <div class="mt-4 grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-4">
+            <div class="rounded-lg border border-gray-200 bg-gray-50 px-4 py-3 dark:border-gray-700 dark:bg-gray-800">
+              <p class="text-xs font-medium uppercase tracking-wide text-gray-500 dark:text-gray-400">Employee</p>
+              <p class="mt-1 text-sm font-semibold text-gray-800 dark:text-white/90">{{ payrollRecordDetail.employeeName }}</p>
+            </div>
+            <div class="rounded-lg border border-gray-200 bg-gray-50 px-4 py-3 dark:border-gray-700 dark:bg-gray-800">
+              <p class="text-xs font-medium uppercase tracking-wide text-gray-500 dark:text-gray-400">Department</p>
+              <p class="mt-1 text-sm font-semibold text-gray-800 dark:text-white/90">{{ payrollRecordDetail.department }}</p>
+            </div>
+            <div class="rounded-lg border border-gray-200 bg-gray-50 px-4 py-3 dark:border-gray-700 dark:bg-gray-800">
+              <p class="text-xs font-medium uppercase tracking-wide text-gray-500 dark:text-gray-400">Cutoff Period</p>
+              <p class="mt-1 text-sm font-semibold text-gray-800 dark:text-white/90">{{ formatDateRange(payrollRecordDetail.cutoffStart, payrollRecordDetail.cutoffEnd) }}</p>
+            </div>
+            <div class="rounded-lg border border-gray-200 bg-gray-50 px-4 py-3 dark:border-gray-700 dark:bg-gray-800">
+              <p class="text-xs font-medium uppercase tracking-wide text-gray-500 dark:text-gray-400">Generated</p>
+              <p class="mt-1 text-sm font-semibold text-gray-800 dark:text-white/90">{{ payrollRecordDetail.generatedAt | date:'mediumDate' }}</p>
+            </div>
+          </div>
+
+          <!-- Daily Attendance Records Table -->
+          <div class="mt-5">
+            <h5 class="mb-3 text-sm font-semibold text-gray-700 dark:text-gray-200">Daily Attendance Records</h5>
+            <div class="overflow-x-auto rounded-lg border border-gray-200 dark:border-gray-700">
+              <table class="w-full text-left text-sm">
+                <thead class="bg-gray-50 dark:bg-gray-800">
+                  <tr>
+                    <th class="px-4 py-2.5 font-medium text-gray-700 dark:text-gray-300">Date</th>
+                    <th class="px-4 py-2.5 font-medium text-gray-700 dark:text-gray-300">Status</th>
+                    <th class="px-4 py-2.5 font-medium text-gray-700 dark:text-gray-300">Project</th>
+                    <th class="px-4 py-2.5 font-medium text-gray-700 dark:text-gray-300">Rate</th>
+                    <th class="px-4 py-2.5 font-medium text-gray-700 dark:text-gray-300 text-right">Commission</th>
+                    <th class="px-4 py-2.5 font-medium text-gray-700 dark:text-gray-300">Remarks</th>
+                  </tr>
+                </thead>
+                <tbody class="divide-y divide-gray-100 dark:divide-gray-700">
+                  @for (record of payrollRecordDetail.dailyRecords; track record.date) {
+                    <tr>
+                      <td class="px-4 py-2 text-gray-800 dark:text-white/90">{{ record.date | date:'mediumDate' }}</td>
+                      <td class="px-4 py-2">
+                        @if (record.isPresent) {
+                          <span class="inline-flex items-center rounded-full bg-success-50 px-2 py-0.5 text-xs font-medium text-success-700 dark:bg-success-500/10 dark:text-success-400">Present</span>
+                        } @else {
+                          <span class="inline-flex items-center rounded-full bg-error-50 px-2 py-0.5 text-xs font-medium text-error-700 dark:bg-error-500/10 dark:text-error-400">Absent</span>
+                        }
+                      </td>
+                      <td class="px-4 py-2 text-gray-600 dark:text-gray-400">{{ record.assignedProjectName || '—' }}</td>
+                      <td class="px-4 py-2 text-gray-600 dark:text-gray-400">{{ formatCurrency(record.adjustedRate) }}</td>
+                      <td class="px-4 py-2 text-right text-gray-800 dark:text-white/90">{{ formatCurrency(record.commission) }}</td>
+                      <td class="px-4 py-2 text-gray-600 dark:text-gray-400">{{ record.remarks || '—' }}</td>
+                    </tr>
+                  } @empty {
+                    <tr>
+                      <td colspan="5" class="px-4 py-4 text-center text-gray-500 dark:text-gray-400">No daily records found.</td>
+                    </tr>
+                  }
+                  <tr class="bg-gray-50 dark:bg-gray-800/50">
+                    <td colspan="3" class="px-4 py-2 font-medium text-gray-700 dark:text-gray-300">Subtotal</td>
+                    <td class="px-4 py-2 text-left font-semibold text-gray-800 dark:text-white/90">{{ formatCurrency(getSubTotalAdjustedRate()) }}</td>
+                    <td class="px-4 py-2 text-right font-semibold text-gray-800 dark:text-white/90">{{ formatCurrency(getSubTotalCommissions()) }}</td>
+                    <td class="px-4 py-2 text-center font-semibold text-gray-800 dark:text-white/90"></td>
+                  </tr>
+                </tbody>
+              </table>
+            </div>
+          </div>
+
+          <!-- Additional Compensation -->
+          <div class="mt-5">
+            <h5 class="mb-3 text-sm font-semibold text-gray-700 dark:text-gray-200">Additional Compensation</h5>
+            @if (payrollRecordDetail.additionalCompensation.length > 0) {
+              <div class="overflow-x-auto rounded-lg border border-gray-200 dark:border-gray-700">
+                <table class="w-full text-left text-sm">
+                  <thead class="bg-gray-50 dark:bg-gray-800">
+                    <tr>
+                      <th class="px-4 py-2.5 font-medium text-gray-700 dark:text-gray-300">Description</th>
+                      <th class="px-4 py-2.5 font-medium text-gray-700 dark:text-gray-300 text-right">Amount</th>
+                    </tr>
+                  </thead>
+                  <tbody class="divide-y divide-gray-100 dark:divide-gray-700">
+                    @for (entry of payrollRecordDetail.additionalCompensation; track $index) {
+                      <tr>
+                        <td class="px-4 py-2 text-gray-800 dark:text-white/90">{{ entry.description }}</td>
+                        <td class="px-4 py-2 text-right text-gray-800 dark:text-white/90">{{ formatCurrency(entry.amount) }}</td>
+                      </tr>
+                    }
+                    <tr class="bg-gray-50 dark:bg-gray-800/50">
+                      <td class="px-4 py-2 font-medium text-gray-700 dark:text-gray-300">Subtotal</td>
+                      <td class="px-4 py-2 text-right font-semibold text-gray-800 dark:text-white/90">{{ formatCurrency(getAdditionalCompensationTotal()) }}</td>
+                    </tr>
+                  </tbody>
+                </table>
+              </div>
+            } @else {
+              <p class="rounded-lg border border-dashed border-gray-300 px-4 py-3 text-center text-xs text-gray-500 dark:border-gray-700 dark:text-gray-400">
+                No additional compensation entries.
+              </p>
+            }
+          </div>
+
+          <!-- Additional Deductions -->
+          <div class="mt-5">
+            <h5 class="mb-3 text-sm font-semibold text-gray-700 dark:text-gray-200">Additional Deductions</h5>
+            @if (payrollRecordDetail.additionalDeductions.length > 0) {
+              <div class="overflow-x-auto rounded-lg border border-gray-200 dark:border-gray-700">
+                <table class="w-full text-left text-sm">
+                  <thead class="bg-gray-50 dark:bg-gray-800">
+                    <tr>
+                      <th class="px-4 py-2.5 font-medium text-gray-700 dark:text-gray-300">Description</th>
+                      <th class="px-4 py-2.5 font-medium text-gray-700 dark:text-gray-300 text-right">Amount</th>
+                    </tr>
+                  </thead>
+                  <tbody class="divide-y divide-gray-100 dark:divide-gray-700">
+                    @for (entry of payrollRecordDetail.additionalDeductions; track $index) {
+                      <tr>
+                        <td class="px-4 py-2 text-gray-800 dark:text-white/90">{{ entry.description }}</td>
+                        <td class="px-4 py-2 text-right text-gray-800 dark:text-white/90">{{ formatCurrency(entry.amount) }}</td>
+                      </tr>
+                    }
+                    <tr class="bg-gray-50 dark:bg-gray-800/50">
+                      <td class="px-4 py-2 font-medium text-gray-700 dark:text-gray-300">Subtotal</td>
+                      <td class="px-4 py-2 text-right font-semibold text-gray-800 dark:text-white/90">{{ formatCurrency(getAdditionalDeductionsTotal()) }}</td>
+                    </tr>
+                  </tbody>
+                </table>
+              </div>
+            } @else {
+              <p class="rounded-lg border border-dashed border-gray-300 px-4 py-3 text-center text-xs text-gray-500 dark:border-gray-700 dark:text-gray-400">
+                No additional deduction entries.
+              </p>
+            }
+          </div>
+
+          <!-- Government Deductions -->
+          <div class="mt-5">
+            <h5 class="mb-3 text-sm font-semibold text-gray-700 dark:text-gray-200">Government Deductions</h5>
+            <div class="overflow-x-auto rounded-lg border border-gray-200 dark:border-gray-700">
+              <table class="w-full text-left text-sm">
+                <thead class="bg-gray-50 dark:bg-gray-800">
+                  <tr>
+                    <th class="px-4 py-2.5 font-medium text-gray-700 dark:text-gray-300">Deduction</th>
+                    <th class="px-4 py-2.5 font-medium text-gray-700 dark:text-gray-300 text-right">Amount</th>
+                  </tr>
+                </thead>
+                <tbody class="divide-y divide-gray-100 dark:divide-gray-700">
+                  <tr>
+                    <td class="px-4 py-2 text-gray-800 dark:text-white/90">Pag-Ibig</td>
+                    <td class="px-4 py-2 text-right text-gray-800 dark:text-white/90">{{ formatCurrency(payrollRecordDetail.governmentDeductions.pagIbig) }}</td>
+                  </tr>
+                  <tr>
+                    <td class="px-4 py-2 text-gray-800 dark:text-white/90">Philhealth</td>
+                    <td class="px-4 py-2 text-right text-gray-800 dark:text-white/90">{{ formatCurrency(payrollRecordDetail.governmentDeductions.philhealth) }}</td>
+                  </tr>
+                  <tr>
+                    <td class="px-4 py-2 text-gray-800 dark:text-white/90">SSS</td>
+                    <td class="px-4 py-2 text-right text-gray-800 dark:text-white/90">{{ formatCurrency(payrollRecordDetail.governmentDeductions.sss) }}</td>
+                  </tr>
+                  <tr class="bg-gray-50 dark:bg-gray-800/50">
+                    <td class="px-4 py-2 font-medium text-gray-700 dark:text-gray-300">Subtotal</td>
+                    <td class="px-4 py-2 text-right font-semibold text-gray-800 dark:text-white/90">{{ formatCurrency(getGovernmentDeductionsTotal()) }}</td>
+                  </tr>
+                </tbody>
+              </table>
+            </div>
+          </div>
+
+          <!-- Net Pay -->
+          <div class="mt-5">
+            <div class="rounded-lg border-2 border-brand-200 bg-brand-50/50 px-5 py-4 dark:border-brand-500/30 dark:bg-brand-500/5">
+              <div class="flex items-center justify-between">
+                <span class="text-sm font-semibold text-gray-700 dark:text-gray-200">Net Pay</span>
+                <span
+                  class="text-xl font-bold"
+                  [class.text-error-600]="payrollRecordDetail.payoutAmount < 0"
+                  [class.dark:text-error-400]="payrollRecordDetail.payoutAmount < 0"
+                  [class.text-brand-700]="payrollRecordDetail.payoutAmount >= 0"
+                  [class.dark:text-brand-400]="payrollRecordDetail.payoutAmount >= 0"
+                >
+                  {{ formatCurrency(payrollRecordDetail.payoutAmount) }}
+                </span>
+              </div>
+            </div>
+          </div>
+        } @else if (cutoffDetail) {
+          <!-- Fallback: show basic cutoff detail if enhanced detail is not available -->
+          <div class="mt-4 rounded-lg border border-gray-200 bg-gray-50 px-4 py-3 dark:border-gray-700 dark:bg-gray-800">
+            <p class="text-sm font-medium text-gray-700 dark:text-gray-300">
+              Cutoff Period: <span class="text-gray-900 dark:text-white/90">{{ formatDateRange(cutoffDetail.cutoffStart, cutoffDetail.cutoffEnd) }}</span>
+            </p>
+          </div>
+
+          <!-- Records Table -->
+          <div class="mt-4 overflow-x-auto">
+            <table class="w-full text-left text-sm">
+              <thead>
+                <tr class="border-b border-gray-200 dark:border-gray-700">
+                  <th class="px-3 py-2 font-medium text-gray-700 dark:text-gray-300">Employee Name</th>
+                  <th class="px-3 py-2 font-medium text-gray-700 dark:text-gray-300">Base Salary Used</th>
+                  <th class="px-3 py-2 font-medium text-gray-700 dark:text-gray-300">Payout Amount</th>
+                  <th class="px-3 py-2 font-medium text-gray-700 dark:text-gray-300">Generated At</th>
+                </tr>
+              </thead>
+              <tbody>
+                @for (record of cutoffDetail.records; track record.employeeId) {
+                  <tr class="border-b border-gray-100 dark:border-gray-800">
+                    <td class="px-3 py-2 text-gray-800 dark:text-white/90">{{ record.employeeName }}</td>
+                    <td class="px-3 py-2 text-gray-800 dark:text-white/90">{{ formatCurrency(record.baseSalaryUsed) }}</td>
+                    <td class="px-3 py-2 text-gray-800 dark:text-white/90">{{ formatCurrency(record.payoutAmount) }}</td>
+                    <td class="px-3 py-2 text-gray-500 dark:text-gray-400">{{ record.generatedAt | date:'medium' }}</td>
+                  </tr>
+                } @empty {
+                  <tr>
+                    <td colspan="4" class="px-3 py-4 text-center text-gray-500 dark:text-gray-400">No records found for this cutoff.</td>
+                  </tr>
+                }
+              </tbody>
+            </table>
+          </div>
+        } @else {
+          <div class="mt-4 rounded-lg border border-error-300 bg-error-50 px-4 py-3 text-center text-sm text-error-600 dark:border-error-500/30 dark:bg-error-500/10 dark:text-error-400">
+            Unable to load payroll details.
+          </div>
+        }
+
+        <div class="mt-4 flex justify-end">
+          <button
+            type="button"
+            (click)="closeCutoffDetail()"
+            class="rounded-lg border border-gray-300 px-4 py-2 text-sm font-medium text-gray-700 transition hover:bg-gray-50 dark:border-gray-600 dark:text-gray-300 dark:hover:bg-gray-800"
+          >
+            Close
+          </button>
+        </div>
+      </div>
+    </div>
+  }
+
+  <!-- Payroll Creator Modal -->
+  @if (showPayrollCreator) {
+    <div class="fixed inset-0 z-[100010] flex items-center justify-center bg-black/50" (click)="closePayrollCreator()">
+      <div class="w-full max-w-2xl max-h-[90vh] overflow-y-auto rounded-xl bg-white p-6 shadow-xl dark:bg-gray-900" (click)="$event.stopPropagation()">
+        <div class="flex items-center justify-between">
+          <h3 class="text-lg font-semibold text-gray-800 dark:text-white/90">
+            Create Payroll — {{ selectedEmployee?.fullName }}
+          </h3>
+          <button
+            type="button"
+            (click)="closePayrollCreator()"
+            class="rounded-lg p-1 text-gray-400 transition hover:bg-gray-100 hover:text-gray-600 dark:hover:bg-gray-800 dark:hover:text-gray-300"
+          >
+            <svg xmlns="http://www.w3.org/2000/svg" class="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
+              <path stroke-linecap="round" stroke-linejoin="round" d="M6 18L18 6M6 6l12 12" />
+            </svg>
+          </button>
+        </div>
+
+        <!-- Date Range Selection -->
+        <div class="mt-4 space-y-4">
+          <div class="grid grid-cols-1 gap-4 sm:grid-cols-2">
+            <!-- Cutoff Start Date -->
+            <div>
+              <label for="payrollCreatorStart" class="mb-1 block text-sm font-medium text-gray-700 dark:text-gray-300">Cutoff Start Date <span class="text-error-500">*</span></label>
+              <app-date-picker [defaultDate]="payrollCreatorCutoffStart" (dateChange)="payrollCreatorCutoffStart = $event.dateStr" class="block"></app-date-picker>
+              <!-- <input
+                id="payrollCreatorStart"
+                type="date"
+                [(ngModel)]="payrollCreatorCutoffStart"
+                class="h-10 w-full rounded-lg border px-3 text-sm text-gray-800 focus:border-brand-300 focus:outline-none dark:text-white/90"
+                [class.border-error-300]="payrollCreatorErrors.dateRange"
+                [class.border-gray-300]="!payrollCreatorErrors.dateRange"
+                [class.dark:border-error-500]="payrollCreatorErrors.dateRange"
+                [class.dark:border-gray-700]="!payrollCreatorErrors.dateRange"
+              /> -->
+            </div>
+
+            <!-- Cutoff End Date -->
+            <div>
+              <label for="payrollCreatorEnd" class="mb-1 block text-sm font-medium text-gray-700 dark:text-gray-300">Cutoff End Date <span class="text-error-500">*</span></label>
+              <app-date-picker [defaultDate]="payrollCreatorCutoffEnd" (dateChange)="payrollCreatorCutoffEnd = $event.dateStr" class="block"></app-date-picker>
+              <!-- <input
+                id="payrollCreatorEnd"
+                type="date"
+                [(ngModel)]="payrollCreatorCutoffEnd"
+                class="h-10 w-full rounded-lg border px-3 text-sm text-gray-800 focus:border-brand-300 focus:outline-none dark:text-white/90"
+                [class.border-error-300]="payrollCreatorErrors.dateRange"
+                [class.border-gray-300]="!payrollCreatorErrors.dateRange"
+                [class.dark:border-error-500]="payrollCreatorErrors.dateRange"
+                [class.dark:border-gray-700]="!payrollCreatorErrors.dateRange"
+              /> -->
+            </div>
+          </div>
+
+          @if (payrollCreatorErrors.dateRange) {
+            <p class="text-xs text-error-500">{{ payrollCreatorErrors.dateRange }}</p>
+          }
+
+          <!-- Generate Days Button -->
+          <div>
+            <button
+              type="button"
+              (click)="generatePayrollCreatorDays()"
+              class="inline-flex items-center gap-1.5 rounded-lg bg-brand-500 px-4 py-2 text-sm font-medium text-white transition hover:bg-brand-600 dark:bg-brand-600 dark:hover:bg-brand-700"
+            >
+              <svg xmlns="http://www.w3.org/2000/svg" class="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
+                <path stroke-linecap="round" stroke-linejoin="round" d="M8 7V3m8 4V3m-9 8h10M5 21h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v12a2 2 0 002 2z" />
+              </svg>
+              Generate Days
+            </button>
+          </div>
+
+          <!-- Generated Days Info -->
+          @if (payrollCreatorDailyRecords.length > 0) {
+            <div class="rounded-lg border border-success-200 bg-success-50 px-4 py-3 dark:border-success-500/30 dark:bg-success-500/10">
+              <p class="text-sm font-medium text-success-700 dark:text-success-400">
+                {{ payrollCreatorDailyRecords.length }} day(s) generated
+                <span class="font-normal text-success-600 dark:text-success-500">
+                  ({{ payrollCreatorCutoffStart }} to {{ payrollCreatorCutoffEnd }})
+                </span>
+              </p>
+            </div>
+
+            <!-- Daily Records Tabs -->
+            <div class="mt-4">
+              <label class="mb-2 block text-sm font-medium text-gray-700 dark:text-gray-300">Daily Records</label>
+
+              <!-- Tab Navigation -->
+              <div class="flex overflow-x-auto border-b border-gray-200 dark:border-gray-700">
+                @for (record of payrollCreatorDailyRecords; track record.date; let i = $index) {
+                  <button
+                    type="button"
+                    (click)="payrollCreatorSelectedTab = i"
+                    class="shrink-0 px-3 py-2 text-sm font-medium transition whitespace-nowrap border-b-2"
+                    [class.border-brand-500]="payrollCreatorSelectedTab === i"
+                    [class.text-brand-600]="payrollCreatorSelectedTab === i"
+                    [class.font-semibold]="payrollCreatorSelectedTab === i"
+                    [class.border-transparent]="payrollCreatorSelectedTab !== i"
+                    [class.text-gray-500]="payrollCreatorSelectedTab !== i"
+                    [class.hover:text-gray-700]="payrollCreatorSelectedTab !== i"
+                    [class.dark:text-brand-400]="payrollCreatorSelectedTab === i"
+                    [class.dark:text-gray-400]="payrollCreatorSelectedTab !== i"
+                    [class.dark:hover:text-gray-300]="payrollCreatorSelectedTab !== i"
+                  >
+                    {{ formatTabDate(record.date) }}
+                  </button>
+                }
+              </div>
+
+              <!-- Tab Content -->
+              @if (payrollCreatorDailyRecords[payrollCreatorSelectedTab]) {
+                <div class="mt-4 rounded-lg border border-gray-200 p-4 dark:border-gray-700">
+                  <p class="mb-3 text-xs font-medium text-gray-500 dark:text-gray-400">
+                    {{ payrollCreatorDailyRecords[payrollCreatorSelectedTab].date }}
+                  </p>
+
+                  <div class="grid grid-cols-1 gap-4 sm:grid-cols-2">
+                    <!-- isPresent Checkbox -->
+                    <div class="sm:col-span-2">
+                      <label class="flex items-center gap-2 cursor-pointer">
+                        <input
+                          type="checkbox"
+                          [(ngModel)]="payrollCreatorDailyRecords[payrollCreatorSelectedTab].isPresent"
+                          (ngModelChange)="onDailyRecordPresentChange(payrollCreatorSelectedTab)"
+                          class="h-4 w-4 rounded border-gray-300 text-brand-500 focus:ring-brand-300 dark:border-gray-600"
+                        />
+                        <span class="text-sm font-medium text-gray-700 dark:text-gray-300">Present</span>
+                      </label>
+                    </div>
+
+                    <!-- Assigned Project Dropdown -->
+                    <div>
+                      <label class="mb-1 block text-xs font-medium text-gray-700 dark:text-gray-300">Assigned Project</label>
+                      <select
+                        [(ngModel)]="payrollCreatorDailyRecords[payrollCreatorSelectedTab].assignedProjectId"
+                        class="h-10 w-full rounded-lg border border-gray-300 bg-transparent px-3 text-sm text-gray-800 focus:border-brand-300 focus:outline-none dark:border-gray-700 dark:text-white/90"
+                      >
+                        <option [ngValue]="null">No Project</option>
+                        @for (project of projects; track project.id) {
+                          <option [ngValue]="project.id">{{ project.name }}</option>
+                        }
+                      </select>
+                    </div>
+
+                    <!-- Commission Input -->
+                    <div>
+                      <label class="mb-1 block text-xs font-medium text-gray-700 dark:text-gray-300">Commission</label>
+                      <input
+                        type="number"
+                        [(ngModel)]="payrollCreatorDailyRecords[payrollCreatorSelectedTab].commission"
+                        [disabled]="!payrollCreatorDailyRecords[payrollCreatorSelectedTab].isPresent"
+                        min="0"
+                        step="0.01"
+                        class="h-10 w-full rounded-lg border border-gray-300 px-3 text-sm text-gray-800 focus:border-brand-300 focus:outline-none dark:border-gray-700 dark:text-white/90 disabled:bg-gray-100 disabled:text-gray-400 disabled:cursor-not-allowed dark:disabled:bg-gray-800 dark:disabled:text-gray-500"
+                        placeholder="0"
+                      />
+                    </div>
+
+                    <!-- Adjusted Rate Input -->
+                    <div>
+                      <label class="mb-1 block text-xs font-medium text-gray-700 dark:text-gray-300">Adjusted Rate</label>
+                      <input
+                        type="number"
+                        [(ngModel)]="payrollCreatorDailyRecords[payrollCreatorSelectedTab].adjustedRate"
+                        min="0"
+                        step="0.01"
+                        class="h-10 w-full rounded-lg border border-gray-300 px-3 text-sm text-gray-800 focus:border-brand-300 focus:outline-none dark:border-gray-700 dark:text-white/90"
+                        placeholder="0"
+                      />
+                    </div>
+
+                    <!-- Remarks Input -->
+                    <div class="sm:col-span-2">
+                      <label class="mb-1 block text-xs font-medium text-gray-700 dark:text-gray-300">Remarks</label>
+                      <input
+                        type="text"
+                        [(ngModel)]="payrollCreatorDailyRecords[payrollCreatorSelectedTab].remarks"
+                        class="h-10 w-full rounded-lg border border-gray-300 px-3 text-sm text-gray-800 placeholder-gray-400 focus:border-brand-300 focus:outline-none dark:border-gray-700 dark:text-white/90 dark:placeholder-gray-500"
+                        placeholder="Enter remarks (optional)"
+                      />
+                    </div>
+                  </div>
+                </div>
+              }
+            </div>
+          }
+        </div>
+
+        <!-- Additional Compensation Section -->
+        <div class="mt-6">
+          <div class="flex items-center justify-between mb-3">
+            <h5 class="text-sm font-semibold text-gray-700 dark:text-gray-200">Additional Compensation</h5>
+            <button
+              type="button"
+              (click)="addCompensationEntry()"
+              class="inline-flex items-center gap-1 rounded-lg border border-gray-300 px-3 py-1.5 text-xs font-medium text-gray-700 transition hover:bg-gray-50 dark:border-gray-600 dark:text-gray-300 dark:hover:bg-gray-700"
+            >
+              <svg xmlns="http://www.w3.org/2000/svg" class="h-3.5 w-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
+                <path stroke-linecap="round" stroke-linejoin="round" d="M12 4v16m8-8H4" />
+              </svg>
+              Add
+            </button>
+          </div>
+
+          @if (payrollCreatorCompensation.length === 0) {
+            <p class="rounded-lg border border-dashed border-gray-300 px-4 py-3 text-center text-xs text-gray-500 dark:border-gray-700 dark:text-gray-400">
+              No additional compensation entries
+            </p>
+          } @else {
+            <div class="space-y-2">
+              @for (entry of payrollCreatorCompensation; track $index; let i = $index) {
+                <div class="flex items-start gap-2">
+                  <div class="flex-1">
+                    <input
+                      type="text"
+                      [(ngModel)]="entry.description"
+                      placeholder="Description"
+                      class="h-9 w-full rounded-lg border border-gray-300 px-3 text-sm text-gray-800 placeholder-gray-400 focus:border-brand-300 focus:outline-none dark:border-gray-700 dark:text-white/90 dark:placeholder-gray-500"
+                    />
+                  </div>
+                  <div class="w-32">
+                    <input
+                      type="number"
+                      [(ngModel)]="entry.amount"
+                      placeholder="Amount"
+                      min="0.01"
+                      step="0.01"
+                      class="h-9 w-full rounded-lg border border-gray-300 px-3 text-sm text-gray-800 placeholder-gray-400 focus:border-brand-300 focus:outline-none dark:border-gray-700 dark:text-white/90 dark:placeholder-gray-500"
+                    />
+                  </div>
+                  <button
+                    type="button"
+                    (click)="removeCompensationEntry(i)"
+                    class="mt-0.5 rounded-lg p-1.5 text-gray-400 transition hover:bg-error-50 hover:text-error-500 dark:hover:bg-error-500/10 dark:hover:text-error-400"
+                    title="Remove entry"
+                  >
+                    <svg xmlns="http://www.w3.org/2000/svg" class="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
+                      <path stroke-linecap="round" stroke-linejoin="round" d="M6 18L18 6M6 6l12 12" />
+                    </svg>
+                  </button>
+                </div>
+              }
+            </div>
+          }
+        </div>
+
+        <!-- Additional Deductions Section -->
+        <div class="mt-6">
+          <div class="flex items-center justify-between mb-3">
+            <h5 class="text-sm font-semibold text-gray-700 dark:text-gray-200">Additional Deductions</h5>
+            <button
+              type="button"
+              (click)="addDeductionEntry()"
+              class="inline-flex items-center gap-1 rounded-lg border border-gray-300 px-3 py-1.5 text-xs font-medium text-gray-700 transition hover:bg-gray-50 dark:border-gray-600 dark:text-gray-300 dark:hover:bg-gray-700"
+            >
+              <svg xmlns="http://www.w3.org/2000/svg" class="h-3.5 w-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
+                <path stroke-linecap="round" stroke-linejoin="round" d="M12 4v16m8-8H4" />
+              </svg>
+              Add
+            </button>
+          </div>
+
+          @if (payrollCreatorDeductions.length === 0) {
+            <p class="rounded-lg border border-dashed border-gray-300 px-4 py-3 text-center text-xs text-gray-500 dark:border-gray-700 dark:text-gray-400">
+              No additional deduction entries
+            </p>
+          } @else {
+            <div class="space-y-2">
+              @for (entry of payrollCreatorDeductions; track $index; let i = $index) {
+                <div class="flex items-start gap-2">
+                  <div class="flex-1">
+                    <input
+                      type="text"
+                      [(ngModel)]="entry.description"
+                      placeholder="Description"
+                      class="h-9 w-full rounded-lg border border-gray-300 px-3 text-sm text-gray-800 placeholder-gray-400 focus:border-brand-300 focus:outline-none dark:border-gray-700 dark:text-white/90 dark:placeholder-gray-500"
+                    />
+                  </div>
+                  <div class="w-32">
+                    <input
+                      type="number"
+                      [(ngModel)]="entry.amount"
+                      placeholder="Amount"
+                      min="0.01"
+                      step="0.01"
+                      class="h-9 w-full rounded-lg border border-gray-300 px-3 text-sm text-gray-800 placeholder-gray-400 focus:border-brand-300 focus:outline-none dark:border-gray-700 dark:text-white/90 dark:placeholder-gray-500"
+                    />
+                  </div>
+                  <button
+                    type="button"
+                    (click)="removeDeductionEntry(i)"
+                    class="mt-0.5 rounded-lg p-1.5 text-gray-400 transition hover:bg-error-50 hover:text-error-500 dark:hover:bg-error-500/10 dark:hover:text-error-400"
+                    title="Remove entry"
+                  >
+                    <svg xmlns="http://www.w3.org/2000/svg" class="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
+                      <path stroke-linecap="round" stroke-linejoin="round" d="M6 18L18 6M6 6l12 12" />
+                    </svg>
+                  </button>
+                </div>
+              }
+            </div>
+          }
+        </div>
+
+        <!-- Payroll Summary Section -->
+        @if (payrollCreatorDailyRecords.length > 0) {
+          <div class="mt-6">
+            <h5 class="mb-3 text-sm font-semibold text-gray-700 dark:text-gray-200">Payroll Summary</h5>
+            <div class="rounded-lg border border-gray-200 dark:border-gray-700 overflow-hidden">
+              <table class="w-full text-sm">
+                <tbody class="divide-y divide-gray-100 dark:divide-gray-700">
+                  <tr>
+                    <td class="px-4 py-2.5 text-gray-600 dark:text-gray-400">Base Salary</td>
+                    <td class="px-4 py-2.5 text-right font-medium text-gray-800 dark:text-white/90">{{ formatCurrency(payrollSummary.baseSalary) }}</td>
+                  </tr>
+                  <tr>
+                    <td class="px-4 py-2.5 text-gray-600 dark:text-gray-400">Days Present</td>
+                    <td class="px-4 py-2.5 text-right font-medium text-gray-800 dark:text-white/90">{{ payrollSummary.totalDaysPresent }} / {{ payrollSummary.totalDaysInPeriod }}</td>
+                  </tr>
+                  <tr>
+                    <td class="px-4 py-2.5 text-gray-600 dark:text-gray-400">Total Salary</td>
+                    <td class="px-4 py-2.5 text-right font-bold text-gray-800 dark:text-white/90">{{ formatCurrency(payrollSummary.totalBaseSalary) }}</td>
+                  </tr>
+                  <tr>
+                    <td class="px-4 py-2.5 text-gray-600 dark:text-gray-400">Total Commissions</td>
+                    <td class="px-4 py-2.5 text-right font-medium text-green-800 dark:text-white/90">{{ formatCurrency(payrollSummary.totalCommissions) }}</td>
+                  </tr>
+                  <tr>
+                    <td class="px-4 py-2.5 text-gray-600 dark:text-gray-400">Total Additional Compensation</td>
+                    <td class="px-4 py-2.5 text-right font-medium text-green-800 dark:text-white/90">{{ formatCurrency(payrollSummary.totalAdditionalCompensation) }}</td>
+                  </tr>
+                  <tr>
+                    <td class="px-4 py-2.5 text-gray-600 dark:text-gray-400">Total Additional Deductions</td>
+                    <td class="px-4 py-2.5 text-right font-medium text-red-800 dark:text-white/90">{{ formatCurrency(payrollSummary.totalAdditionalDeductions) }}</td>
+                  </tr>
+                  <tr>
+                    <td class="px-4 py-2.5 text-gray-600 dark:text-gray-400">Total Government Deductions</td>
+                    <td class="px-4 py-2.5 text-right font-medium text-red-800 dark:text-white/90">{{ formatCurrency(payrollSummary.totalGovernmentDeductions) }}</td>
+                  </tr>
+                  <tr class="bg-gray-50 dark:bg-gray-800/50">
+                    <td class="px-4 py-3 text-sm font-semibold text-gray-800 dark:text-white/90">Net Pay</td>
+                    <td
+                      class="px-4 py-3 text-right text-base font-bold"
+                      [class.text-error-600]="payrollSummary.netPay < 0"
+                      [class.dark:text-error-400]="payrollSummary.netPay < 0"
+                      [class.text-gray-900]="payrollSummary.netPay >= 0"
+                      [class.dark:text-white]="payrollSummary.netPay >= 0"
+                    >
+                      {{ formatCurrency(payrollSummary.netPay) }}
+                    </td>
+                  </tr>
+                </tbody>
+              </table>
+            </div>
+          </div>
+        }
+
+        <!-- Footer Actions -->
+        <div class="mt-6 border-t border-gray-200 pt-4 dark:border-gray-700">
+          @if (payrollCreatorErrors.general) {
+            <div class="mb-4 rounded-lg border border-error-300 bg-error-50 px-4 py-2.5 text-sm text-error-600 dark:border-error-500/30 dark:bg-error-500/10 dark:text-error-400">
+              {{ payrollCreatorErrors.general }}
+            </div>
+          }
+
+          <div class="flex items-center justify-end gap-3">
+            <button
+              type="button"
+              (click)="closePayrollCreator()"
+              class="rounded-lg border border-gray-300 px-4 py-2 text-sm font-medium text-gray-700 transition hover:bg-gray-50 dark:border-gray-600 dark:text-gray-300 dark:hover:bg-gray-800"
+            >
+              Cancel
+            </button>
+            <button
+              type="button"
+              (click)="submitPayrollCreator()"
+              [disabled]="isPayrollCreatorSubmitting || payrollCreatorDailyRecords.length === 0"
+              class="inline-flex items-center gap-2 rounded-lg bg-success-500 px-4 py-2 text-sm font-medium text-white transition hover:bg-success-600 disabled:opacity-50 disabled:cursor-not-allowed dark:bg-success-600 dark:hover:bg-success-700"
+            >
+              @if (isPayrollCreatorSubmitting) {
+                <svg class="h-4 w-4 animate-spin" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
+                  <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
+                  <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
+                </svg>
+                Submitting...
+              } @else {
+                Submit Payroll
+              }
+            </button>
+          </div>
+        </div>
+      </div>
+    </div>
+  }
+</div>

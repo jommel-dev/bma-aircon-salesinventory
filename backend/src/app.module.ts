@@ -21,6 +21,7 @@ import { SettingsModule } from './settings/settings.module';
 import { AccountingModule } from './accounting/accounting.module';
 import { AuditLogModule } from './audit-log/audit-log.module';
 import { PartsModule } from './inventory/parts/parts.module';
+import { PayrollModule } from './payroll/payroll.module';
 
 @Module({
   imports: [
@@ -47,6 +48,7 @@ import { PartsModule } from './inventory/parts/parts.module';
     AccountingModule,
     AuditLogModule,
     PartsModule,
+    PayrollModule,
   ],
   controllers: [AppController],
   providers: [AppService],

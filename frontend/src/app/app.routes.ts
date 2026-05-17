@@ -16,6 +16,7 @@ import { SalesOrderMaterialsComponent } from './pages/sales-order-materials/sale
 import { SettingsComponent } from './pages/settings/settings.component';
 import { AccountingComponent } from './pages/accounting/accounting.component';
 import { ProjectsComponent } from './pages/projects/projects.component';
+import { PayrollComponent } from './payroll/payroll.component';
 
 export const routes: Routes = [
   {
@@ -113,6 +114,16 @@ export const routes: Routes = [
           permission: 'canRead',
         },
         title: 'Accounting',
+      },
+      {
+        path: 'payroll',
+        component: PayrollComponent,
+        canActivate: [rbacGuard],
+        data: {
+          menu: 'payroll',
+          permission: 'canRead',
+        },
+        title: 'Payroll',
       },
       {
         path: 'sales-order-materials',
