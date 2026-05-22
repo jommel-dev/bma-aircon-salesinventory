@@ -1,5 +1,33 @@
 import { BadRequestException, Injectable } from '@nestjs/common';
 import { DatabaseService } from 'src/database/database.service';
+import { PaginationParams, PaginationMeta, PaginatedResponse } from '../shared/pagination.types';
+
+interface SalesRegisterRow {
+  id: number;
+  soNumber: string;
+  customerName: string;
+  salesType: string;
+  status: string;
+  releaseDate: string;
+  serialCount: number;
+  totalAmount: number;
+}
+
+interface DailyUnitReleasedRow {
+  releaseDate: string;
+  orderCount: number;
+  unitCount: number;
+  totalAmount: number;
+}
+
+interface WeeklySalesRow {
+  weekStart: string;
+  weekEnd: string;
+  weekLabel: string;
+  orderCount: number;
+  unitCount: number;
+  totalAmount: number;
+}
 
 interface AccountTitleRow {
   id: number;
@@ -106,6 +134,17 @@ interface VoucherAccountTitlePayload {
   description?: string;
   debit?: number;
   credit?: number;
+}
+
+interface Tax2307Row {
+  id: number;
+  referenceNo: string;
+  tin: string;
+  supplierName: string;
+  supplierAddress: string;
+  vatableAmount: number;
+  taxWithheld: number;
+  voucherDate: string;
 }
 
 export interface UpsertAccountTitlePayload {
@@ -233,11 +272,17 @@ export class AccountingService {
     return this.buildGeneralJournalNumber(nextSequence, prefix, suffix);
   }
 
-  async listChequeVouchers(filters: { dateFrom?: string; dateTo?: string; invoice?: string; particulars?: string; chequeNo?: string }): Promise<Array<ChequeVoucherRow & {
+  async listChequeVouchers(
+    filters: { dateFrom?: string; dateTo?: string; invoice?: string; particulars?: string; chequeNo?: string },
+    page?: unknown,
+    pageSize?: unknown,
+  ): Promise<PaginatedResponse<ChequeVoucherRow & {
     deposits: Array<{ bankName: string; chequeNo: string; chequeDate: string | null; amount: number }>;
     invoices: Array<{ invoiceNo: string; invoiceDate: string | null; description: string; amount: number }>;
     accountTitles: Array<{ accountNumber: string; description: string; debit: number; credit: number }>;
   }>> {
+    const pagination = this.parsePaginationParams(page, pageSize, { pageSize: 20, maxPageSize: 100 });
+
     let dateFrom = this.normalizeDateOrNull(filters.dateFrom);
     let dateTo = this.normalizeDateOrNull(filters.dateTo);
 
@@ -254,20 +299,71 @@ export class AccountingService {
       dateTo = this.normalizeDateOrNull(currentDate.toISOString());
     }
 
-    const { text, params } = this.buildChequeVoucherFilterQuery({
+    const filterParams: unknown[] = [
       dateFrom,
       dateTo,
-      invoice: normalizedInvoice,
-      particulars: normalizedParticulars,
-      chequeNo: normalizedChequeNo,
-    });
+      normalizedParticulars,
+      normalizedInvoice,
+      normalizedChequeNo,
+    ];
 
-    const voucherResult = await this.db.query<ChequeVoucherRow>(text, params);
+    const whereClause = `WHERE ($1::date IS NULL OR voucher_date >= $1::date)
+          AND ($2::date IS NULL OR voucher_date <= $2::date)
+          AND (
+            ($3::text IS NULL AND $4::text IS NULL AND $5::text IS NULL)
+            OR (particulars ILIKE '%' || $3 || '%')
+            OR EXISTS (
+              SELECT 1 FROM tblcheque_voucher_invoices
+              WHERE voucher_id = tblcheque_vouchers.id
+                AND invoice_no ILIKE '%' || $4 || '%'
+            )
+            OR EXISTS (
+              SELECT 1 FROM tblcheque_voucher_deposits
+              WHERE voucher_id = tblcheque_vouchers.id
+                AND cheque_no ILIKE '%' || $5 || '%'
+            )
+          )`;
 
-    if (voucherResult.rows.length === 0) {
-      return [];
+    // Execute COUNT(*) query for total matching vouchers
+    const countResult = await this.db.query<{ total: string }>(
+      `SELECT COUNT(*) AS total FROM tblcheque_vouchers ${whereClause}`,
+      filterParams,
+    );
+    const total = Number(countResult.rows[0]?.total) || 0;
+
+    const meta = this.buildPaginationMeta(total, pagination.page, pagination.pageSize);
+
+    if (total === 0) {
+      return { data: [], meta };
     }
 
+    // Apply LIMIT/OFFSET to parent voucher query
+    const offset = (pagination.page - 1) * pagination.pageSize;
+    const voucherResult = await this.db.query<ChequeVoucherRow>(
+      `SELECT
+          id,
+          cv_no AS "cvNo",
+          voucher_type AS "voucherType",
+          payee,
+          voucher_date::text AS "voucherDate",
+          tin_number AS "tinNumber",
+          address,
+          zip_code AS "zipCode",
+          particulars,
+          released_at::text AS "releasedAt",
+          prepared_by AS "preparedBy"
+        FROM tblcheque_vouchers
+        ${whereClause}
+        ORDER BY voucher_date DESC, id DESC
+        LIMIT $6 OFFSET $7`,
+      [...filterParams, pagination.pageSize, offset],
+    );
+
+    if (voucherResult.rows.length === 0) {
+      return { data: [], meta };
+    }
+
+    // Fetch child records for paginated parent IDs only
     const voucherIds = voucherResult.rows.map((row) => row.id);
 
     const depositResult = await this.db.query<{
@@ -363,12 +459,14 @@ export class AccountingService {
       accountTitlesByVoucher.set(row.voucherId, list);
     }
 
-    return voucherResult.rows.map((voucher) => ({
+    const data = voucherResult.rows.map((voucher) => ({
       ...voucher,
       deposits: depositsByVoucher.get(voucher.id) ?? [],
       invoices: invoicesByVoucher.get(voucher.id) ?? [],
       accountTitles: accountTitlesByVoucher.get(voucher.id) ?? [],
     }));
+
+    return { data, meta };
   }
 
   async releaseChequeVoucher(payload: CreateChequeVoucherPayload): Promise<ChequeVoucherRow & {
@@ -879,9 +977,11 @@ export class AccountingService {
     return result;
   }
 
-  async listGeneralJournals(filters: { dateFrom?: string; dateTo?: string }): Promise<Array<GeneralJournalRow & {
+  async listGeneralJournals(filters: { dateFrom?: string; dateTo?: string; page?: string; pageSize?: string }): Promise<PaginatedResponse<GeneralJournalRow & {
     lines: Array<{ accountNumber: string; description: string; debit: number; credit: number }>;
   }>> {
+    const { page, pageSize } = this.parsePaginationParams(filters.page, filters.pageSize);
+
     let dateFrom = this.normalizeDateOrNull(filters.dateFrom);
     let dateTo = this.normalizeDateOrNull(filters.dateTo);
 
@@ -892,6 +992,26 @@ export class AccountingService {
       dateTo = this.normalizeDateOrNull(currentDate.toISOString());
     }
 
+    // Count total matching records
+    const countResult = await this.db.query<{ total: string }>(
+      `SELECT COUNT(*) AS total
+        FROM tblgeneral_journal
+        WHERE ($1::date IS NULL OR journal_date >= $1::date)
+          AND ($2::date IS NULL OR journal_date <= $2::date)`,
+      [dateFrom, dateTo],
+    );
+
+    const total = parseInt(countResult.rows[0]?.total ?? '0', 10);
+
+    if (total === 0) {
+      return {
+        data: [],
+        meta: { page, pageSize, total: 0, totalPages: 1 },
+      };
+    }
+
+    // Fetch paginated parent journals
+    const offset = (page - 1) * pageSize;
     const journalResult = await this.db.query<GeneralJournalRow>(
       `SELECT
           id,
@@ -906,14 +1026,19 @@ export class AccountingService {
         FROM tblgeneral_journal
         WHERE ($1::date IS NULL OR journal_date >= $1::date)
           AND ($2::date IS NULL OR journal_date <= $2::date)
-        ORDER BY journal_date DESC, id DESC`,
-      [dateFrom, dateTo],
+        ORDER BY journal_date DESC, id DESC
+        LIMIT $3 OFFSET $4`,
+      [dateFrom, dateTo, pageSize, offset],
     );
 
     if (journalResult.rows.length === 0) {
-      return [];
+      return {
+        data: [],
+        meta: this.buildPaginationMeta(total, page, pageSize),
+      };
     }
 
+    // Fetch sundry lines for paginated journal IDs only
     const journalIds = journalResult.rows.map((row) => row.id);
     const lineResult = await this.db.query<{
       journalId: number;
@@ -946,10 +1071,163 @@ export class AccountingService {
       linesByJournal.set(row.journalId, list);
     }
 
-    return journalResult.rows.map((journal) => ({
-      ...journal,
-      lines: linesByJournal.get(journal.id) ?? [],
+    return {
+      data: journalResult.rows.map((journal) => ({
+        ...journal,
+        lines: linesByJournal.get(journal.id) ?? [],
+      })),
+      meta: this.buildPaginationMeta(total, page, pageSize),
+    };
+  }
+
+  async getSalesRegister(filters: {
+    page?: unknown;
+    pageSize?: unknown;
+    dateFrom?: string;
+    dateTo?: string;
+  }): Promise<PaginatedResponse<SalesRegisterRow>> {
+    const { page, pageSize } = this.parsePaginationParams(filters.page, filters.pageSize);
+    const offset = (page - 1) * pageSize;
+
+    const dateFrom = this.normalizeDateOrNull(filters.dateFrom);
+    const dateTo = this.normalizeDateOrNull(filters.dateTo);
+
+    const whereClause = `
+      WHERE LOWER(COALESCE(so.status, '')) IN ('remitted', 'completed')
+        AND COALESCE(so."scheduleDate", so.created_at::text) IS NOT NULL
+        AND ($1::date IS NULL OR COALESCE(so."scheduleDate", so.created_at::text)::date >= $1::date)
+        AND ($2::date IS NULL OR COALESCE(so."scheduleDate", so.created_at::text)::date <= $2::date)
+    `;
+
+    const countResult = await this.db.query<{ total: string }>(
+      `SELECT COUNT(*)::text AS total
+        FROM tblsales_order so
+        ${whereClause}`,
+      [dateFrom, dateTo],
+    );
+
+    const total = Number(countResult.rows[0]?.total ?? 0);
+    const meta = this.buildPaginationMeta(total, page, pageSize);
+
+    if (total === 0 || page > meta.totalPages) {
+      return { data: [], meta };
+    }
+
+    const dataResult = await this.db.query<{
+      id: number;
+      soNumber: string;
+      customerName: string;
+      salesType: string;
+      status: string;
+      releaseDate: string;
+      serialCount: string;
+      totalAmount: string;
+    }>(
+      `SELECT
+          so.id,
+          COALESCE(so.so_number, '') AS "soNumber",
+          COALESCE(c.name, '') AS "customerName",
+          COALESCE(so."salesType", '') AS "salesType",
+          COALESCE(so.status, '') AS status,
+          COALESCE(so."scheduleDate", so.created_at::text)::date::text AS "releaseDate",
+          COALESCE(sc.serial_count, 0)::text AS "serialCount",
+          COALESCE(so.total_amount, 0)::text AS "totalAmount"
+        FROM tblsales_order so
+        LEFT JOIN tblcustomer c ON c.id = so.customer_id
+        LEFT JOIN LATERAL (
+          SELECT COUNT(*)::int AS serial_count
+          FROM tblserial_numbers sn
+          WHERE sn."salesId" = so.id
+        ) sc ON TRUE
+        ${whereClause}
+        ORDER BY COALESCE(so."scheduleDate", so.created_at::text)::date DESC, so.id DESC
+        LIMIT $3
+        OFFSET $4`,
+      [dateFrom, dateTo, pageSize, offset],
+    );
+
+    const data: SalesRegisterRow[] = dataResult.rows.map((row) => ({
+      id: row.id,
+      soNumber: row.soNumber,
+      customerName: row.customerName,
+      salesType: row.salesType,
+      status: row.status,
+      releaseDate: row.releaseDate,
+      serialCount: Number(row.serialCount) || 0,
+      totalAmount: Number(row.totalAmount) || 0,
     }));
+
+    return { data, meta };
+  }
+
+  async getDailyUnitReleased(filters: {
+    page?: unknown;
+    pageSize?: unknown;
+    dateFrom?: string;
+    dateTo?: string;
+  }): Promise<PaginatedResponse<DailyUnitReleasedRow>> {
+    const { page, pageSize } = this.parsePaginationParams(filters.page, filters.pageSize);
+    const offset = (page - 1) * pageSize;
+
+    const dateFrom = this.normalizeDateOrNull(filters.dateFrom);
+    const dateTo = this.normalizeDateOrNull(filters.dateTo);
+
+    const whereClause = `
+      WHERE LOWER(COALESCE(so.status, '')) IN ('remitted', 'completed')
+        AND COALESCE(so."scheduleDate", so.created_at::text) IS NOT NULL
+        AND ($1::date IS NULL OR COALESCE(so."scheduleDate", so.created_at::text)::date >= $1::date)
+        AND ($2::date IS NULL OR COALESCE(so."scheduleDate", so.created_at::text)::date <= $2::date)
+    `;
+
+    // Count distinct release dates for pagination
+    const countResult = await this.db.query<{ total: string }>(
+      `SELECT COUNT(*)::text AS total FROM (
+        SELECT COALESCE(so."scheduleDate", so.created_at::text)::date AS release_date
+        FROM tblsales_order so
+        ${whereClause}
+        GROUP BY release_date
+      ) grouped`,
+      [dateFrom, dateTo],
+    );
+
+    const total = Number(countResult.rows[0]?.total ?? 0);
+    const meta = this.buildPaginationMeta(total, page, pageSize);
+
+    if (total === 0 || page > meta.totalPages) {
+      return { data: [], meta };
+    }
+
+    // Aggregate daily unit released grouped by release date
+    const dataResult = await this.db.query<{
+      releaseDate: string;
+      orderCount: string;
+      unitCount: string;
+      totalAmount: string;
+    }>(
+      `SELECT
+          COALESCE(so."scheduleDate", so.created_at::text)::date::text AS "releaseDate",
+          COUNT(*)::text AS "orderCount",
+          COALESCE(SUM(
+            (SELECT COUNT(*) FROM tblserial_numbers sn WHERE sn."salesId" = so.id)
+          ), 0)::text AS "unitCount",
+          COALESCE(SUM(so.total_amount), 0)::text AS "totalAmount"
+        FROM tblsales_order so
+        ${whereClause}
+        GROUP BY COALESCE(so."scheduleDate", so.created_at::text)::date
+        ORDER BY COALESCE(so."scheduleDate", so.created_at::text)::date DESC
+        LIMIT $3
+        OFFSET $4`,
+      [dateFrom, dateTo, pageSize, offset],
+    );
+
+    const data: DailyUnitReleasedRow[] = dataResult.rows.map((row) => ({
+      releaseDate: row.releaseDate,
+      orderCount: Number(row.orderCount) || 0,
+      unitCount: Number(row.unitCount) || 0,
+      totalAmount: Number(row.totalAmount) || 0,
+    }));
+
+    return { data, meta };
   }
 
   async postGeneralJournal(payload: CreateGeneralJournalPayload): Promise<GeneralJournalRow & {
@@ -1317,6 +1595,488 @@ export class AccountingService {
     };
   }
 
+  async getDisbursementRegister(filters: {
+    page?: string;
+    pageSize?: string;
+    dateFrom?: string;
+    dateTo?: string;
+  }): Promise<PaginatedResponse<ChequeVoucherRow & {
+    deposits: Array<{ bankName: string; chequeNo: string; chequeDate: string | null; amount: number }>;
+    invoices: Array<{ invoiceNo: string; invoiceDate: string | null; description: string; amount: number }>;
+    accountTitles: Array<{ accountNumber: string; description: string; debit: number; credit: number }>;
+  }>> {
+    const { page, pageSize } = this.parsePaginationParams(filters.page, filters.pageSize);
+
+    let dateFrom = this.normalizeDateOrNull(filters.dateFrom);
+    let dateTo = this.normalizeDateOrNull(filters.dateTo);
+
+    // Default to current month when neither dateFrom nor dateTo provided
+    if (!dateFrom && !dateTo) {
+      const currentDate = new Date();
+      const firstDateOfMonth = new Date(currentDate.getFullYear(), currentDate.getMonth(), 1);
+      const lastDateOfMonth = new Date(currentDate.getFullYear(), currentDate.getMonth() + 1, 0);
+      dateFrom = this.normalizeDateOrNull(firstDateOfMonth.toISOString());
+      dateTo = this.normalizeDateOrNull(lastDateOfMonth.toISOString());
+    }
+
+    // Count total matching records
+    const countResult = await this.db.query<{ total: string }>(
+      `SELECT COUNT(*)::text AS total
+        FROM tblcheque_vouchers
+        WHERE released_at IS NOT NULL
+          AND ($1::date IS NULL OR voucher_date >= $1::date)
+          AND ($2::date IS NULL OR voucher_date <= $2::date)`,
+      [dateFrom, dateTo],
+    );
+
+    const total = Number(countResult.rows[0]?.total) || 0;
+    const meta = this.buildPaginationMeta(total, page, pageSize);
+
+    // If page exceeds totalPages, return empty data with correct meta
+    if (total === 0 || page > meta.totalPages) {
+      return { data: [], meta };
+    }
+
+    const offset = (page - 1) * pageSize;
+
+    // Fetch paginated parent vouchers
+    const voucherResult = await this.db.query<ChequeVoucherRow>(
+      `SELECT
+          id,
+          cv_no AS "cvNo",
+          voucher_type AS "voucherType",
+          payee,
+          voucher_date::text AS "voucherDate",
+          tin_number AS "tinNumber",
+          address,
+          zip_code AS "zipCode",
+          particulars,
+          released_at::text AS "releasedAt",
+          prepared_by AS "preparedBy"
+        FROM tblcheque_vouchers
+        WHERE released_at IS NOT NULL
+          AND ($1::date IS NULL OR voucher_date >= $1::date)
+          AND ($2::date IS NULL OR voucher_date <= $2::date)
+        ORDER BY voucher_date DESC, id DESC
+        LIMIT $3 OFFSET $4`,
+      [dateFrom, dateTo, pageSize, offset],
+    );
+
+    if (voucherResult.rows.length === 0) {
+      return { data: [], meta };
+    }
+
+    const voucherIds = voucherResult.rows.map((row) => row.id);
+
+    // Fetch child records for paginated parent IDs
+    const depositResult = await this.db.query<{
+      voucherId: number;
+      bankName: string;
+      chequeNo: string;
+      chequeDate: string | null;
+      amount: string;
+    }>(
+      `SELECT
+          voucher_id AS "voucherId",
+          COALESCE(bank_name, '') AS "bankName",
+          COALESCE(cheque_no, '') AS "chequeNo",
+          cheque_date::text AS "chequeDate",
+          amount::text AS amount
+        FROM tblcheque_voucher_deposits
+        WHERE voucher_id = ANY($1::bigint[])
+        ORDER BY id ASC`,
+      [voucherIds],
+    );
+
+    const invoiceResult = await this.db.query<{
+      voucherId: number;
+      invoiceNo: string;
+      invoiceDate: string | null;
+      description: string;
+      amount: string;
+    }>(
+      `SELECT
+          voucher_id AS "voucherId",
+          COALESCE(invoice_no, '') AS "invoiceNo",
+          invoice_date::text AS "invoiceDate",
+          COALESCE(description, '') AS description,
+          amount::text AS amount
+        FROM tblcheque_voucher_invoices
+        WHERE voucher_id = ANY($1::bigint[])
+        ORDER BY id ASC`,
+      [voucherIds],
+    );
+
+    const accountTitleResult = await this.db.query<{
+      voucherId: number;
+      accountNumber: string;
+      description: string;
+      debit: string;
+      credit: string;
+    }>(
+      `SELECT
+          voucher_id AS "voucherId",
+          account_number AS "accountNumber",
+          description,
+          debit::text AS debit,
+          credit::text AS credit
+        FROM tblcheque_voucher_account_titles
+        WHERE voucher_id = ANY($1::bigint[])
+        ORDER BY id ASC`,
+      [voucherIds],
+    );
+
+    // Group child records by voucher ID
+    const depositsByVoucher = new Map<number, Array<{ bankName: string; chequeNo: string; chequeDate: string | null; amount: number }>>();
+    for (const row of depositResult.rows) {
+      const list = depositsByVoucher.get(row.voucherId) ?? [];
+      list.push({
+        bankName: row.bankName,
+        chequeNo: row.chequeNo,
+        chequeDate: row.chequeDate,
+        amount: Number(row.amount) || 0,
+      });
+      depositsByVoucher.set(row.voucherId, list);
+    }
+
+    const invoicesByVoucher = new Map<number, Array<{ invoiceNo: string; invoiceDate: string | null; description: string; amount: number }>>();
+    for (const row of invoiceResult.rows) {
+      const list = invoicesByVoucher.get(row.voucherId) ?? [];
+      list.push({
+        invoiceNo: row.invoiceNo,
+        invoiceDate: row.invoiceDate,
+        description: row.description,
+        amount: Number(row.amount) || 0,
+      });
+      invoicesByVoucher.set(row.voucherId, list);
+    }
+
+    const accountTitlesByVoucher = new Map<number, Array<{ accountNumber: string; description: string; debit: number; credit: number }>>();
+    for (const row of accountTitleResult.rows) {
+      const list = accountTitlesByVoucher.get(row.voucherId) ?? [];
+      list.push({
+        accountNumber: row.accountNumber,
+        description: row.description,
+        debit: Number(row.debit) || 0,
+        credit: Number(row.credit) || 0,
+      });
+      accountTitlesByVoucher.set(row.voucherId, list);
+    }
+
+    const data = voucherResult.rows.map((voucher) => ({
+      ...voucher,
+      deposits: depositsByVoucher.get(voucher.id) ?? [],
+      invoices: invoicesByVoucher.get(voucher.id) ?? [],
+      accountTitles: accountTitlesByVoucher.get(voucher.id) ?? [],
+    }));
+
+    return { data, meta };
+  }
+
+  async getTax2307Report(filters: {
+    page?: string;
+    pageSize?: string;
+    dateFrom?: string;
+    dateTo?: string;
+  }): Promise<PaginatedResponse<Tax2307Row>> {
+    const { page, pageSize } = this.parsePaginationParams(filters.page, filters.pageSize);
+    const dateFrom = this.normalizeDateOrNull(filters.dateFrom);
+    const dateTo = this.normalizeDateOrNull(filters.dateTo);
+    const offset = (page - 1) * pageSize;
+
+    // Build WHERE conditions for released cheque vouchers that have
+    // account titles containing "expanded withholding tax" or "2307"
+    const baseWhere = `
+      WHERE cv.released_at IS NOT NULL
+        AND EXISTS (
+          SELECT 1 FROM tblcheque_voucher_account_titles at
+          WHERE at.voucher_id = cv.id
+            AND (
+              at.description ILIKE '%expanded withholding tax%'
+              OR at.description ILIKE '%2307%'
+            )
+        )`;
+
+    const dateWhere = dateFrom || dateTo
+      ? `AND ($1::date IS NULL OR cv.voucher_date >= $1::date)
+         AND ($2::date IS NULL OR cv.voucher_date <= $2::date)`
+      : `AND ($1::date IS NULL OR cv.voucher_date >= $1::date)
+         AND ($2::date IS NULL OR cv.voucher_date <= $2::date)`;
+
+    // Count total matching records
+    const countResult = await this.db.query<{ total: string }>(
+      `SELECT COUNT(*)::text AS total
+       FROM tblcheque_vouchers cv
+       ${baseWhere}
+       ${dateWhere}`,
+      [dateFrom, dateTo],
+    );
+
+    const total = Number(countResult.rows[0]?.total) || 0;
+    const meta = this.buildPaginationMeta(total, page, pageSize);
+
+    // If page exceeds totalPages, return empty data with correct meta
+    if (total === 0 || page > meta.totalPages) {
+      return { data: [], meta };
+    }
+
+    // Fetch paginated voucher IDs with their base data
+    const voucherResult = await this.db.query<{
+      id: number;
+      cvNo: string;
+      payee: string;
+      tinNumber: string | null;
+      address: string | null;
+      zipCode: string | null;
+      voucherDate: string;
+    }>(
+      `SELECT
+          cv.id,
+          cv.cv_no AS "cvNo",
+          cv.payee,
+          cv.tin_number AS "tinNumber",
+          cv.address,
+          cv.zip_code AS "zipCode",
+          cv.voucher_date::text AS "voucherDate"
+        FROM tblcheque_vouchers cv
+        ${baseWhere}
+        ${dateWhere}
+        ORDER BY cv.voucher_date DESC, cv.id DESC
+        LIMIT $3 OFFSET $4`,
+      [dateFrom, dateTo, pageSize, offset],
+    );
+
+    if (voucherResult.rows.length === 0) {
+      return { data: [], meta };
+    }
+
+    const voucherIds = voucherResult.rows.map((row) => row.id);
+
+    // Fetch account titles for the paginated vouchers to compute taxWithheld and vatableAmount
+    const accountTitleResult = await this.db.query<{
+      voucherId: number;
+      description: string;
+      debit: string;
+      credit: string;
+    }>(
+      `SELECT
+          voucher_id AS "voucherId",
+          COALESCE(description, '') AS description,
+          COALESCE(debit, 0)::text AS debit,
+          COALESCE(credit, 0)::text AS credit
+        FROM tblcheque_voucher_account_titles
+        WHERE voucher_id = ANY($1::bigint[])
+        ORDER BY id ASC`,
+      [voucherIds],
+    );
+
+    // Group account titles by voucher
+    const accountTitlesByVoucher = new Map<number, Array<{ description: string; debit: number; credit: number }>>();
+    for (const row of accountTitleResult.rows) {
+      const list = accountTitlesByVoucher.get(row.voucherId) ?? [];
+      list.push({
+        description: row.description,
+        debit: Number(row.debit) || 0,
+        credit: Number(row.credit) || 0,
+      });
+      accountTitlesByVoucher.set(row.voucherId, list);
+    }
+
+    // Map vouchers to Tax2307Row
+    const data: Tax2307Row[] = voucherResult.rows.map((voucher) => {
+      const accountTitles = accountTitlesByVoucher.get(voucher.id) ?? [];
+
+      // Calculate taxWithheld from withholding tax account titles
+      const withholdingRows = accountTitles.filter((at) => {
+        const desc = at.description.toLowerCase();
+        return desc.includes('expanded withholding tax') || desc.includes('2307');
+      });
+      const taxWithheld = withholdingRows.reduce(
+        (sum, at) => sum + Math.max(at.debit, at.credit),
+        0,
+      );
+
+      // Calculate vatableAmount from "purchases" account title
+      const purchasesRow = accountTitles.find(
+        (at) => at.description.toLowerCase().includes('purchases'),
+      );
+      const vatableAmount = purchasesRow?.debit || 0;
+
+      // Build supplier address
+      const address = String(voucher.address ?? '').trim();
+      const zipCode = String(voucher.zipCode ?? '').trim();
+      const supplierAddress = zipCode
+        ? `${address}${address ? ', ' : ''}${zipCode}`.trim()
+        : address;
+
+      return {
+        id: voucher.id,
+        referenceNo: String(voucher.cvNo ?? '').trim(),
+        tin: String(voucher.tinNumber ?? '').trim(),
+        supplierName: String(voucher.payee ?? '').trim(),
+        supplierAddress,
+        vatableAmount,
+        taxWithheld,
+        voucherDate: String(voucher.voucherDate ?? '').trim(),
+      };
+    });
+
+    return { data, meta };
+  }
+
+  async getWeeklySales(filters: {
+    page?: unknown;
+    pageSize?: unknown;
+    dateFrom?: string;
+    dateTo?: string;
+  }): Promise<PaginatedResponse<WeeklySalesRow>> {
+    const { page, pageSize } = this.parsePaginationParams(filters.page, filters.pageSize);
+    const offset = (page - 1) * pageSize;
+
+    const dateFrom = this.normalizeDateOrNull(filters.dateFrom);
+    const dateTo = this.normalizeDateOrNull(filters.dateTo);
+
+    // Aggregate weekly sales from remitted/completed sales orders
+    // Week start is Monday (ISO week), using date_trunc('week', date)
+    const baseWhere = `
+      WHERE LOWER(COALESCE(so.status, '')) IN ('remitted', 'completed')
+        AND COALESCE(so."scheduleDate", so.created_at::text) IS NOT NULL
+        AND ($1::date IS NULL OR COALESCE(so."scheduleDate", so.created_at::text)::date >= $1::date)
+        AND ($2::date IS NULL OR COALESCE(so."scheduleDate", so.created_at::text)::date <= $2::date)
+    `;
+
+    // Count total distinct weeks
+    const countResult = await this.db.query<{ total: string }>(
+      `SELECT COUNT(*)::text AS total FROM (
+        SELECT DATE_TRUNC('week', COALESCE(so."scheduleDate", so.created_at::text)::date) AS week_start
+        FROM tblsales_order so
+        ${baseWhere}
+        GROUP BY week_start
+      ) weeks`,
+      [dateFrom, dateTo],
+    );
+
+    const total = Number(countResult.rows[0]?.total ?? 0);
+    const meta = this.buildPaginationMeta(total, page, pageSize);
+
+    if (total === 0 || page > meta.totalPages) {
+      return { data: [], meta };
+    }
+
+    // Fetch paginated weekly aggregates sorted by week_start descending
+    const dataResult = await this.db.query<{
+      weekStart: string;
+      weekEnd: string;
+      orderCount: string;
+      unitCount: string;
+      totalAmount: string;
+    }>(
+      `SELECT
+          DATE_TRUNC('week', COALESCE(so."scheduleDate", so.created_at::text)::date)::date::text AS "weekStart",
+          (DATE_TRUNC('week', COALESCE(so."scheduleDate", so.created_at::text)::date)::date + INTERVAL '6 days')::date::text AS "weekEnd",
+          COUNT(*)::text AS "orderCount",
+          COALESCE(SUM(sc.serial_count), 0)::text AS "unitCount",
+          COALESCE(SUM(COALESCE(so.total_amount, 0)), 0)::text AS "totalAmount"
+        FROM tblsales_order so
+        LEFT JOIN LATERAL (
+          SELECT COUNT(*)::int AS serial_count
+          FROM tblserial_numbers sn
+          WHERE sn."salesId" = so.id
+        ) sc ON TRUE
+        ${baseWhere}
+        GROUP BY DATE_TRUNC('week', COALESCE(so."scheduleDate", so.created_at::text)::date)
+        ORDER BY "weekStart" DESC
+        LIMIT $3
+        OFFSET $4`,
+      [dateFrom, dateTo, pageSize, offset],
+    );
+
+    const data: WeeklySalesRow[] = dataResult.rows.map((row) => ({
+      weekStart: row.weekStart,
+      weekEnd: row.weekEnd,
+      weekLabel: `Week of ${row.weekStart}`,
+      orderCount: Number(row.orderCount) || 0,
+      unitCount: Number(row.unitCount) || 0,
+      totalAmount: Number(row.totalAmount) || 0,
+    }));
+
+    return { data, meta };
+  }
+
+  async getLowStocks(
+    page?: unknown,
+    pageSize?: unknown,
+  ): Promise<PaginatedResponse<{
+    id: number;
+    materialCode: string;
+    materialName: string;
+    brandName: string;
+    unit: string;
+    onHandStock: number;
+    reorderLevel: number;
+    sellPrice: number;
+  }>> {
+    const pagination = this.parsePaginationParams(page, pageSize);
+    const offset = (pagination.page - 1) * pagination.pageSize;
+
+    // Count total low stock materials
+    const countResult = await this.db.query<{ total: string }>(
+      `SELECT COUNT(*) AS total
+       FROM tblmaterials
+       WHERE deleted_at IS NULL
+         AND on_hand_stock <= reorder_level`,
+    );
+    const total = Number(countResult.rows[0]?.total) || 0;
+
+    const meta = this.buildPaginationMeta(total, pagination.page, pagination.pageSize);
+
+    if (total === 0) {
+      return { data: [], meta };
+    }
+
+    // Fetch paginated low stock materials
+    const result = await this.db.query<{
+      id: number;
+      materialCode: string;
+      materialName: string;
+      brandName: string;
+      unit: string;
+      onHandStock: string;
+      reorderLevel: string;
+      sellPrice: string;
+    }>(
+      `SELECT
+          m.id,
+          COALESCE(m.material_code, '') AS "materialCode",
+          m.material_name AS "materialName",
+          COALESCE(b.brand_name, '') AS "brandName",
+          COALESCE(m.unit, 'PCS') AS unit,
+          m.on_hand_stock::text AS "onHandStock",
+          m.reorder_level::text AS "reorderLevel",
+          COALESCE(m.sell_price, 0)::text AS "sellPrice"
+       FROM tblmaterials m
+       LEFT JOIN tblbrands b ON b.id = m.brand_id
+       WHERE m.deleted_at IS NULL
+         AND m.on_hand_stock <= m.reorder_level
+       ORDER BY m.material_name ASC, m.id ASC
+       LIMIT $1 OFFSET $2`,
+      [pagination.pageSize, offset],
+    );
+
+    const data = result.rows.map((row) => ({
+      id: row.id,
+      materialCode: row.materialCode,
+      materialName: row.materialName,
+      brandName: row.brandName,
+      unit: row.unit,
+      onHandStock: Number(row.onHandStock) || 0,
+      reorderLevel: Number(row.reorderLevel) || 0,
+      sellPrice: Number(row.sellPrice) || 0,
+    }));
+
+    return { data, meta };
+  }
+
   private async getChequeVoucherNumberFormat(): Promise<{ prefix: string; suffix: string }> {
     try {
       const result = await this.db.query<{ cvNumberPrefix: string | null; cvNumberSuffix: string | null }>(
@@ -1618,7 +2378,63 @@ export class AccountingService {
       signatories: this.normalizeReportSignatories(source.signatories),
       baseColumns: this.normalizeDisbursementBaseColumns(source.baseColumns),
       defaultColumns: this.normalizeDisbursementDefaultColumns(source.defaultColumns),
+      signatoryName: this.toStringWithLimit(source.signatoryName, '', 200),
+      signatoryTitle: this.toStringWithLimit(source.signatoryTitle, '', 200),
+      signatoryTin: this.toStringWithLimit(source.signatoryTin, '', 20),
+      signatoryImage: this.normalizeSignatoryImage(source.signatoryImage),
     };
+  }
+
+  private normalizeSignatoryImage(value: unknown): string {
+    if (value === null || value === undefined) {
+      return '';
+    }
+
+    const str = String(value).trim();
+    if (!str) {
+      return '';
+    }
+
+    if (str.length > 500000) {
+      return '';
+    }
+
+    // Accept data URI format (e.g., data:image/png;base64,...)
+    if (str.startsWith('data:image/')) {
+      return str;
+    }
+
+    // Validate as plain base64 string
+    if (this.isValidBase64(str)) {
+      return str;
+    }
+
+    return '';
+  }
+
+  private isValidBase64(value: string): boolean {
+    if (!value) {
+      return false;
+    }
+
+    // Base64 strings must only contain valid characters and have proper padding
+    const base64Regex = /^[A-Za-z0-9+/]*={0,2}$/;
+    if (!base64Regex.test(value)) {
+      return false;
+    }
+
+    // Length must be a multiple of 4 for valid base64
+    if (value.length % 4 !== 0) {
+      return false;
+    }
+
+    try {
+      // Attempt to decode and verify it doesn't throw
+      Buffer.from(value, 'base64');
+      return true;
+    } catch {
+      return false;
+    }
   }
 
   private normalizeTextFilter(value: unknown, maxLength: number, mode: 'truncate' | 'reject', errorMessage?: string): string | null {
@@ -1705,5 +2521,33 @@ export class AccountingService {
   private nullIfBlank(value: unknown): string | null {
     const trimmed = String(value ?? '').trim();
     return trimmed.length > 0 ? trimmed : null;
+  }
+
+  private parsePaginationParams(
+    pageInput: unknown,
+    pageSizeInput: unknown,
+    defaults?: { page?: number; pageSize?: number; maxPageSize?: number },
+  ): PaginationParams {
+    const defaultPage = defaults?.page ?? 1;
+    const defaultPageSize = defaults?.pageSize ?? 25;
+    const maxPageSize = defaults?.maxPageSize ?? 200;
+
+    let page = Number(pageInput);
+    if (!Number.isFinite(page) || !Number.isInteger(page) || page < 1) {
+      page = defaultPage;
+    }
+
+    let pageSize = Number(pageSizeInput);
+    if (!Number.isFinite(pageSize) || !Number.isInteger(pageSize)) {
+      pageSize = defaultPageSize;
+    }
+    pageSize = Math.max(1, Math.min(maxPageSize, pageSize));
+
+    return { page, pageSize };
+  }
+
+  private buildPaginationMeta(total: number, page: number, pageSize: number): PaginationMeta {
+    const totalPages = total === 0 ? 0 : Math.ceil(total / pageSize);
+    return { page, pageSize, total, totalPages };
   }
 }

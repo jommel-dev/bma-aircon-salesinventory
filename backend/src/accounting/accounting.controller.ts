@@ -1,4 +1,4 @@
-import { Body, Controller, Get, Param, Patch, Post, Put, Query, Req, UseGuards } from '@nestjs/common';
+import { BadRequestException, Body, Controller, Get, Param, Patch, Post, Put, Query, Req, UseGuards } from '@nestjs/common';
 import { AccountingService } from './accounting.service';
 import type {
   AccountingReportPrintSettingsPayload,
@@ -81,13 +81,49 @@ export class AccountingController {
 
   @Get('cheque-vouchers')
   async listChequeVouchers(
+    @Query('page') page?: string,
+    @Query('pageSize') pageSize?: string,
     @Query('dateFrom') dateFrom?: string,
     @Query('dateTo') dateTo?: string,
     @Query('invoice') invoice?: string,
     @Query('particulars') particulars?: string,
     @Query('chequeNo') chequeNo?: string,
   ): Promise<{ success: boolean; data: unknown }> {
-    const data = await this.accountingService.listChequeVouchers({ dateFrom, dateTo, invoice, particulars, chequeNo });
+    // Validate page if provided: must be a numeric integer >= 1
+    if (page !== undefined && page !== '') {
+      const pageNum = Number(page);
+      if (!Number.isFinite(pageNum) || !Number.isInteger(pageNum) || pageNum < 1) {
+        throw new BadRequestException('page must be an integer greater than or equal to 1');
+      }
+    }
+
+    // Validate pageSize if provided: must be a numeric integer between 1 and 100
+    if (pageSize !== undefined && pageSize !== '') {
+      const pageSizeNum = Number(pageSize);
+      if (!Number.isFinite(pageSizeNum) || !Number.isInteger(pageSizeNum) || pageSizeNum < 1 || pageSizeNum > 100) {
+        throw new BadRequestException('pageSize must be an integer between 1 and 100');
+      }
+    }
+
+    const data = await this.accountingService.listChequeVouchers(
+      { dateFrom, dateTo, invoice, particulars, chequeNo },
+      page,
+      pageSize,
+    );
+    return {
+      success: true,
+      data,
+    };
+  }
+
+  @Get('sales-register')
+  async getSalesRegister(
+    @Query('page') page?: string,
+    @Query('pageSize') pageSize?: string,
+    @Query('dateFrom') dateFrom?: string,
+    @Query('dateTo') dateTo?: string,
+  ): Promise<{ success: boolean; data: unknown }> {
+    const data = await this.accountingService.getSalesRegister({ page, pageSize, dateFrom, dateTo });
     return {
       success: true,
       data,
@@ -96,10 +132,12 @@ export class AccountingController {
 
   @Get('general-journals')
   async listGeneralJournals(
+    @Query('page') page?: string,
+    @Query('pageSize') pageSize?: string,
     @Query('dateFrom') dateFrom?: string,
     @Query('dateTo') dateTo?: string,
   ): Promise<{ success: boolean; data: unknown }> {
-    const data = await this.accountingService.listGeneralJournals({ dateFrom, dateTo });
+    const data = await this.accountingService.listGeneralJournals({ dateFrom, dateTo, page, pageSize });
     return {
       success: true,
       data,
@@ -154,6 +192,34 @@ export class AccountingController {
     };
   }
 
+  @Get('tax-2307-report')
+  async getTax2307Report(
+    @Query('page') page?: string,
+    @Query('pageSize') pageSize?: string,
+    @Query('dateFrom') dateFrom?: string,
+    @Query('dateTo') dateTo?: string,
+  ): Promise<{ success: boolean; data: unknown }> {
+    const result = await this.accountingService.getTax2307Report({ page, pageSize, dateFrom, dateTo });
+    return {
+      success: true,
+      data: result,
+    };
+  }
+
+  @Get('disbursement-register')
+  async getDisbursementRegister(
+    @Query('page') page?: string,
+    @Query('pageSize') pageSize?: string,
+    @Query('dateFrom') dateFrom?: string,
+    @Query('dateTo') dateTo?: string,
+  ): Promise<{ success: boolean; data: unknown }> {
+    const result = await this.accountingService.getDisbursementRegister({ page, pageSize, dateFrom, dateTo });
+    return {
+      success: true,
+      data: result,
+    };
+  }
+
   @UseGuards(JwtAuthGuard)
   @Patch('cheque-vouchers/:cvNo')
   async updateChequeVoucher(
@@ -163,6 +229,46 @@ export class AccountingController {
   ): Promise<{ success: boolean; data: unknown }> {
     const preparedBy = String(request.user?.fullname ?? request.user?.username ?? '').trim() || undefined;
     const data = await this.accountingService.updateChequeVoucher(cvNo, { ...payload, preparedBy });
+    return {
+      success: true,
+      data,
+    };
+  }
+
+  @Get('weekly-sales')
+  async getWeeklySales(
+    @Query('page') page?: string,
+    @Query('pageSize') pageSize?: string,
+    @Query('dateFrom') dateFrom?: string,
+    @Query('dateTo') dateTo?: string,
+  ): Promise<{ success: boolean; data: unknown }> {
+    const data = await this.accountingService.getWeeklySales({ page, pageSize, dateFrom, dateTo });
+    return {
+      success: true,
+      data,
+    };
+  }
+
+  @Get('daily-unit-released')
+  async getDailyUnitReleased(
+    @Query('page') page?: string,
+    @Query('pageSize') pageSize?: string,
+    @Query('dateFrom') dateFrom?: string,
+    @Query('dateTo') dateTo?: string,
+  ): Promise<{ success: boolean; data: unknown }> {
+    const data = await this.accountingService.getDailyUnitReleased({ page, pageSize, dateFrom, dateTo });
+    return {
+      success: true,
+      data,
+    };
+  }
+
+  @Get('low-stocks')
+  async getLowStocks(
+    @Query('page') page?: string,
+    @Query('pageSize') pageSize?: string,
+  ): Promise<{ success: boolean; data: unknown }> {
+    const data = await this.accountingService.getLowStocks(page, pageSize);
     return {
       success: true,
       data,

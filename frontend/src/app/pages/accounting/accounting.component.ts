@@ -183,6 +183,10 @@ interface Tax2307PrintSettings {
   footerLeft: string;
   footerCenter: string;
   footerRight: string;
+  signatoryName: string;
+  signatoryTitle: string;
+  signatoryTin: string;
+  signatoryImage: string;
 }
 
 interface GeneralJournalPrintSettings {
@@ -287,6 +291,13 @@ interface Tax2307SupplierSummary {
   taxWithheld: number;
 }
 
+interface PaginationState {
+  page: number;
+  pageSize: number;
+  total: number;
+  totalPages: number;
+}
+
 @Component({
   selector: 'app-accounting',
   imports: [CommonModule, FormsModule, PageBreadcrumbComponent, DatePickerComponent],
@@ -363,6 +374,8 @@ export class AccountingComponent implements OnInit {
   generalJournalPrintSettingsNotice = '';
   chequeVoucherPrintSettings: ChequeVoucherPrintSettings = this.createDefaultChequeVoucherPrintSettings();
   tax2307PrintSettings: Tax2307PrintSettings = this.createDefaultTax2307PrintSettings();
+  signatoryImagePreview: string | null = null;
+  signatoryUploadError = '';
   generalJournalPrintSettings: GeneralJournalPrintSettings = this.createDefaultGeneralJournalPrintSettings();
     disbursementRegisterPrintSettings: DisbursementRegisterPrintSettings = this.createDefaultDisbursementRegisterPrintSettings();
     isDisbursementRegisterPrintSettingsDrawerOpen = false;
@@ -374,6 +387,19 @@ export class AccountingComponent implements OnInit {
     isLoadingDisbursementRegister = false;
     disbursementRegisterError = '';
     isDisbursementRegisterPrintPreviewOpen = false;
+
+  // Pagination state per report
+  chequeVoucherPagination: PaginationState = { page: 1, pageSize: 25, total: 0, totalPages: 0 };
+  generalJournalPagination: PaginationState = { page: 1, pageSize: 25, total: 0, totalPages: 0 };
+  salesRegisterPagination: PaginationState = { page: 1, pageSize: 25, total: 0, totalPages: 0 };
+  tax2307Pagination: PaginationState = { page: 1, pageSize: 25, total: 0, totalPages: 0 };
+  disbursementPagination: PaginationState = { page: 1, pageSize: 25, total: 0, totalPages: 0 };
+  weeklySalesPagination: PaginationState = { page: 1, pageSize: 25, total: 0, totalPages: 0 };
+  dailyUnitReleasedPagination: PaginationState = { page: 1, pageSize: 25, total: 0, totalPages: 0 };
+  lowStocksPagination: PaginationState = { page: 1, pageSize: 25, total: 0, totalPages: 0 };
+
+  pageSizeOptions = [10, 25, 50, 100];
+
   private readonly dummyChequeVoucherPreview: ChequeVoucherReleasedRecord = {
     cvNo: 'CV-2026-0042',
     voucherType: 'Bank Voucher',
@@ -471,6 +497,7 @@ export class AccountingComponent implements OnInit {
   weeklySalesRows: WeeklySalesRow[] = [];
   dailyUnitReleasedRows: DailyUnitReleasedRow[] = [];
   lowStockRows: LowStockRow[] = [];
+  tax2307ReportRows: Tax2307ReportRow[] = [];
   releasedChequeVouchers: ChequeVoucherReleasedRecord[] = [];
   releasedGeneralJournals: GeneralJournalReleasedRecord[] = [];
   accountTitleCatalog: AccountTitleDraft[] = [];
@@ -833,7 +860,7 @@ export class AccountingComponent implements OnInit {
 
     if (reportKey === 'tax-2307-report') {
       this.applyDefaultTax2307DateRange();
-      void this.loadReleasedChequeVouchers();
+      void this.loadTax2307ReportPaginated();
     }
   }
 
@@ -914,6 +941,12 @@ export class AccountingComponent implements OnInit {
       return;
     }
 
+    // Reset pagination to page 1 when filters change
+    const pagination = this.getPaginationState(this.selectedReportKey);
+    if (pagination) {
+      pagination.page = 1;
+    }
+
     this.isLoadingReport = true;
     this.reportError = '';
 
@@ -928,15 +961,19 @@ export class AccountingComponent implements OnInit {
         return;
       }
 
-      const salesRegisterRows = await this.loadFilteredSalesRegisterRows();
-      this.salesRegisterRows = salesRegisterRows;
+      if (this.selectedReportKey === 'sales-register') {
+        await this.loadSalesRegisterPaginated();
+        return;
+      }
 
       if (this.selectedReportKey === 'weekly-sales') {
-        this.weeklySalesRows = this.buildWeeklySalesRows(salesRegisterRows);
+        await this.loadWeeklySalesPaginated();
+        return;
       }
 
       if (this.selectedReportKey === 'daily-unit-released') {
-        this.dailyUnitReleasedRows = this.buildDailyUnitReleasedRows(salesRegisterRows);
+        await this.loadDailyUnitReleasedPaginated();
+        return;
       }
     } catch (error: unknown) {
       if (axios.isAxiosError(error)) {
@@ -1168,6 +1205,7 @@ export class AccountingComponent implements OnInit {
   openTax2307PrintSettingsDrawer(): void {
     void this.loadTax2307PrintSettings();
     this.tax2307PrintSettingsNotice = '';
+    this.signatoryUploadError = '';
     this.isTax2307PrintSettingsDrawerOpen = true;
   }
 
@@ -1185,6 +1223,69 @@ export class AccountingComponent implements OnInit {
   closeTax2307PrintSettingsDrawer(): void {
     this.isTax2307PrintSettingsDrawerOpen = false;
     this.tax2307PrintSettingsNotice = '';
+    this.signatoryUploadError = '';
+  }
+
+  onSignatoryImageSelected(event: Event): void {
+    const input = event.target as HTMLInputElement;
+    const file = input?.files?.[0];
+    if (!file) {
+      return;
+    }
+
+    this.signatoryUploadError = '';
+
+    // Validate file type
+    const validTypes = ['image/png', 'image/jpeg'];
+    if (!validTypes.includes(file.type)) {
+      this.signatoryUploadError = 'Accepted formats are PNG and JPEG only.';
+      input.value = '';
+      return;
+    }
+
+    // Validate file size (max 2 MB)
+    const maxSizeBytes = 2 * 1024 * 1024;
+    if (file.size > maxSizeBytes) {
+      this.signatoryUploadError = 'Maximum allowed file size is 2 MB.';
+      input.value = '';
+      return;
+    }
+
+    // Validate image dimensions
+    const reader = new FileReader();
+    reader.onload = (e) => {
+      const dataUrl = e.target?.result as string;
+      const img = new Image();
+      img.onload = () => {
+        if (img.width < 100 || img.height < 50 || img.width > 600 || img.height > 300) {
+          this.signatoryUploadError = 'Allowed dimensions: 100×50 to 600×300 pixels.';
+          input.value = '';
+          return;
+        }
+
+        // All validations passed
+        this.tax2307PrintSettings.signatoryImage = dataUrl;
+        this.signatoryImagePreview = dataUrl;
+        this.signatoryUploadError = '';
+        input.value = '';
+      };
+      img.onerror = () => {
+        this.signatoryUploadError = 'Unable to read image file.';
+        input.value = '';
+      };
+      img.src = dataUrl;
+    };
+    reader.onerror = () => {
+      this.signatoryUploadError = 'Unable to read file.';
+      input.value = '';
+    };
+    reader.readAsDataURL(file);
+  }
+
+  removeSignatoryImage(): void {
+    this.tax2307PrintSettings.signatoryImage = '';
+    this.signatoryImagePreview = null;
+    this.signatoryUploadError = '';
   }
 
   closeGeneralJournalPrintSettingsDrawer(): void {
@@ -1311,6 +1412,8 @@ export class AccountingComponent implements OnInit {
 
   async resetTax2307PrintSettings(): Promise<void> {
     this.tax2307PrintSettings = this.createDefaultTax2307PrintSettings();
+    this.signatoryImagePreview = null;
+    this.signatoryUploadError = '';
     if (this.isSavingTax2307PrintSettings) {
       return;
     }
@@ -1755,15 +1858,18 @@ export class AccountingComponent implements OnInit {
   clearChequeVoucherFilters(): void {
     this.applyDefaultChequeVoucherDateRange();
     this.voucherSearchQuery = '';
+    this.chequeVoucherPagination.page = 1;
     void this.loadReleasedChequeVouchers();
   }
 
   clearChequeVoucherSearchFilters(): void {
     this.voucherSearchQuery = '';
+    this.chequeVoucherPagination.page = 1;
     void this.loadReleasedChequeVouchers(this.chequeVoucherListDateFrom, this.chequeVoucherListDateTo);
   }
 
   applyChequeVoucherFilters(): void {
+    this.chequeVoucherPagination.page = 1;
     void this.loadReleasedChequeVouchers(this.chequeVoucherListDateFrom, this.chequeVoucherListDateTo);
   }
 
@@ -1779,14 +1885,117 @@ export class AccountingComponent implements OnInit {
 
     this.reportError = '';
     // Reload cheque voucher data with the new date range
-    void this.loadReleasedChequeVouchers(this.tax2307DateFrom, this.tax2307DateTo);
+    this.tax2307Pagination.page = 1;
+    void this.loadTax2307ReportPaginated();
   }
 
   clearTax2307Filters(): void {
     this.applyDefaultTax2307DateRange();
     this.tax2307SearchQuery = '';
     this.tax2307SupplierFilter = '';
+    this.tax2307Pagination.page = 1;
     this.reportError = '';
+  }
+
+  onPageChange(report: string, page: number): void {
+    const pagination = this.getPaginationState(report);
+    if (!pagination) return;
+
+    if (page < 1 || page > pagination.totalPages) return;
+    pagination.page = page;
+    void this.reloadReportForPagination(report);
+  }
+
+  onPageSizeChange(report: string, pageSize: number): void {
+    const pagination = this.getPaginationState(report);
+    if (!pagination) return;
+
+    pagination.pageSize = pageSize;
+    pagination.page = 1;
+    void this.reloadReportForPagination(report);
+  }
+
+  private getPaginationState(report: string): PaginationState | null {
+    switch (report) {
+      case 'cheque-voucher': return this.chequeVoucherPagination;
+      case 'general-journal-register': return this.generalJournalPagination;
+      case 'sales-register': return this.salesRegisterPagination;
+      case 'tax-2307-report': return this.tax2307Pagination;
+      case 'disbursement-register': return this.disbursementPagination;
+      case 'weekly-sales': return this.weeklySalesPagination;
+      case 'daily-unit-released': return this.dailyUnitReleasedPagination;
+      case 'low-stocks-report': return this.lowStocksPagination;
+      default: return null;
+    }
+  }
+
+  private async reloadReportForPagination(report: string): Promise<void> {
+    switch (report) {
+      case 'cheque-voucher':
+        await this.loadReleasedChequeVouchers(this.chequeVoucherListDateFrom, this.chequeVoucherListDateTo);
+        break;
+      case 'general-journal-register':
+        await this.loadReleasedGeneralJournals(this.generalJournalListDateFrom, this.generalJournalListDateTo);
+        break;
+      case 'sales-register':
+        this.isLoadingReport = true;
+        this.reportError = '';
+        try {
+          await this.loadSalesRegisterPaginated();
+        } catch (error: unknown) {
+          this.reportError = this.extractErrorMessage(error, 'Unable to load accounting report');
+        } finally {
+          this.isLoadingReport = false;
+        }
+        break;
+      case 'weekly-sales':
+        this.isLoadingReport = true;
+        this.reportError = '';
+        try {
+          await this.loadWeeklySalesPaginated();
+        } catch (error: unknown) {
+          this.reportError = this.extractErrorMessage(error, 'Unable to load accounting report');
+        } finally {
+          this.isLoadingReport = false;
+        }
+        break;
+      case 'daily-unit-released':
+        this.isLoadingReport = true;
+        this.reportError = '';
+        try {
+          await this.loadDailyUnitReleasedPaginated();
+        } catch (error: unknown) {
+          this.reportError = this.extractErrorMessage(error, 'Unable to load accounting report');
+        } finally {
+          this.isLoadingReport = false;
+        }
+        break;
+      case 'low-stocks-report':
+        this.isLoadingReport = true;
+        this.reportError = '';
+        try {
+          await this.loadLowStockReport();
+        } catch (error: unknown) {
+          this.reportError = this.extractErrorMessage(error, 'Unable to load accounting report');
+        } finally {
+          this.isLoadingReport = false;
+        }
+        break;
+      case 'tax-2307-report':
+        this.isLoadingReport = true;
+        this.reportError = '';
+        try {
+          await this.loadTax2307ReportPaginated();
+        } catch (error: unknown) {
+          this.reportError = this.extractErrorMessage(error, 'Unable to load accounting report');
+        } finally {
+          this.isLoadingReport = false;
+        }
+        break;
+      case 'disbursement-register':
+        await this.loadDisbursementRegister();
+        break;
+    }
   }
 
   async viewTax2307Row(row: Tax2307ReportRow): Promise<void> {
@@ -2072,6 +2281,10 @@ export class AccountingComponent implements OnInit {
       footerLeft: '',
       footerCenter: '',
       footerRight: '',
+      signatoryName: '',
+      signatoryTitle: '',
+      signatoryTin: '',
+      signatoryImage: '',
     };
   }
 
@@ -2513,6 +2726,10 @@ export class AccountingComponent implements OnInit {
       footerLeft: String(payload?.footerLeft ?? defaults.footerLeft ?? '').trim().slice(0, 200),
       footerCenter: String(payload?.footerCenter ?? defaults.footerCenter ?? '').trim().slice(0, 200),
       footerRight: String(payload?.footerRight ?? defaults.footerRight ?? '').trim().slice(0, 200),
+      signatoryName: String(payload?.signatoryName ?? defaults.signatoryName ?? '').trim().slice(0, 120),
+      signatoryTitle: String(payload?.signatoryTitle ?? defaults.signatoryTitle ?? '').trim().slice(0, 80),
+      signatoryTin: String(payload?.signatoryTin ?? defaults.signatoryTin ?? '').trim().slice(0, 17),
+      signatoryImage: String(payload?.signatoryImage ?? defaults.signatoryImage ?? ''),
     };
   }
 
@@ -2742,6 +2959,7 @@ export class AccountingComponent implements OnInit {
         JSON.stringify(this.tax2307PrintSettings),
       );
 
+      this.signatoryImagePreview = this.tax2307PrintSettings.signatoryImage || null;
       this.isLoadingTax2307PrintSettings = false;
       return;
     } catch {
@@ -2752,14 +2970,17 @@ export class AccountingComponent implements OnInit {
       const raw = localStorage.getItem(this.tax2307PrintSettingsStorageKey);
       if (!raw) {
         this.tax2307PrintSettings = defaults;
+        this.signatoryImagePreview = null;
         this.isLoadingTax2307PrintSettings = false;
         return;
       }
 
       const parsed = JSON.parse(raw) as Partial<Tax2307PrintSettings>;
       this.tax2307PrintSettings = this.normalizeTax2307PrintSettings(parsed, defaults);
+      this.signatoryImagePreview = this.tax2307PrintSettings.signatoryImage || null;
     } catch {
       this.tax2307PrintSettings = defaults;
+      this.signatoryImagePreview = null;
     } finally {
       this.isLoadingTax2307PrintSettings = false;
     }
@@ -2993,29 +3214,50 @@ export class AccountingComponent implements OnInit {
   }
 
   private async loadReleasedChequeVouchers(dateFrom?: string, dateTo?: string): Promise<void> {
+    this.isLoadingReport = true;
+    this.reportError = '';
+
     try {
       const searchTerm = this.voucherSearchQuery.trim() || undefined;
-      const response = await apiClient.get<{ success: boolean; data?: ChequeVoucherReleasedRecord[] }>(
-        '/accounting/cheque-vouchers',
-        {
-          params: {
-            dateFrom: searchTerm ? undefined : (dateFrom || undefined),
-            dateTo: searchTerm ? undefined : (dateTo || undefined),
-            invoice: searchTerm,
-            particulars: searchTerm,
-            chequeNo: searchTerm,
+      const { page, pageSize } = this.chequeVoucherPagination;
+
+      const response = await this.fetchWithTimeout(
+        apiClient.get<{ success: boolean; data?: { data: ChequeVoucherReleasedRecord[]; meta: { page: number; pageSize: number; total: number; totalPages: number } } }>(
+          '/accounting/cheque-vouchers',
+          {
+            params: {
+              page: String(page),
+              pageSize: String(pageSize),
+              dateFrom: searchTerm ? undefined : (dateFrom || undefined),
+              dateTo: searchTerm ? undefined : (dateTo || undefined),
+              invoice: searchTerm,
+              particulars: searchTerm,
+              chequeNo: searchTerm,
+            },
           },
-        },
+        ),
+        30000,
       );
 
-      if (!response.data?.success) {
+      if (!response.data?.success || !response.data.data) {
         this.releasedChequeVouchers = [];
+        this.chequeVoucherPagination.total = 0;
+        this.chequeVoucherPagination.totalPages = 0;
         return;
       }
 
-      this.releasedChequeVouchers = Array.isArray(response.data.data) ? response.data.data : [];
-    } catch {
-      this.releasedChequeVouchers = [];
+      const envelope = response.data.data;
+      this.releasedChequeVouchers = Array.isArray(envelope.data) ? envelope.data : [];
+      if (envelope.meta) {
+        this.chequeVoucherPagination.total = envelope.meta.total;
+        this.chequeVoucherPagination.totalPages = envelope.meta.totalPages;
+        this.chequeVoucherPagination.page = envelope.meta.page;
+        this.chequeVoucherPagination.pageSize = envelope.meta.pageSize;
+      }
+    } catch (error: unknown) {
+      this.reportError = this.extractErrorMessage(error, 'Unable to load cheque vouchers. Please try again.');
+    } finally {
+      this.isLoadingReport = false;
     }
   }
 
@@ -3035,15 +3277,33 @@ export class AccountingComponent implements OnInit {
     const dateTo = `${year}-${String(month).padStart(2, '0')}-${String(lastDay).padStart(2, '0')}`;
 
     try {
-      const response = await apiClient.get<{ success: boolean; data?: ChequeVoucherReleasedRecord[] }>(
-        '/accounting/cheque-vouchers',
-        { params: { dateFrom, dateTo } },
+      const { page, pageSize } = this.disbursementPagination;
+
+      const response = await this.fetchWithTimeout(
+        apiClient.get<{ success: boolean; data?: { data: ChequeVoucherReleasedRecord[]; meta: { page: number; pageSize: number; total: number; totalPages: number } } }>(
+          '/accounting/disbursement-register',
+          { params: { page: String(page), pageSize: String(pageSize), dateFrom, dateTo } },
+        ),
+        30000,
       );
 
-      this.disbursementRegisterData = Array.isArray(response.data?.data) ? response.data.data : [];
-    } catch {
-      this.disbursementRegisterError = 'Unable to load disbursement data. Please try again.';
-      this.disbursementRegisterData = [];
+      if (!response.data?.success || !response.data.data) {
+        this.disbursementRegisterData = [];
+        this.disbursementPagination.total = 0;
+        this.disbursementPagination.totalPages = 0;
+        return;
+      }
+
+      const envelope = response.data.data;
+      this.disbursementRegisterData = Array.isArray(envelope.data) ? envelope.data : [];
+      if (envelope.meta) {
+        this.disbursementPagination.total = envelope.meta.total;
+        this.disbursementPagination.totalPages = envelope.meta.totalPages;
+        this.disbursementPagination.page = envelope.meta.page;
+        this.disbursementPagination.pageSize = envelope.meta.pageSize;
+      }
+    } catch (error: unknown) {
+      this.disbursementRegisterError = this.extractErrorMessage(error, 'Unable to load disbursement data. Please try again.');
     } finally {
       this.isLoadingDisbursementRegister = false;
     }
@@ -3113,37 +3373,57 @@ export class AccountingComponent implements OnInit {
 
   private async loadReleasedGeneralJournals(dateFrom?: string, dateTo?: string): Promise<void> {
     this.isLoadingGeneralJournalData = true;
+    this.reportError = '';
+
     try {
-      const response = await apiClient.get<{ success: boolean; data?: GeneralJournalReleasedRecord[] }>(
-        '/accounting/general-journals',
-        {
-          params: {
-            dateFrom: dateFrom || undefined,
-            dateTo: dateTo || undefined,
+      const { page, pageSize } = this.generalJournalPagination;
+
+      const response = await this.fetchWithTimeout(
+        apiClient.get<{ success: boolean; data?: { data: GeneralJournalReleasedRecord[]; meta: { page: number; pageSize: number; total: number; totalPages: number } } }>(
+          '/accounting/general-journals',
+          {
+            params: {
+              page: String(page),
+              pageSize: String(pageSize),
+              dateFrom: dateFrom || undefined,
+              dateTo: dateTo || undefined,
+            },
           },
-        },
+        ),
+        30000,
       );
 
-      if (!response.data?.success) {
+      if (!response.data?.success || !response.data.data) {
         this.releasedGeneralJournals = [];
+        this.generalJournalPagination.total = 0;
+        this.generalJournalPagination.totalPages = 0;
         this.isLoadingGeneralJournalData = false;
         return;
       }
 
-      this.releasedGeneralJournals = Array.isArray(response.data.data) ? response.data.data : [];
-    } catch {
-      this.releasedGeneralJournals = [];
+      const envelope = response.data.data;
+      this.releasedGeneralJournals = Array.isArray(envelope.data) ? envelope.data : [];
+      if (envelope.meta) {
+        this.generalJournalPagination.total = envelope.meta.total;
+        this.generalJournalPagination.totalPages = envelope.meta.totalPages;
+        this.generalJournalPagination.page = envelope.meta.page;
+        this.generalJournalPagination.pageSize = envelope.meta.pageSize;
+      }
+    } catch (error: unknown) {
+      this.reportError = this.extractErrorMessage(error, 'Unable to load general journals. Please try again.');
     } finally {
       this.isLoadingGeneralJournalData = false;
     }
   }
 
   async applyGeneralJournalFilters(): Promise<void> {
+    this.generalJournalPagination.page = 1;
     await this.loadReleasedGeneralJournals(this.generalJournalListDateFrom, this.generalJournalListDateTo);
   }
 
   async clearGeneralJournalFilters(): Promise<void> {
     this.applyDefaultGeneralJournalDateRange();
+    this.generalJournalPagination.page = 1;
     await this.loadReleasedGeneralJournals(this.generalJournalListDateFrom, this.generalJournalListDateTo);
   }
 
@@ -3360,6 +3640,12 @@ export class AccountingComponent implements OnInit {
   }
 
   private getTax2307BaseRows(): Tax2307ReportRow[] {
+    // Use pre-fetched paginated tax 2307 rows if available
+    if (this.tax2307ReportRows.length > 0) {
+      return this.tax2307ReportRows;
+    }
+
+    // Fallback: derive from released cheque vouchers (used for PDF generation)
     return this.releasedChequeVouchers
       .filter((voucher) => this.isTax2307WithinDateRange(voucher.voucherDate || voucher.releasedAt))
       .map((voucher) => {
@@ -3608,8 +3894,25 @@ export class AccountingComponent implements OnInit {
   }
 
   private async loadLowStockReport(): Promise<void> {
-    const response = await apiClient.get<Array<Record<string, unknown>>>('/inventory/materials/low-stock');
-    const items = Array.isArray(response.data) ? response.data : [];
+    const { page, pageSize } = this.lowStocksPagination;
+
+    const response = await this.fetchWithTimeout(
+      apiClient.get<{ success: boolean; data?: { data: Array<Record<string, unknown>>; meta: { page: number; pageSize: number; total: number; totalPages: number } } }>(
+        '/accounting/low-stocks',
+        { params: { page: String(page), pageSize: String(pageSize) } },
+      ),
+      30000,
+    );
+
+    if (!response.data?.success || !response.data.data) {
+      this.lowStockRows = [];
+      this.lowStocksPagination.total = 0;
+      this.lowStocksPagination.totalPages = 0;
+      return;
+    }
+
+    const envelope = response.data.data;
+    const items = Array.isArray(envelope.data) ? envelope.data : [];
 
     this.lowStockRows = items.map((item) => ({
       id: Number(item['id']) || 0,
@@ -3621,6 +3924,182 @@ export class AccountingComponent implements OnInit {
       reorderLevel: Number(item['reorder_level'] ?? item['reorderLevel'] ?? 0),
       sellPrice: Number(item['sell_price'] ?? item['sellPrice'] ?? 0),
     }));
+
+    if (envelope.meta) {
+      this.lowStocksPagination.total = envelope.meta.total;
+      this.lowStocksPagination.totalPages = envelope.meta.totalPages;
+      this.lowStocksPagination.page = envelope.meta.page;
+      this.lowStocksPagination.pageSize = envelope.meta.pageSize;
+    }
+  }
+
+  private async loadSalesRegisterPaginated(): Promise<void> {
+    const { page, pageSize } = this.salesRegisterPagination;
+
+    const response = await this.fetchWithTimeout(
+      apiClient.get<{ success: boolean; data?: { data: SalesRegisterRow[]; meta: { page: number; pageSize: number; total: number; totalPages: number } } }>(
+        '/accounting/sales-register',
+        {
+          params: {
+            page: String(page),
+            pageSize: String(pageSize),
+            dateFrom: this.reportDateFrom || undefined,
+            dateTo: this.reportDateTo || undefined,
+          },
+        },
+      ),
+      30000,
+    );
+
+    if (!response.data?.success || !response.data.data) {
+      this.salesRegisterRows = [];
+      this.salesRegisterPagination.total = 0;
+      this.salesRegisterPagination.totalPages = 0;
+      return;
+    }
+
+    const envelope = response.data.data;
+    this.salesRegisterRows = Array.isArray(envelope.data) ? envelope.data : [];
+    if (envelope.meta) {
+      this.salesRegisterPagination.total = envelope.meta.total;
+      this.salesRegisterPagination.totalPages = envelope.meta.totalPages;
+      this.salesRegisterPagination.page = envelope.meta.page;
+      this.salesRegisterPagination.pageSize = envelope.meta.pageSize;
+    }
+  }
+
+  private async loadWeeklySalesPaginated(): Promise<void> {
+    const { page, pageSize } = this.weeklySalesPagination;
+
+    const response = await this.fetchWithTimeout(
+      apiClient.get<{ success: boolean; data?: { data: WeeklySalesRow[]; meta: { page: number; pageSize: number; total: number; totalPages: number } } }>(
+        '/accounting/weekly-sales',
+        {
+          params: {
+            page: String(page),
+            pageSize: String(pageSize),
+            dateFrom: this.reportDateFrom || undefined,
+            dateTo: this.reportDateTo || undefined,
+          },
+        },
+      ),
+      30000,
+    );
+
+    if (!response.data?.success || !response.data.data) {
+      this.weeklySalesRows = [];
+      this.weeklySalesPagination.total = 0;
+      this.weeklySalesPagination.totalPages = 0;
+      return;
+    }
+
+    const envelope = response.data.data;
+    this.weeklySalesRows = Array.isArray(envelope.data) ? envelope.data : [];
+    if (envelope.meta) {
+      this.weeklySalesPagination.total = envelope.meta.total;
+      this.weeklySalesPagination.totalPages = envelope.meta.totalPages;
+      this.weeklySalesPagination.page = envelope.meta.page;
+      this.weeklySalesPagination.pageSize = envelope.meta.pageSize;
+    }
+  }
+
+  private async loadDailyUnitReleasedPaginated(): Promise<void> {
+    const { page, pageSize } = this.dailyUnitReleasedPagination;
+
+    const response = await this.fetchWithTimeout(
+      apiClient.get<{ success: boolean; data?: { data: DailyUnitReleasedRow[]; meta: { page: number; pageSize: number; total: number; totalPages: number } } }>(
+        '/accounting/daily-unit-released',
+        {
+          params: {
+            page: String(page),
+            pageSize: String(pageSize),
+            dateFrom: this.reportDateFrom || undefined,
+            dateTo: this.reportDateTo || undefined,
+          },
+        },
+      ),
+      30000,
+    );
+
+    if (!response.data?.success || !response.data.data) {
+      this.dailyUnitReleasedRows = [];
+      this.dailyUnitReleasedPagination.total = 0;
+      this.dailyUnitReleasedPagination.totalPages = 0;
+      return;
+    }
+
+    const envelope = response.data.data;
+    this.dailyUnitReleasedRows = Array.isArray(envelope.data) ? envelope.data : [];
+    if (envelope.meta) {
+      this.dailyUnitReleasedPagination.total = envelope.meta.total;
+      this.dailyUnitReleasedPagination.totalPages = envelope.meta.totalPages;
+      this.dailyUnitReleasedPagination.page = envelope.meta.page;
+      this.dailyUnitReleasedPagination.pageSize = envelope.meta.pageSize;
+    }
+  }
+
+  private async loadTax2307ReportPaginated(): Promise<void> {
+    const { page, pageSize } = this.tax2307Pagination;
+
+    const response = await this.fetchWithTimeout(
+      apiClient.get<{ success: boolean; data?: { data: Tax2307ReportRow[]; meta: { page: number; pageSize: number; total: number; totalPages: number } } }>(
+        '/accounting/tax-2307-report',
+        {
+          params: {
+            page: String(page),
+            pageSize: String(pageSize),
+            dateFrom: this.tax2307DateFrom || undefined,
+            dateTo: this.tax2307DateTo || undefined,
+          },
+        },
+      ),
+      30000,
+    );
+
+    if (!response.data?.success || !response.data.data) {
+      this.releasedChequeVouchers = [];
+      this.tax2307Pagination.total = 0;
+      this.tax2307Pagination.totalPages = 0;
+      return;
+    }
+
+    const envelope = response.data.data;
+    // Store the tax 2307 rows - the withholdingTaxRows getter will use these
+    this.tax2307ReportRows = Array.isArray(envelope.data) ? envelope.data : [];
+    if (envelope.meta) {
+      this.tax2307Pagination.total = envelope.meta.total;
+      this.tax2307Pagination.totalPages = envelope.meta.totalPages;
+      this.tax2307Pagination.page = envelope.meta.page;
+      this.tax2307Pagination.pageSize = envelope.meta.pageSize;
+    }
+  }
+
+  private fetchWithTimeout<T>(promise: Promise<T>, timeoutMs: number): Promise<T> {
+    return new Promise<T>((resolve, reject) => {
+      const timer = setTimeout(() => {
+        reject(new Error('Request timed out. Please try again.'));
+      }, timeoutMs);
+
+      promise
+        .then((result) => {
+          clearTimeout(timer);
+          resolve(result);
+        })
+        .catch((error) => {
+          clearTimeout(timer);
+          reject(error);
+        });
+    });
+  }
+
+  private extractErrorMessage(error: unknown, fallback: string): string {
+    if (axios.isAxiosError(error)) {
+      return (error.response?.data as { message?: string } | undefined)?.message ?? fallback;
+    }
+    if (error instanceof Error) {
+      return error.message;
+    }
+    return fallback;
   }
 
   private isWithinDateRange(value: string): boolean {
@@ -4433,6 +4912,9 @@ export class AccountingComponent implements OnInit {
           qBottomX += 63;
         }
 
+        // Render signatory block at the bottom of each page
+        await this.renderSignatoryBlock(page, outputDoc, font, boldFont, rgb, yFromTop);
+
       }
 
       const pdfBytes = await outputDoc.save();
@@ -4464,6 +4946,152 @@ export class AccountingComponent implements OnInit {
       console.error('2307 form generation failed:', error);
       this.reportError = 'Failed to generate 2307 form PDF. Please try again.';
     }
+  }
+
+  /**
+   * Renders the signatory block at the bottom of a 2307 PDF page.
+   * Includes declaration text, signature image (if valid), printed name,
+   * label, title/designation + TIN, and subtitle.
+   */
+  private async renderSignatoryBlock(
+    page: import('pdf-lib').PDFPage,
+    pdfDoc: import('pdf-lib').PDFDocument,
+    font: import('pdf-lib').PDFFont,
+    boldFont: import('pdf-lib').PDFFont,
+    rgb: typeof import('pdf-lib').rgb,
+    yFromTop: (topOffset: number) => number,
+  ): Promise<void> {
+    const settings = this.tax2307PrintSettings;
+
+    const hasSignatory = !!(
+      settings.signatoryName?.trim() ||
+      settings.signatoryTitle?.trim() ||
+      settings.signatoryTin?.trim() ||
+      settings.signatoryImage
+    );
+
+    if (!hasSignatory) return;
+
+    const fontSize = 8;
+    const lineHeight = 11;
+    const leftX = page.getWidth() * 0.4;
+    const maxTextWidth = page.getWidth() * 0.84;
+    let currentTopOffset = 630;
+
+    // Helper to draw text at current position
+    const drawText = (text: string, options?: { size?: number; bold?: boolean; x?: number }) => {
+      const usedFont = options?.bold ? boldFont : font;
+      const size = options?.size ?? fontSize;
+      const x = options?.x ?? leftX;
+      page.drawText(String(text || ''), {
+        x,
+        y: yFromTop(currentTopOffset),
+        size,
+        font: usedFont,
+        color: rgb(0, 0, 0),
+      });
+    };
+
+    // Helper to wrap text into lines that fit within maxWidth
+    const wrapText = (text: string, maxWidth: number, usedFont: import('pdf-lib').PDFFont, size: number): string[] => {
+      const words = text.split(' ');
+      const lines: string[] = [];
+      let currentLine = '';
+
+      for (const word of words) {
+        const testLine = currentLine ? `${currentLine} ${word}` : word;
+        const testWidth = usedFont.widthOfTextAtSize(testLine, size);
+        if (testWidth > maxWidth && currentLine) {
+          lines.push(currentLine);
+          currentLine = word;
+        } else {
+          currentLine = testLine;
+        }
+      }
+      if (currentLine) {
+        lines.push(currentLine);
+      }
+      return lines;
+    };
+
+    // // 1. Render declaration text
+    // const declarationText =
+    //   'I declare, under the penalties of perjury, that this certificate has been made in good faith, verified by me, and to the best of my knowledge and belief, is true and correct, pursuant to the provisions of the National Internal Revenue Code, as amended, and the regulations issued under authority thereof.';
+
+    // const declarationLines = wrapText(declarationText, maxTextWidth, font, fontSize);
+    // for (const line of declarationLines) {
+    //   drawText(line);
+    //   currentTopOffset += lineHeight;
+    // }
+
+    currentTopOffset += 30; // Extra spacing after declaration
+
+    // 2. Render signature image (if valid base64 PNG/JPEG)
+    const signatureImageAreaHeight = 40;
+    if (settings.signatoryImage) {
+      try {
+        const imageData = settings.signatoryImage;
+        let imageBytes: Uint8Array | null = null;
+        let isPng = false;
+        let isJpeg = false;
+
+        if (imageData.startsWith('data:image/png;base64,')) {
+          const base64 = imageData.replace('data:image/png;base64,', '');
+          imageBytes = Uint8Array.from(atob(base64), (c) => c.charCodeAt(0));
+          isPng = true;
+        } else if (imageData.startsWith('data:image/jpeg;base64,') || imageData.startsWith('data:image/jpg;base64,')) {
+          const base64 = imageData.replace(/data:image\/jpe?g;base64,/, '');
+          imageBytes = Uint8Array.from(atob(base64), (c) => c.charCodeAt(0));
+          isJpeg = true;
+        }
+
+        if (imageBytes && (isPng || isJpeg)) {
+          const embeddedImage = isPng
+            ? await pdfDoc.embedPng(imageBytes)
+            : await pdfDoc.embedJpg(imageBytes);
+
+          // Scale to fit within 150x60 preserving aspect ratio
+          const maxW = 100;
+          const maxH = 40;
+          const imgWidth = embeddedImage.width;
+          const imgHeight = embeddedImage.height;
+          const scale = Math.min(maxW / imgWidth, maxH / imgHeight, 1);
+          const scaledWidth = imgWidth * scale;
+          const scaledHeight = imgHeight * scale;
+
+          page.drawImage(embeddedImage, {
+            x: leftX,
+            y: yFromTop(currentTopOffset + scaledHeight),
+            width: scaledWidth,
+            height: scaledHeight,
+          });
+        }
+      } catch {
+        // Invalid image — render block without image (leave area blank)
+      }
+    }
+
+    currentTopOffset += signatureImageAreaHeight - 10;
+
+    // 3. Render printed name below signature image area
+    if (settings.signatoryName?.trim()) {
+      drawText(settings.signatoryName.trim(), { size: 8, bold: false });
+    }
+    currentTopOffset += lineHeight - 3;
+
+    // // 4. Render label
+    // drawText('Signature over Printed Name of Payor/Payor\'s Authorized Representative/Tax Agent', { size: fontSize });
+    // currentTopOffset += lineHeight + 2;
+
+    // 5. Render title/designation and TIN on next line
+    const titleAndTin = [
+      settings.signatoryTitle?.trim() || '',
+      settings.signatoryTin?.trim() || '',
+    ].filter(Boolean).join(' ');
+    if (titleAndTin) {
+      drawText(titleAndTin, { size: 8, x: page.getWidth() * 0.35 });
+    }
+    currentTopOffset += lineHeight;
   }
 
   printVoucher(): void {

@@ -289,6 +289,49 @@
               </div>
             </div>
 
+            <!-- Pagination Controls -->
+            @if (chequeVoucherPagination.total > 0) {
+              <div class="flex flex-wrap items-center justify-between gap-3 rounded-lg border border-gray-200 px-4 py-3 dark:border-gray-700">
+                <div class="flex items-center gap-2">
+                  <span class="text-xs text-gray-500 dark:text-gray-400">Rows per page:</span>
+                  <select
+                    [ngModel]="chequeVoucherPagination.pageSize"
+                    (ngModelChange)="onPageSizeChange('cheque-voucher', $event)"
+                    class="h-8 rounded-md border border-gray-300 bg-transparent px-2 text-xs text-gray-700 dark:border-gray-700 dark:text-gray-200"
+                  >
+                    @for (size of pageSizeOptions; track size) {
+                      <option [ngValue]="size">{{ size }}</option>
+                    }
+                  </select>
+                </div>
+                <div class="text-xs text-gray-600 dark:text-gray-300">
+                  Page {{ chequeVoucherPagination.page }} of {{ chequeVoucherPagination.totalPages }} ({{ chequeVoucherPagination.total }} total records)
+                </div>
+                <div class="flex items-center gap-1">
+                  <button type="button" (click)="onPageChange('cheque-voucher', 1)" [disabled]="chequeVoucherPagination.page === 1"
+                    class="rounded-md border border-gray-300 px-2.5 py-1.5 text-xs font-medium text-gray-700 hover:bg-gray-50 disabled:opacity-40 disabled:cursor-not-allowed dark:border-gray-700 dark:text-gray-300 dark:hover:bg-gray-800">
+                    First
+                  </button>
+                  <button type="button" (click)="onPageChange('cheque-voucher', chequeVoucherPagination.page - 1)" [disabled]="chequeVoucherPagination.page === 1"
+                    class="rounded-md border border-gray-300 px-2.5 py-1.5 text-xs font-medium text-gray-700 hover:bg-gray-50 disabled:opacity-40 disabled:cursor-not-allowed dark:border-gray-700 dark:text-gray-300 dark:hover:bg-gray-800">
+                    Previous
+                  </button>
+                  <button type="button" (click)="onPageChange('cheque-voucher', chequeVoucherPagination.page + 1)" [disabled]="chequeVoucherPagination.page >= chequeVoucherPagination.totalPages"
+                    class="rounded-md border border-gray-300 px-2.5 py-1.5 text-xs font-medium text-gray-700 hover:bg-gray-50 disabled:opacity-40 disabled:cursor-not-allowed dark:border-gray-700 dark:text-gray-300 dark:hover:bg-gray-800">
+                    Next
+                  </button>
+                  <button type="button" (click)="onPageChange('cheque-voucher', chequeVoucherPagination.totalPages)" [disabled]="chequeVoucherPagination.page >= chequeVoucherPagination.totalPages"
+                    class="rounded-md border border-gray-300 px-2.5 py-1.5 text-xs font-medium text-gray-700 hover:bg-gray-50 disabled:opacity-40 disabled:cursor-not-allowed dark:border-gray-700 dark:text-gray-300 dark:hover:bg-gray-800">
+                    Last
+                  </button>
+                </div>
+              </div>
+            } @else if (!isLoadingReport) {
+              <p class="rounded-lg border border-dashed border-gray-300 px-4 py-3 text-center text-sm text-gray-500 dark:border-gray-700 dark:text-gray-400">
+                No records match the current filters.
+              </p>
+            }
+
             @if (viewingVoucher) {
               <div class="fixed inset-0 z-100030 bg-gray-900/40" (click)="closeVoucherView()"></div>
               <aside class="fixed right-0 top-0 z-100031 h-full w-full max-w-3xl border-l border-gray-200 bg-white shadow-2xl dark:border-gray-800 dark:bg-gray-900 flex flex-col">
@@ -1333,6 +1376,49 @@
               </div>
             </div>
 
+            <!-- Pagination Controls -->
+            @if (generalJournalPagination.total > 0) {
+              <div class="flex flex-wrap items-center justify-between gap-3 rounded-lg border border-gray-200 px-4 py-3 dark:border-gray-700">
+                <div class="flex items-center gap-2">
+                  <span class="text-xs text-gray-500 dark:text-gray-400">Rows per page:</span>
+                  <select
+                    [ngModel]="generalJournalPagination.pageSize"
+                    (ngModelChange)="onPageSizeChange('general-journal-register', $event)"
+                    class="h-8 rounded-md border border-gray-300 bg-transparent px-2 text-xs text-gray-700 dark:border-gray-700 dark:text-gray-200"
+                  >
+                    @for (size of pageSizeOptions; track size) {
+                      <option [ngValue]="size">{{ size }}</option>
+                    }
+                  </select>
+                </div>
+                <div class="text-xs text-gray-600 dark:text-gray-300">
+                  Page {{ generalJournalPagination.page }} of {{ generalJournalPagination.totalPages }} ({{ generalJournalPagination.total }} total records)
+                </div>
+                <div class="flex items-center gap-1">
+                  <button type="button" (click)="onPageChange('general-journal-register', 1)" [disabled]="generalJournalPagination.page === 1"
+                    class="rounded-md border border-gray-300 px-2.5 py-1.5 text-xs font-medium text-gray-700 hover:bg-gray-50 disabled:opacity-40 disabled:cursor-not-allowed dark:border-gray-700 dark:text-gray-300 dark:hover:bg-gray-800">
+                    First
+                  </button>
+                  <button type="button" (click)="onPageChange('general-journal-register', generalJournalPagination.page - 1)" [disabled]="generalJournalPagination.page === 1"
+                    class="rounded-md border border-gray-300 px-2.5 py-1.5 text-xs font-medium text-gray-700 hover:bg-gray-50 disabled:opacity-40 disabled:cursor-not-allowed dark:border-gray-700 dark:text-gray-300 dark:hover:bg-gray-800">
+                    Previous
+                  </button>
+                  <button type="button" (click)="onPageChange('general-journal-register', generalJournalPagination.page + 1)" [disabled]="generalJournalPagination.page >= generalJournalPagination.totalPages"
+                    class="rounded-md border border-gray-300 px-2.5 py-1.5 text-xs font-medium text-gray-700 hover:bg-gray-50 disabled:opacity-40 disabled:cursor-not-allowed dark:border-gray-700 dark:text-gray-300 dark:hover:bg-gray-800">
+                    Next
+                  </button>
+                  <button type="button" (click)="onPageChange('general-journal-register', generalJournalPagination.totalPages)" [disabled]="generalJournalPagination.page >= generalJournalPagination.totalPages"
+                    class="rounded-md border border-gray-300 px-2.5 py-1.5 text-xs font-medium text-gray-700 hover:bg-gray-50 disabled:opacity-40 disabled:cursor-not-allowed dark:border-gray-700 dark:text-gray-300 dark:hover:bg-gray-800">
+                    Last
+                  </button>
+                </div>
+              </div>
+            } @else if (!isLoadingGeneralJournalData) {
+              <p class="rounded-lg border border-dashed border-gray-300 px-4 py-3 text-center text-sm text-gray-500 dark:border-gray-700 dark:text-gray-400">
+                No records match the current filters.
+              </p>
+            }
+
             @if (isGeneralJournalDrawerOpen) {
               <div class="fixed inset-0 z-100032 bg-gray-900/40" (click)="closeGeneralJournalDrawer()"></div>
               <aside class="fixed right-0 top-0 z-100033 h-screen w-full max-w-4xl overflow-y-auto border-l border-gray-200 bg-white shadow-2xl dark:border-gray-700 dark:bg-gray-900">
@@ -1980,6 +2066,49 @@
               </div>
             </div>
 
+            <!-- Pagination Controls -->
+            @if (disbursementPagination.total > 0) {
+              <div class="flex flex-wrap items-center justify-between gap-3 rounded-lg border border-gray-200 px-4 py-3 dark:border-gray-700">
+                <div class="flex items-center gap-2">
+                  <span class="text-xs text-gray-500 dark:text-gray-400">Rows per page:</span>
+                  <select
+                    [ngModel]="disbursementPagination.pageSize"
+                    (ngModelChange)="onPageSizeChange('disbursement-register', $event)"
+                    class="h-8 rounded-md border border-gray-300 bg-transparent px-2 text-xs text-gray-700 dark:border-gray-700 dark:text-gray-200"
+                  >
+                    @for (size of pageSizeOptions; track size) {
+                      <option [ngValue]="size">{{ size }}</option>
+                    }
+                  </select>
+                </div>
+                <div class="text-xs text-gray-600 dark:text-gray-300">
+                  Page {{ disbursementPagination.page }} of {{ disbursementPagination.totalPages }} ({{ disbursementPagination.total }} total records)
+                </div>
+                <div class="flex items-center gap-1">
+                  <button type="button" (click)="onPageChange('disbursement-register', 1)" [disabled]="disbursementPagination.page === 1"
+                    class="rounded-md border border-gray-300 px-2.5 py-1.5 text-xs font-medium text-gray-700 hover:bg-gray-50 disabled:opacity-40 disabled:cursor-not-allowed dark:border-gray-700 dark:text-gray-300 dark:hover:bg-gray-800">
+                    First
+                  </button>
+                  <button type="button" (click)="onPageChange('disbursement-register', disbursementPagination.page - 1)" [disabled]="disbursementPagination.page === 1"
+                    class="rounded-md border border-gray-300 px-2.5 py-1.5 text-xs font-medium text-gray-700 hover:bg-gray-50 disabled:opacity-40 disabled:cursor-not-allowed dark:border-gray-700 dark:text-gray-300 dark:hover:bg-gray-800">
+                    Previous
+                  </button>
+                  <button type="button" (click)="onPageChange('disbursement-register', disbursementPagination.page + 1)" [disabled]="disbursementPagination.page >= disbursementPagination.totalPages"
+                    class="rounded-md border border-gray-300 px-2.5 py-1.5 text-xs font-medium text-gray-700 hover:bg-gray-50 disabled:opacity-40 disabled:cursor-not-allowed dark:border-gray-700 dark:text-gray-300 dark:hover:bg-gray-800">
+                    Next
+                  </button>
+                  <button type="button" (click)="onPageChange('disbursement-register', disbursementPagination.totalPages)" [disabled]="disbursementPagination.page >= disbursementPagination.totalPages"
+                    class="rounded-md border border-gray-300 px-2.5 py-1.5 text-xs font-medium text-gray-700 hover:bg-gray-50 disabled:opacity-40 disabled:cursor-not-allowed dark:border-gray-700 dark:text-gray-300 dark:hover:bg-gray-800">
+                    Last
+                  </button>
+                </div>
+              </div>
+            } @else if (!isLoadingDisbursementRegister) {
+              <p class="rounded-lg border border-dashed border-gray-300 px-4 py-3 text-center text-sm text-gray-500 dark:border-gray-700 dark:text-gray-400">
+                No records match the current filters.
+              </p>
+            }
+
             <!-- Summary of Sundries -->
             @if (!isLoadingDisbursementRegister) {
               <div class="rounded-lg border border-gray-200 dark:border-gray-700">
@@ -2612,6 +2741,49 @@
                 </table>
               </div>
             </div>
+
+            <!-- Pagination Controls -->
+            @if (salesRegisterPagination.total > 0) {
+              <div class="flex flex-wrap items-center justify-between gap-3 rounded-lg border border-gray-200 px-4 py-3 dark:border-gray-700">
+                <div class="flex items-center gap-2">
+                  <span class="text-xs text-gray-500 dark:text-gray-400">Rows per page:</span>
+                  <select
+                    [ngModel]="salesRegisterPagination.pageSize"
+                    (ngModelChange)="onPageSizeChange('sales-register', $event)"
+                    class="h-8 rounded-md border border-gray-300 bg-transparent px-2 text-xs text-gray-700 dark:border-gray-700 dark:text-gray-200"
+                  >
+                    @for (size of pageSizeOptions; track size) {
+                      <option [ngValue]="size">{{ size }}</option>
+                    }
+                  </select>
+                </div>
+                <div class="text-xs text-gray-600 dark:text-gray-300">
+                  Page {{ salesRegisterPagination.page }} of {{ salesRegisterPagination.totalPages }} ({{ salesRegisterPagination.total }} total records)
+                </div>
+                <div class="flex items-center gap-1">
+                  <button type="button" (click)="onPageChange('sales-register', 1)" [disabled]="salesRegisterPagination.page === 1"
+                    class="rounded-md border border-gray-300 px-2.5 py-1.5 text-xs font-medium text-gray-700 hover:bg-gray-50 disabled:opacity-40 disabled:cursor-not-allowed dark:border-gray-700 dark:text-gray-300 dark:hover:bg-gray-800">
+                    First
+                  </button>
+                  <button type="button" (click)="onPageChange('sales-register', salesRegisterPagination.page - 1)" [disabled]="salesRegisterPagination.page === 1"
+                    class="rounded-md border border-gray-300 px-2.5 py-1.5 text-xs font-medium text-gray-700 hover:bg-gray-50 disabled:opacity-40 disabled:cursor-not-allowed dark:border-gray-700 dark:text-gray-300 dark:hover:bg-gray-800">
+                    Previous
+                  </button>
+                  <button type="button" (click)="onPageChange('sales-register', salesRegisterPagination.page + 1)" [disabled]="salesRegisterPagination.page >= salesRegisterPagination.totalPages"
+                    class="rounded-md border border-gray-300 px-2.5 py-1.5 text-xs font-medium text-gray-700 hover:bg-gray-50 disabled:opacity-40 disabled:cursor-not-allowed dark:border-gray-700 dark:text-gray-300 dark:hover:bg-gray-800">
+                    Next
+                  </button>
+                  <button type="button" (click)="onPageChange('sales-register', salesRegisterPagination.totalPages)" [disabled]="salesRegisterPagination.page >= salesRegisterPagination.totalPages"
+                    class="rounded-md border border-gray-300 px-2.5 py-1.5 text-xs font-medium text-gray-700 hover:bg-gray-50 disabled:opacity-40 disabled:cursor-not-allowed dark:border-gray-700 dark:text-gray-300 dark:hover:bg-gray-800">
+                    Last
+                  </button>
+                </div>
+              </div>
+            } @else if (!isLoadingReport) {
+              <p class="rounded-lg border border-dashed border-gray-300 px-4 py-3 text-center text-sm text-gray-500 dark:border-gray-700 dark:text-gray-400">
+                No records match the current filters.
+              </p>
+            }
           </div>
         }
 
@@ -2666,6 +2838,49 @@
                 </table>
               </div>
             </div>
+
+            <!-- Pagination Controls -->
+            @if (weeklySalesPagination.total > 0) {
+              <div class="flex flex-wrap items-center justify-between gap-3 rounded-lg border border-gray-200 px-4 py-3 dark:border-gray-700">
+                <div class="flex items-center gap-2">
+                  <span class="text-xs text-gray-500 dark:text-gray-400">Rows per page:</span>
+                  <select
+                    [ngModel]="weeklySalesPagination.pageSize"
+                    (ngModelChange)="onPageSizeChange('weekly-sales', $event)"
+                    class="h-8 rounded-md border border-gray-300 bg-transparent px-2 text-xs text-gray-700 dark:border-gray-700 dark:text-gray-200"
+                  >
+                    @for (size of pageSizeOptions; track size) {
+                      <option [ngValue]="size">{{ size }}</option>
+                    }
+                  </select>
+                </div>
+                <div class="text-xs text-gray-600 dark:text-gray-300">
+                  Page {{ weeklySalesPagination.page }} of {{ weeklySalesPagination.totalPages }} ({{ weeklySalesPagination.total }} total records)
+                </div>
+                <div class="flex items-center gap-1">
+                  <button type="button" (click)="onPageChange('weekly-sales', 1)" [disabled]="weeklySalesPagination.page === 1"
+                    class="rounded-md border border-gray-300 px-2.5 py-1.5 text-xs font-medium text-gray-700 hover:bg-gray-50 disabled:opacity-40 disabled:cursor-not-allowed dark:border-gray-700 dark:text-gray-300 dark:hover:bg-gray-800">
+                    First
+                  </button>
+                  <button type="button" (click)="onPageChange('weekly-sales', weeklySalesPagination.page - 1)" [disabled]="weeklySalesPagination.page === 1"
+                    class="rounded-md border border-gray-300 px-2.5 py-1.5 text-xs font-medium text-gray-700 hover:bg-gray-50 disabled:opacity-40 disabled:cursor-not-allowed dark:border-gray-700 dark:text-gray-300 dark:hover:bg-gray-800">
+                    Previous
+                  </button>
+                  <button type="button" (click)="onPageChange('weekly-sales', weeklySalesPagination.page + 1)" [disabled]="weeklySalesPagination.page >= weeklySalesPagination.totalPages"
+                    class="rounded-md border border-gray-300 px-2.5 py-1.5 text-xs font-medium text-gray-700 hover:bg-gray-50 disabled:opacity-40 disabled:cursor-not-allowed dark:border-gray-700 dark:text-gray-300 dark:hover:bg-gray-800">
+                    Next
+                  </button>
+                  <button type="button" (click)="onPageChange('weekly-sales', weeklySalesPagination.totalPages)" [disabled]="weeklySalesPagination.page >= weeklySalesPagination.totalPages"
+                    class="rounded-md border border-gray-300 px-2.5 py-1.5 text-xs font-medium text-gray-700 hover:bg-gray-50 disabled:opacity-40 disabled:cursor-not-allowed dark:border-gray-700 dark:text-gray-300 dark:hover:bg-gray-800">
+                    Last
+                  </button>
+                </div>
+              </div>
+            } @else if (!isLoadingReport) {
+              <p class="rounded-lg border border-dashed border-gray-300 px-4 py-3 text-center text-sm text-gray-500 dark:border-gray-700 dark:text-gray-400">
+                No records match the current filters.
+              </p>
+            }
           </div>
         }
 
@@ -2716,6 +2931,49 @@
                 </table>
               </div>
             </div>
+
+            <!-- Pagination Controls -->
+            @if (dailyUnitReleasedPagination.total > 0) {
+              <div class="flex flex-wrap items-center justify-between gap-3 rounded-lg border border-gray-200 px-4 py-3 dark:border-gray-700">
+                <div class="flex items-center gap-2">
+                  <span class="text-xs text-gray-500 dark:text-gray-400">Rows per page:</span>
+                  <select
+                    [ngModel]="dailyUnitReleasedPagination.pageSize"
+                    (ngModelChange)="onPageSizeChange('daily-unit-released', $event)"
+                    class="h-8 rounded-md border border-gray-300 bg-transparent px-2 text-xs text-gray-700 dark:border-gray-700 dark:text-gray-200"
+                  >
+                    @for (size of pageSizeOptions; track size) {
+                      <option [ngValue]="size">{{ size }}</option>
+                    }
+                  </select>
+                </div>
+                <div class="text-xs text-gray-600 dark:text-gray-300">
+                  Page {{ dailyUnitReleasedPagination.page }} of {{ dailyUnitReleasedPagination.totalPages }} ({{ dailyUnitReleasedPagination.total }} total records)
+                </div>
+                <div class="flex items-center gap-1">
+                  <button type="button" (click)="onPageChange('daily-unit-released', 1)" [disabled]="dailyUnitReleasedPagination.page === 1"
+                    class="rounded-md border border-gray-300 px-2.5 py-1.5 text-xs font-medium text-gray-700 hover:bg-gray-50 disabled:opacity-40 disabled:cursor-not-allowed dark:border-gray-700 dark:text-gray-300 dark:hover:bg-gray-800">
+                    First
+                  </button>
+                  <button type="button" (click)="onPageChange('daily-unit-released', dailyUnitReleasedPagination.page - 1)" [disabled]="dailyUnitReleasedPagination.page === 1"
+                    class="rounded-md border border-gray-300 px-2.5 py-1.5 text-xs font-medium text-gray-700 hover:bg-gray-50 disabled:opacity-40 disabled:cursor-not-allowed dark:border-gray-700 dark:text-gray-300 dark:hover:bg-gray-800">
+                    Previous
+                  </button>
+                  <button type="button" (click)="onPageChange('daily-unit-released', dailyUnitReleasedPagination.page + 1)" [disabled]="dailyUnitReleasedPagination.page >= dailyUnitReleasedPagination.totalPages"
+                    class="rounded-md border border-gray-300 px-2.5 py-1.5 text-xs font-medium text-gray-700 hover:bg-gray-50 disabled:opacity-40 disabled:cursor-not-allowed dark:border-gray-700 dark:text-gray-300 dark:hover:bg-gray-800">
+                    Next
+                  </button>
+                  <button type="button" (click)="onPageChange('daily-unit-released', dailyUnitReleasedPagination.totalPages)" [disabled]="dailyUnitReleasedPagination.page >= dailyUnitReleasedPagination.totalPages"
+                    class="rounded-md border border-gray-300 px-2.5 py-1.5 text-xs font-medium text-gray-700 hover:bg-gray-50 disabled:opacity-40 disabled:cursor-not-allowed dark:border-gray-700 dark:text-gray-300 dark:hover:bg-gray-800">
+                    Last
+                  </button>
+                </div>
+              </div>
+            } @else if (!isLoadingReport) {
+              <p class="rounded-lg border border-dashed border-gray-300 px-4 py-3 text-center text-sm text-gray-500 dark:border-gray-700 dark:text-gray-400">
+                No records match the current filters.
+              </p>
+            }
           </div>
         }
 
@@ -2768,6 +3026,49 @@
                 </table>
               </div>
             </div>
+
+            <!-- Pagination Controls -->
+            @if (lowStocksPagination.total > 0) {
+              <div class="flex flex-wrap items-center justify-between gap-3 rounded-lg border border-gray-200 px-4 py-3 dark:border-gray-700">
+                <div class="flex items-center gap-2">
+                  <span class="text-xs text-gray-500 dark:text-gray-400">Rows per page:</span>
+                  <select
+                    [ngModel]="lowStocksPagination.pageSize"
+                    (ngModelChange)="onPageSizeChange('low-stocks-report', $event)"
+                    class="h-8 rounded-md border border-gray-300 bg-transparent px-2 text-xs text-gray-700 dark:border-gray-700 dark:text-gray-200"
+                  >
+                    @for (size of pageSizeOptions; track size) {
+                      <option [ngValue]="size">{{ size }}</option>
+                    }
+                  </select>
+                </div>
+                <div class="text-xs text-gray-600 dark:text-gray-300">
+                  Page {{ lowStocksPagination.page }} of {{ lowStocksPagination.totalPages }} ({{ lowStocksPagination.total }} total records)
+                </div>
+                <div class="flex items-center gap-1">
+                  <button type="button" (click)="onPageChange('low-stocks-report', 1)" [disabled]="lowStocksPagination.page === 1"
+                    class="rounded-md border border-gray-300 px-2.5 py-1.5 text-xs font-medium text-gray-700 hover:bg-gray-50 disabled:opacity-40 disabled:cursor-not-allowed dark:border-gray-700 dark:text-gray-300 dark:hover:bg-gray-800">
+                    First
+                  </button>
+                  <button type="button" (click)="onPageChange('low-stocks-report', lowStocksPagination.page - 1)" [disabled]="lowStocksPagination.page === 1"
+                    class="rounded-md border border-gray-300 px-2.5 py-1.5 text-xs font-medium text-gray-700 hover:bg-gray-50 disabled:opacity-40 disabled:cursor-not-allowed dark:border-gray-700 dark:text-gray-300 dark:hover:bg-gray-800">
+                    Previous
+                  </button>
+                  <button type="button" (click)="onPageChange('low-stocks-report', lowStocksPagination.page + 1)" [disabled]="lowStocksPagination.page >= lowStocksPagination.totalPages"
+                    class="rounded-md border border-gray-300 px-2.5 py-1.5 text-xs font-medium text-gray-700 hover:bg-gray-50 disabled:opacity-40 disabled:cursor-not-allowed dark:border-gray-700 dark:text-gray-300 dark:hover:bg-gray-800">
+                    Next
+                  </button>
+                  <button type="button" (click)="onPageChange('low-stocks-report', lowStocksPagination.totalPages)" [disabled]="lowStocksPagination.page >= lowStocksPagination.totalPages"
+                    class="rounded-md border border-gray-300 px-2.5 py-1.5 text-xs font-medium text-gray-700 hover:bg-gray-50 disabled:opacity-40 disabled:cursor-not-allowed dark:border-gray-700 dark:text-gray-300 dark:hover:bg-gray-800">
+                    Last
+                  </button>
+                </div>
+              </div>
+            } @else if (!isLoadingReport) {
+              <p class="rounded-lg border border-dashed border-gray-300 px-4 py-3 text-center text-sm text-gray-500 dark:border-gray-700 dark:text-gray-400">
+                No records match the current filters.
+              </p>
+            }
           </div>
         }
 
@@ -2883,6 +3184,49 @@
               </div>
             </div>
 
+            <!-- Pagination Controls -->
+            @if (tax2307Pagination.total > 0) {
+              <div class="flex flex-wrap items-center justify-between gap-3 rounded-lg border border-gray-200 px-4 py-3 dark:border-gray-700">
+                <div class="flex items-center gap-2">
+                  <span class="text-xs text-gray-500 dark:text-gray-400">Rows per page:</span>
+                  <select
+                    [ngModel]="tax2307Pagination.pageSize"
+                    (ngModelChange)="onPageSizeChange('tax-2307-report', $event)"
+                    class="h-8 rounded-md border border-gray-300 bg-transparent px-2 text-xs text-gray-700 dark:border-gray-700 dark:text-gray-200"
+                  >
+                    @for (size of pageSizeOptions; track size) {
+                      <option [ngValue]="size">{{ size }}</option>
+                    }
+                  </select>
+                </div>
+                <div class="text-xs text-gray-600 dark:text-gray-300">
+                  Page {{ tax2307Pagination.page }} of {{ tax2307Pagination.totalPages }} ({{ tax2307Pagination.total }} total records)
+                </div>
+                <div class="flex items-center gap-1">
+                  <button type="button" (click)="onPageChange('tax-2307-report', 1)" [disabled]="tax2307Pagination.page === 1"
+                    class="rounded-md border border-gray-300 px-2.5 py-1.5 text-xs font-medium text-gray-700 hover:bg-gray-50 disabled:opacity-40 disabled:cursor-not-allowed dark:border-gray-700 dark:text-gray-300 dark:hover:bg-gray-800">
+                    First
+                  </button>
+                  <button type="button" (click)="onPageChange('tax-2307-report', tax2307Pagination.page - 1)" [disabled]="tax2307Pagination.page === 1"
+                    class="rounded-md border border-gray-300 px-2.5 py-1.5 text-xs font-medium text-gray-700 hover:bg-gray-50 disabled:opacity-40 disabled:cursor-not-allowed dark:border-gray-700 dark:text-gray-300 dark:hover:bg-gray-800">
+                    Previous
+                  </button>
+                  <button type="button" (click)="onPageChange('tax-2307-report', tax2307Pagination.page + 1)" [disabled]="tax2307Pagination.page >= tax2307Pagination.totalPages"
+                    class="rounded-md border border-gray-300 px-2.5 py-1.5 text-xs font-medium text-gray-700 hover:bg-gray-50 disabled:opacity-40 disabled:cursor-not-allowed dark:border-gray-700 dark:text-gray-300 dark:hover:bg-gray-800">
+                    Next
+                  </button>
+                  <button type="button" (click)="onPageChange('tax-2307-report', tax2307Pagination.totalPages)" [disabled]="tax2307Pagination.page >= tax2307Pagination.totalPages"
+                    class="rounded-md border border-gray-300 px-2.5 py-1.5 text-xs font-medium text-gray-700 hover:bg-gray-50 disabled:opacity-40 disabled:cursor-not-allowed dark:border-gray-700 dark:text-gray-300 dark:hover:bg-gray-800">
+                    Last
+                  </button>
+                </div>
+              </div>
+            } @else if (!isLoadingReport) {
+              <p class="rounded-lg border border-dashed border-gray-300 px-4 py-3 text-center text-sm text-gray-500 dark:border-gray-700 dark:text-gray-400">
+                No records match the current filters.
+              </p>
+            }
+
             @if (isTax2307PrintSettingsDrawerOpen) {
               <div class="fixed inset-0 z-100032 bg-gray-900/40" (click)="closeTax2307PrintSettingsDrawer()"></div>
               <aside class="fixed right-0 top-0 z-100033 h-screen w-full max-w-3xl overflow-y-auto border-l border-gray-200 bg-white shadow-2xl dark:border-gray-700 dark:bg-gray-900">
@@ -2967,6 +3311,44 @@
                     <input type="text" [(ngModel)]="tax2307PrintSettings.footerLeft" class="h-9 w-full rounded-lg border border-gray-300 bg-transparent px-3 text-sm text-gray-700 dark:border-gray-700 dark:text-gray-200" placeholder="Footer Left" />
                     <input type="text" [(ngModel)]="tax2307PrintSettings.footerCenter" class="h-9 w-full rounded-lg border border-gray-300 bg-transparent px-3 text-sm text-gray-700 dark:border-gray-700 dark:text-gray-200" placeholder="Footer Center" />
                     <input type="text" [(ngModel)]="tax2307PrintSettings.footerRight" class="h-9 w-full rounded-lg border border-gray-300 bg-transparent px-3 text-sm text-gray-700 dark:border-gray-700 dark:text-gray-200" placeholder="Footer Right" />
+                  </div>
+
+                  <!-- Signatory Configuration Section -->
+                  <p class="mt-1 mb-2 text-xs font-semibold uppercase tracking-wide text-gray-500 dark:text-gray-400">Signatory</p>
+                  <div class="space-y-3 rounded-lg border border-gray-200 p-4 dark:border-gray-700">
+                    <div class="grid grid-cols-1 gap-3 sm:grid-cols-2">
+                      <label class="text-xs text-gray-500 dark:text-gray-400 sm:col-span-2">
+                        <span class="mb-1 block">Printed Name</span>
+                        <input type="text" [(ngModel)]="tax2307PrintSettings.signatoryName" maxlength="120" class="h-9 w-full rounded-lg border border-gray-300 bg-transparent px-3 text-sm text-gray-700 dark:border-gray-700 dark:text-gray-200" placeholder="e.g. Juan Dela Cruz" />
+                      </label>
+                      <label class="text-xs text-gray-500 dark:text-gray-400">
+                        <span class="mb-1 block">Title / Designation</span>
+                        <input type="text" [(ngModel)]="tax2307PrintSettings.signatoryTitle" maxlength="80" class="h-9 w-full rounded-lg border border-gray-300 bg-transparent px-3 text-sm text-gray-700 dark:border-gray-700 dark:text-gray-200" placeholder="e.g. Authorized Representative" />
+                      </label>
+                      <label class="text-xs text-gray-500 dark:text-gray-400">
+                        <span class="mb-1 block">TIN (XXX-XXX-XXX-XXX)</span>
+                        <input type="text" [(ngModel)]="tax2307PrintSettings.signatoryTin" maxlength="17" class="h-9 w-full rounded-lg border border-gray-300 bg-transparent px-3 text-sm text-gray-700 dark:border-gray-700 dark:text-gray-200" placeholder="e.g. 123-456-789-000" />
+                      </label>
+                    </div>
+
+                    <div class="mt-2">
+                      <span class="mb-1 block text-xs text-gray-500 dark:text-gray-400">Signature Image (PNG or JPEG, max 2 MB, 100×50 to 600×300 px)</span>
+                      @if (signatoryImagePreview) {
+                        <div class="flex items-start gap-3 rounded-lg border border-gray-200 bg-gray-50 p-3 dark:border-gray-700 dark:bg-gray-800/50">
+                          <img [src]="signatoryImagePreview" alt="Signature preview" class="max-h-[60px] max-w-[150px] object-contain" />
+                          <button type="button" (click)="removeSignatoryImage()" class="rounded-md border border-red-300 px-2 py-1 text-xs text-red-600 hover:bg-red-50 dark:border-red-500/40 dark:text-red-400 dark:hover:bg-red-500/10">Remove</button>
+                        </div>
+                      } @else {
+                        <label class="flex cursor-pointer flex-col items-center justify-center rounded-lg border-2 border-dashed border-gray-300 bg-gray-50 px-4 py-4 text-center transition hover:border-brand-400 hover:bg-brand-50/30 dark:border-gray-600 dark:bg-gray-800/30 dark:hover:border-brand-500/50 dark:hover:bg-brand-500/5">
+                          <svg class="mb-1 h-6 w-6 text-gray-400 dark:text-gray-500" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M4 16l4.586-4.586a2 2 0 012.828 0L16 16m-2-2l1.586-1.586a2 2 0 012.828 0L20 14m-6-6h.01M6 20h12a2 2 0 002-2V6a2 2 0 00-2-2H6a2 2 0 00-2 2v12a2 2 0 002 2z" /></svg>
+                          <span class="text-xs text-gray-500 dark:text-gray-400">Click to upload signature image</span>
+                          <input type="file" accept="image/png,image/jpeg" (change)="onSignatoryImageSelected($event)" class="hidden" />
+                        </label>
+                      }
+                      @if (signatoryUploadError) {
+                        <p class="mt-1 text-xs text-red-600 dark:text-red-400">{{ signatoryUploadError }}</p>
+                      }
+                    </div>
                   </div>
 
                   <div class="rounded-xl border border-gray-200 bg-gray-50 p-4 dark:border-gray-700 dark:bg-gray-950/30">
