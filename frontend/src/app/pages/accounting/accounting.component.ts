@@ -3735,25 +3735,17 @@ export class AccountingComponent implements OnInit {
       return false;
     }
 
-    const hasAnyAllowedRules = this.rbacService.hasAnyEffectivePermissionWithPrefix(this.reportPermissionPrefix);
-    const hasAnyDeniedRules = this.rbacService.hasAnyDeniedPermissionWithPrefix(this.reportPermissionPrefix);
-
-    if (!hasAnyAllowedRules && !hasAnyDeniedRules) {
+    // Admin/SuperAdmin bypass — full access
+    if (this.rbacService.isAdminOrSuperAdmin()) {
       return true;
     }
 
+    // Check if the report is explicitly allowed
     const isExplicitlyAllowed = acceptedKeys.some((permissionKey) =>
       this.rbacService.hasEffectivePermissionKey(permissionKey),
     );
-    if (isExplicitlyAllowed) {
-      return true;
-    }
 
-    if (!hasAnyAllowedRules && hasAnyDeniedRules) {
-      return true;
-    }
-
-    return false;
+    return isExplicitlyAllowed;
   }
 
   private canAccessReportAction(permissionKeys: string[]): boolean {
@@ -3767,25 +3759,17 @@ export class AccountingComponent implements OnInit {
       return false;
     }
 
-    const hasAnyAllowedRules = this.rbacService.hasAnyEffectivePermissionWithPrefix(this.reportActionPermissionPrefix);
-    const hasAnyDeniedRules = this.rbacService.hasAnyDeniedPermissionWithPrefix(this.reportActionPermissionPrefix);
-
-    if (!hasAnyAllowedRules && !hasAnyDeniedRules) {
+    // Admin/SuperAdmin bypass — full access
+    if (this.rbacService.isAdminOrSuperAdmin()) {
       return true;
     }
 
+    // Check if the action is explicitly allowed
     const isExplicitlyAllowed = acceptedKeys.some((permissionKey) =>
       this.rbacService.hasEffectivePermissionKey(permissionKey),
     );
-    if (isExplicitlyAllowed) {
-      return true;
-    }
 
-    if (!hasAnyAllowedRules && hasAnyDeniedRules) {
-      return true;
-    }
-
-    return false;
+    return isExplicitlyAllowed;
   }
 
   private matchesSearch(value: string, tokens: string[]): boolean {
@@ -5194,10 +5178,10 @@ export class AccountingComponent implements OnInit {
       .map(
         (d) => `
       <tr>
-        <td style="padding: 8px; border-bottom: 1px solid #e5e7eb;">${d.bankName}</td>
-        <td style="padding: 8px; border-bottom: 1px solid #e5e7eb;">${d.chequeNo}</td>
-        <td style="padding: 8px; border-bottom: 1px solid #e5e7eb;">${this.formatDateOnly(d.chequeDate)}</td>
-        <td style="padding: 8px; border-bottom: 1px solid #e5e7eb; text-align: right;">${(Number(d.amount) || 0).toFixed(2)}</td>
+        <td style="padding: 8px;">${d.bankName}</td>
+        <td style="padding: 8px;">${d.chequeNo}</td>
+        <td style="padding: 8px;">${this.formatDateOnly(d.chequeDate)}</td>
+        <td style="padding: 8px; text-align: right;">${(Number(d.amount) || 0).toLocaleString('en-PH', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</td>
       </tr>
     `
       )
@@ -5207,10 +5191,10 @@ export class AccountingComponent implements OnInit {
       .map(
         (i) => `
       <tr>
-        <td style="padding: 8px; border-bottom: 1px solid #e5e7eb;">${i.invoiceNo}</td>
-        <td style="padding: 8px; border-bottom: 1px solid #e5e7eb;">${this.formatDateOnly(i.invoiceDate)}</td>
-        <td style="padding: 8px; border-bottom: 1px solid #e5e7eb;">${i.description}</td>
-        <td style="padding: 8px; border-bottom: 1px solid #e5e7eb; text-align: right;">${(Number(i.amount) || 0).toFixed(2)}</td>
+        <td style="padding: 8px;">${i.invoiceNo}</td>
+        <td style="padding: 8px;">${this.formatDateOnly(i.invoiceDate)}</td>
+        <td style="padding: 8px;">${i.description}</td>
+        <td style="padding: 8px; text-align: right;">${(Number(i.amount) || 0).toLocaleString('en-PH', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</td>
       </tr>
     `
       )
@@ -5220,10 +5204,10 @@ export class AccountingComponent implements OnInit {
       .map(
         (a) => `
       <tr>
-        <td style="padding: 8px; border-bottom: 1px solid #e5e7eb;">${a.accountNumber}</td>
-        <td style="padding: 8px; border-bottom: 1px solid #e5e7eb;">${a.description}</td>
-        <td style="padding: 8px; border-bottom: 1px solid #e5e7eb; text-align: right;">${(Number(a.debit) || 0).toFixed(2)}</td>
-        <td style="padding: 8px; border-bottom: 1px solid #e5e7eb; text-align: right;">${(Number(a.credit) || 0).toFixed(2)}</td>
+        <td style="padding: 8px;">${a.accountNumber}</td>
+        <td style="padding: 8px;">${a.description}</td>
+        <td style="padding: 8px; text-align: right;">${(Number(a.debit) || 0).toLocaleString('en-PH', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</td>
+        <td style="padding: 8px; text-align: right;">${(Number(a.credit) || 0).toLocaleString('en-PH', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</td>
       </tr>
     `
       )
@@ -5364,8 +5348,8 @@ export class AccountingComponent implements OnInit {
               ${accountTitlesHTML}
               <tr style="font-weight: 700; background-color: #f9fafb;">
                 <td colspan="2" style="padding: 8px; border-top: 2px solid #9ca3af;">Total</td>
-                <td style="padding: 8px; border-top: 2px solid #9ca3af; text-align: right;">${accountTitleDebitTotal.toFixed(2)}</td>
-                <td style="padding: 8px; border-top: 2px solid #9ca3af; text-align: right;">${accountTitleCreditTotal.toFixed(2)}</td>
+                <td style="padding: 8px; border-top: 2px solid #9ca3af; text-align: right;">${accountTitleDebitTotal.toLocaleString('en-PH', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</td>
+                <td style="padding: 8px; border-top: 2px solid #9ca3af; text-align: right;">${accountTitleCreditTotal.toLocaleString('en-PH', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</td>
               </tr>
             </tbody>
           </table>
@@ -5815,7 +5799,7 @@ export class AccountingComponent implements OnInit {
           start: { x: x1, y: y1 },
           end: { x: x2, y: y1 },
           thickness,
-          color: rgb(0.6, 0.6, 0.6),
+          color: rgb(0.3, 0.3, 0.3),
         });
       };
 
@@ -6010,7 +5994,6 @@ export class AccountingComponent implements OnInit {
           const amtWidth = font.widthOfTextAtSize(amtText, fontSize);
           page.drawText(amtText, { x: pageWidth - marginRight - amtWidth, y, size: fontSize, font, color: rgb(0, 0, 0) });
           y -= tableRowHeight;
-          drawLine(marginLeft, y + 4, pageWidth - marginRight, 0.3);
         }
       }
 
@@ -6059,7 +6042,6 @@ export class AccountingComponent implements OnInit {
           const amtWidth = font.widthOfTextAtSize(amtText, fontSize);
           page.drawText(amtText, { x: pageWidth - marginRight - amtWidth, y, size: fontSize, font, color: rgb(0, 0, 0) });
           y -= tableRowHeight;
-          drawLine(marginLeft, y + 4, pageWidth - marginRight, 0.3);
         }
       }
 
@@ -6114,7 +6096,6 @@ export class AccountingComponent implements OnInit {
           page.drawText(creditText, { x: acctCols[3].x + acctCols[3].width - creditWidth, y, size: fontSize, font, color: rgb(0, 0, 0) });
 
           y -= tableRowHeight;
-          drawLine(marginLeft, y + 4, pageWidth - marginRight, 0.3);
         }
 
         // Totals row

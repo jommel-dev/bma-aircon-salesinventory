@@ -8,7 +8,26 @@ import { RouterModule } from '@angular/router';
 import { FormsModule } from '@angular/forms';
 import { Router } from '@angular/router';
 import { AuthService } from '../../../services/auth.service';
+import { RbacService } from '../../../services/rbac.service';
 import axios from 'axios';
+
+// Maps menu keys to their route paths (order matters — first match wins)
+const MENU_ROUTE_MAP: Array<{ menu: string; route: string }> = [
+  { menu: 'dashboard', route: '/users/dashboard' },
+  { menu: 'sales_order', route: '/users/sales-order' },
+  { menu: 'projects', route: '/users/projects' },
+  { menu: 'customers', route: '/users/customers' },
+  { menu: 'today_schedule', route: '/users/schedule-today-sales-order' },
+  { menu: 'purchase_order', route: '/users/purchase-order' },
+  { menu: 'inventory', route: '/users/inventory' },
+  { menu: 'material_inventory', route: '/users/material-inventory' },
+  { menu: 'accounting', route: '/users/accounting' },
+  { menu: 'payroll', route: '/users/payroll' },
+  { menu: 'sales_order_materials', route: '/users/sales-order-materials' },
+  { menu: 'quotation', route: '/users/quotation' },
+  { menu: 'user_management', route: '/users/user-management' },
+  { menu: 'settings', route: '/users/settings' },
+];
 
 @Component({
   selector: 'app-signin-form',
@@ -26,6 +45,7 @@ import axios from 'axios';
 export class SigninFormComponent {
   constructor(
     private readonly authService: AuthService,
+    private readonly rbacService: RbacService,
     private readonly router: Router,
   ) {}
 
@@ -57,7 +77,7 @@ export class SigninFormComponent {
         return;
       }
 
-      await this.router.navigateByUrl('/users/dashboard');
+      await this.router.navigateByUrl(this.resolveFirstAllowedRoute());
     } catch (error) {
       if (axios.isAxiosError(error)) {
         this.errorMessage =
@@ -69,5 +89,19 @@ export class SigninFormComponent {
     } finally {
       this.isSubmitting = false;
     }
+  }
+
+  private resolveFirstAllowedRoute(): string {
+    const allowedMenus = this.rbacService.getAllowedMenus();
+
+    // Find the first menu in MENU_ROUTE_MAP that the user has access to
+    for (const entry of MENU_ROUTE_MAP) {
+      if (allowedMenus.has(entry.menu)) {
+        return entry.route;
+      }
+    }
+
+    // Fallback to dashboard if no menus matched
+    return '/users/dashboard';
   }
 }

@@ -1559,13 +1559,99 @@ export class PurchaseService {
 
               resolvedProductOrPartOrMaterialId = partId;
             } else if (isMaterialItems) {
-              const materialId = this.toOptionalNumber((item as any).materialId ?? item.productId);
+              let materialId = this.toOptionalNumber((item as any).materialId ?? item.productId);
+
               if (!materialId) {
-                throw new Error('materialId is required for ACM items');
+                // Inline material creation (same pattern as ACP parts)
+                const materialName = String((item as any).materialName ?? '').trim();
+                const materialCode = String((item as any).materialCode ?? '').trim();
+                const materialUnit = String((item as any).materialUnit ?? '').trim() || 'PCS';
+                let brandId = this.toOptionalNumber(
+                  (item as any).materialBrandId ?? (item as any).brandId ?? (item as any).brand_id,
+                );
+                const brandName = String(
+                  (item as any).materialBrandName ?? (item as any).brandName ?? '',
+                ).trim();
+
+                if (!brandId && brandName) {
+                  const brandLookupResult = await client.query<{ id: string | number }>(
+                    `SELECT id
+                     FROM tblbrands
+                     WHERE LOWER(TRIM(COALESCE("brandName", ''))) = LOWER(TRIM($1))
+                     LIMIT 1`,
+                    [brandName],
+                  );
+                  brandId = this.toOptionalNumber(brandLookupResult.rows[0]?.id);
+
+                  // Create brand if not found
+                  if (!brandId) {
+                    const insertBrandResult = await client.query<{ id: string | number }>(
+                      `INSERT INTO tblbrands ("brandName", type, created_at)
+                       VALUES ($1, 'MAT', NOW())
+                       ON CONFLICT DO NOTHING
+                       RETURNING id`,
+                      [brandName],
+                    );
+                    brandId = this.toOptionalNumber(insertBrandResult.rows[0]?.id);
+
+                    // If ON CONFLICT hit, fetch existing
+                    if (!brandId) {
+                      const reLookup = await client.query<{ id: string | number }>(
+                        `SELECT id FROM tblbrands WHERE LOWER(TRIM(COALESCE("brandName", ''))) = LOWER(TRIM($1)) LIMIT 1`,
+                        [brandName],
+                      );
+                      brandId = this.toOptionalNumber(reLookup.rows[0]?.id);
+                    }
+                  }
+                }
+
+                if (!materialName) {
+                  throw new Error('materialName is required for ACM items when material id is not provided');
+                }
+
+                const unitPrice = this.toOptionalNumber(item.unitPrice) ?? 0;
+                const sellPrice = this.toOptionalNumber(item.sellPrice) ?? 0;
+
+                if (materialCode) {
+                  const insertMaterialResult = await client.query<{ id: string | number }>(
+                    `INSERT INTO tblmaterials (brand_id, material_name, material_code, unit, unit_price, sell_price, created_by, updated_at, updated_by)
+                     VALUES ($1, $2, NULLIF($3, ''), $4, $5, $6, $7, NOW(), $7)
+                     ON CONFLICT (material_code) DO UPDATE
+                       SET brand_id = COALESCE(EXCLUDED.brand_id, tblmaterials.brand_id),
+                           material_name = EXCLUDED.material_name,
+                           unit = COALESCE(EXCLUDED.unit, tblmaterials.unit),
+                           unit_price = EXCLUDED.unit_price,
+                           sell_price = EXCLUDED.sell_price,
+                           updated_at = NOW(),
+                           updated_by = $7
+                     RETURNING id`,
+                    [brandId, materialName, materialCode, materialUnit, unitPrice, sellPrice, userId ?? null],
+                  );
+                  materialId = this.toOptionalNumber(insertMaterialResult.rows[0]?.id);
+                } else {
+                  const insertMaterialResult = await client.query<{ id: string | number }>(
+                    `INSERT INTO tblmaterials (brand_id, material_name, unit, unit_price, sell_price, created_by, updated_at, updated_by)
+                     VALUES ($1, $2, $3, $4, $5, $6, NOW(), $6)
+                     ON CONFLICT (material_name) DO UPDATE
+                       SET brand_id = COALESCE(EXCLUDED.brand_id, tblmaterials.brand_id),
+                           unit = COALESCE(EXCLUDED.unit, tblmaterials.unit),
+                           unit_price = EXCLUDED.unit_price,
+                           sell_price = EXCLUDED.sell_price,
+                           updated_at = NOW(),
+                           updated_by = $6
+                     RETURNING id`,
+                    [brandId, materialName, materialUnit, unitPrice, sellPrice, userId ?? null],
+                  );
+                  materialId = this.toOptionalNumber(insertMaterialResult.rows[0]?.id);
+                }
+
+                if (!materialId) {
+                  throw new Error('Failed to create/retrieve material id for ACM item');
+                }
               }
 
               const materialExistsResult = await client.query<{ id: string | number }>(
-                `SELECT id FROM tblmaterials WHERE id::text = $1 LIMIT 1`,
+                `SELECT id FROM tblmaterials WHERE id::text = $1 AND deleted_at IS NULL LIMIT 1`,
                 [String(materialId)],
               );
               if (materialExistsResult.rowCount === 0) {
@@ -2106,7 +2192,50 @@ export class PurchaseService {
 
     try {
       const result = await this.databaseService.withTransaction(async (client) => {
-        // 1. Load PO items and serial counts
+        // Determine PO type
+        const poTypeResult = await client.query<{ po_type: string | null }>(
+          `SELECT COALESCE(po.po_type, to_jsonb(po)->>'poType', to_jsonb(po)->>'po_type', 'ACU') AS po_type
+           FROM tblpurchase_orders po WHERE po.id = $1 LIMIT 1`,
+          [id],
+        );
+        if (poTypeResult.rowCount === 0) {
+          throw new Error('Purchase order not found');
+        }
+        const poType = this.normalizePoType(poTypeResult.rows[0]?.po_type);
+
+        // For ACM (Materials), skip serial validation and just complete
+        if (poType === 'ACM') {
+          const purchaseColumns = await this.getTableColumns(client, 'tblpurchase_orders');
+          const statusColumn = this.pickColumn(purchaseColumns, ['status']);
+          if (!statusColumn) {
+            throw new Error('tblpurchase_orders status column is not configured');
+          }
+
+          await client.query(
+            `UPDATE tblpurchase_orders SET "${statusColumn}" = $1 WHERE id = $2`,
+            ['completed', id],
+          );
+
+          return { purchaseId: id, status: 'completed' };
+        }
+
+        // For ACP (Parts), skip serial validation and just complete
+        if (poType === 'ACP') {
+          const purchaseColumns = await this.getTableColumns(client, 'tblpurchase_orders');
+          const statusColumn = this.pickColumn(purchaseColumns, ['status']);
+          if (!statusColumn) {
+            throw new Error('tblpurchase_orders status column is not configured');
+          }
+
+          await client.query(
+            `UPDATE tblpurchase_orders SET "${statusColumn}" = $1 WHERE id = $2`,
+            ['completed', id],
+          );
+
+          return { purchaseId: id, status: 'completed' };
+        }
+
+        // 1. Load PO items and serial counts (ACU only)
         const productRows = await client.query<{
           id: number;
           product_id: string | null;
@@ -3216,26 +3345,138 @@ export class PurchaseService {
               continue;
             }
 
-            const productId = this.toOptionalNumber(item.productId);
-            const capacityId = this.toOptionalNumber(item.capacityId);
-            if (productId === null || capacityId === null) {
-              throw new Error('productId and capacityId are required for purchase items');
-            }
+            const isProductItems = itemsTable === 'tbltransaction_product_items';
+            const isPartsItems = itemsTable === 'tbltransaction_parts_items';
+            const isMaterialItems = itemsTable === 'tbltransaction_material_items';
 
-            const productExistsResult = await client.query<{ id: string | number }>(
-              `SELECT id FROM tblproducts WHERE id::text = $1 LIMIT 1`,
-              [String(productId)],
-            );
-            if (productExistsResult.rowCount === 0) {
-              throw new Error(`Product ID ${productId} does not exist in tblproducts`);
-            }
+            let resolvedProductOrPartOrMaterialId: number | null = null;
+            let resolvedCapacityId: number | null = null;
 
-            const capacityExistsResult = await client.query<{ id: string | number }>(
-              `SELECT id FROM tblcapacity WHERE id::text = $1 LIMIT 1`,
-              [String(capacityId)],
-            );
-            if (capacityExistsResult.rowCount === 0) {
-              throw new Error(`Capacity ID ${capacityId} does not exist in tblcapacity`);
+            if (isProductItems) {
+              const productId = this.toOptionalNumber(item.productId);
+              const capacityId = this.toOptionalNumber(item.capacityId);
+              if (productId === null || capacityId === null) {
+                throw new Error('productId and capacityId are required for ACU purchase items');
+              }
+
+              const productExistsResult = await client.query<{ id: string | number }>(
+                `SELECT id FROM tblproducts WHERE id::text = $1 LIMIT 1`,
+                [String(productId)],
+              );
+              if (productExistsResult.rowCount === 0) {
+                throw new Error(`Product ID ${productId} does not exist in tblproducts`);
+              }
+
+              const capacityExistsResult = await client.query<{ id: string | number }>(
+                `SELECT id FROM tblcapacity WHERE id::text = $1 LIMIT 1`,
+                [String(capacityId)],
+              );
+              if (capacityExistsResult.rowCount === 0) {
+                throw new Error(`Capacity ID ${capacityId} does not exist in tblcapacity`);
+              }
+
+              resolvedProductOrPartOrMaterialId = productId;
+              resolvedCapacityId = capacityId;
+            } else if (isPartsItems) {
+              let partId = this.toOptionalNumber((item as any).partId ?? item.productId);
+              if (!partId) {
+                const partsName = String((item as any).partsName ?? (item as any).partName ?? '').trim();
+                if (!partsName) {
+                  throw new Error('partId or partsName is required for ACP items');
+                }
+                // Look up by name
+                const partLookup = await client.query<{ id: string | number }>(
+                  `SELECT id FROM tblparts WHERE LOWER(TRIM(parts_name)) = LOWER(TRIM($1)) AND deleted_at IS NULL LIMIT 1`,
+                  [partsName],
+                );
+                partId = this.toOptionalNumber(partLookup.rows[0]?.id);
+                if (!partId) {
+                  throw new Error(`Part '${partsName}' not found in tblparts`);
+                }
+              }
+              resolvedProductOrPartOrMaterialId = partId;
+            } else if (isMaterialItems) {
+              let materialId = this.toOptionalNumber((item as any).materialId ?? item.productId);
+
+              if (!materialId) {
+                const materialName = String((item as any).materialName ?? '').trim();
+                const materialCode = String((item as any).materialCode ?? '').trim();
+                const materialUnit = String((item as any).materialUnit ?? '').trim() || 'PCS';
+                let brandId = this.toOptionalNumber(
+                  (item as any).materialBrandId ?? (item as any).brandId ?? (item as any).brand_id,
+                );
+                const brandName = String(
+                  (item as any).materialBrandName ?? (item as any).brandName ?? '',
+                ).trim();
+
+                if (!brandId && brandName) {
+                  const brandLookupResult = await client.query<{ id: string | number }>(
+                    `SELECT id FROM tblbrands WHERE LOWER(TRIM(COALESCE("brandName", ''))) = LOWER(TRIM($1)) LIMIT 1`,
+                    [brandName],
+                  );
+                  brandId = this.toOptionalNumber(brandLookupResult.rows[0]?.id);
+                  if (!brandId) {
+                    const insertBrandResult = await client.query<{ id: string | number }>(
+                      `INSERT INTO tblbrands ("brandName", type, created_at) VALUES ($1, 'MAT', NOW()) ON CONFLICT DO NOTHING RETURNING id`,
+                      [brandName],
+                    );
+                    brandId = this.toOptionalNumber(insertBrandResult.rows[0]?.id);
+                    if (!brandId) {
+                      const reLookup = await client.query<{ id: string | number }>(
+                        `SELECT id FROM tblbrands WHERE LOWER(TRIM(COALESCE("brandName", ''))) = LOWER(TRIM($1)) LIMIT 1`,
+                        [brandName],
+                      );
+                      brandId = this.toOptionalNumber(reLookup.rows[0]?.id);
+                    }
+                  }
+                }
+
+                if (!materialName) {
+                  throw new Error('materialName is required for ACM items when material id is not provided');
+                }
+
+                const unitPrice = this.toOptionalNumber(item.unitPrice) ?? 0;
+                const sellPrice = this.toOptionalNumber(item.sellPrice) ?? 0;
+
+                if (materialCode) {
+                  const insertMaterialResult = await client.query<{ id: string | number }>(
+                    `INSERT INTO tblmaterials (brand_id, material_name, material_code, unit, unit_price, sell_price, created_by, updated_at, updated_by)
+                     VALUES ($1, $2, NULLIF($3, ''), $4, $5, $6, $7, NOW(), $7)
+                     ON CONFLICT (material_code) DO UPDATE
+                       SET brand_id = COALESCE(EXCLUDED.brand_id, tblmaterials.brand_id),
+                           material_name = EXCLUDED.material_name,
+                           unit = COALESCE(EXCLUDED.unit, tblmaterials.unit),
+                           unit_price = EXCLUDED.unit_price,
+                           sell_price = EXCLUDED.sell_price,
+                           updated_at = NOW(),
+                           updated_by = $7
+                     RETURNING id`,
+                    [brandId, materialName, materialCode, materialUnit, unitPrice, sellPrice, userId ?? null],
+                  );
+                  materialId = this.toOptionalNumber(insertMaterialResult.rows[0]?.id);
+                } else {
+                  const insertMaterialResult = await client.query<{ id: string | number }>(
+                    `INSERT INTO tblmaterials (brand_id, material_name, unit, unit_price, sell_price, created_by, updated_at, updated_by)
+                     VALUES ($1, $2, $3, $4, $5, $6, NOW(), $6)
+                     ON CONFLICT (material_name) DO UPDATE
+                       SET brand_id = COALESCE(EXCLUDED.brand_id, tblmaterials.brand_id),
+                           unit = COALESCE(EXCLUDED.unit, tblmaterials.unit),
+                           unit_price = EXCLUDED.unit_price,
+                           sell_price = EXCLUDED.sell_price,
+                           updated_at = NOW(),
+                           updated_by = $6
+                     RETURNING id`,
+                    [brandId, materialName, materialUnit, unitPrice, sellPrice, userId ?? null],
+                  );
+                  materialId = this.toOptionalNumber(insertMaterialResult.rows[0]?.id);
+                }
+
+                if (!materialId) {
+                  throw new Error('Failed to create/retrieve material id for ACM item');
+                }
+              }
+
+              resolvedProductOrPartOrMaterialId = materialId;
             }
 
             const unitTypesQty = Array.isArray(item.unitTypesQty) ? item.unitTypesQty : [];
@@ -3250,11 +3491,11 @@ export class PurchaseService {
             if (transTypeColumn) {
               itemRecord[transTypeColumn] = transType;
             }
-            if (productIdColumn) {
-              itemRecord[productIdColumn] = productId;
+            if (productIdColumn && resolvedProductOrPartOrMaterialId !== null) {
+              itemRecord[productIdColumn] = resolvedProductOrPartOrMaterialId;
             }
-            if (capacityIdColumn) {
-              itemRecord[capacityIdColumn] = capacityId;
+            if (capacityIdColumn && resolvedCapacityId !== null) {
+              itemRecord[capacityIdColumn] = resolvedCapacityId;
             }
             if (unitPriceColumn) {
               itemRecord[unitPriceColumn] = this.toOptionalNumber(item.unitPrice) ?? 0;
@@ -3366,10 +3607,10 @@ export class PurchaseService {
                   serialRecord[serialSalesIdColumn] = null;
                 }
                 if (serialProductIdColumn) {
-                  serialRecord[serialProductIdColumn] = productId;
+                  serialRecord[serialProductIdColumn] = resolvedProductOrPartOrMaterialId;
                 }
                 if (serialCapacityIdColumn) {
-                  serialRecord[serialCapacityIdColumn] = capacityId;
+                  serialRecord[serialCapacityIdColumn] = resolvedCapacityId;
                 }
                 serialRecord[serialNumberColumn] = normalizedSerial;
                 if (serialUnitTypeColumn) {
@@ -3682,7 +3923,23 @@ export class PurchaseService {
           );
         }
 
-        await client.query(`DELETE FROM tblpo_payments WHERE po_id = $1`, [id]);
+        // Delete payments - use dynamic column lookup for robustness
+        const paymentColumns = await this.getTableColumns(client, 'tblpo_payments');
+        const paymentPoIdColumn = this.pickColumn(paymentColumns, [
+          'po_id',
+          'poId',
+          'purchase_id',
+          'purchaseId',
+          'purchase_order_id',
+          'purchaseOrderId',
+        ]);
+        if (paymentPoIdColumn) {
+          await client.query(
+            `DELETE FROM tblpo_payments WHERE "${paymentPoIdColumn}" = $1`,
+            [id],
+          );
+        }
+
         await client.query(`DELETE FROM tblpurchase_orders WHERE id = $1`, [id]);
 
         return { id, poNumber };

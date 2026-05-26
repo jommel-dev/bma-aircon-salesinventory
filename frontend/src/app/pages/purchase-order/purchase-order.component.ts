@@ -3828,6 +3828,10 @@ export class PurchaseOrderComponent implements OnInit, OnDestroy {
           item.productType === 'ACM' && String(item.materialBrandId ?? '').trim()
             ? String(item.materialBrandId).trim()
             : undefined,
+        materialBrandName:
+          item.productType === 'ACM' && String(item.materialBrandName ?? '').trim()
+            ? String(item.materialBrandName).trim()
+            : undefined,
         materialName:
           item.productType === 'ACM' && String(item.materialName ?? '').trim()
             ? String(item.materialName).trim()
@@ -3844,7 +3848,7 @@ export class PurchaseOrderComponent implements OnInit, OnDestroy {
           label: entry.label,
           value: Number(entry.value) || 0,
         })),
-        totalSetQty: Number(item.totalSetQty) || 0,
+        totalSetQty: item.productType === 'ACM' ? (Number(item.quantity) || 0) : (Number(item.totalSetQty) || 0),
         purchaseId: null,
         salesId: null,
         ...(this.drawerMode === 'edit'
