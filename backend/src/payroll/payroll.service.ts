@@ -1,4 +1,4 @@
-import { BadRequestException, ConflictException, Injectable, InternalServerErrorException, NotFoundException } from '@nestjs/common';
+import { BadRequestException, ConflictException, Injectable, InternalServerErrorException, NotFoundException, OnModuleInit } from '@nestjs/common';
 import { DatabaseService } from 'src/database/database.service';
 import { CreateEmployeeDto } from './dto/create-employee.dto';
 import { UpdateEmployeeDto } from './dto/update-employee.dto';
@@ -6,8 +6,28 @@ import { CreateCutoffDto } from './dto/create-cutoff.dto';
 import { CreatePayrollDto } from './dto/create-payroll.dto';
 
 @Injectable()
-export class PayrollService {
+export class PayrollService implements OnModuleInit {
   constructor(private readonly db: DatabaseService) {}
+
+  async onModuleInit() {
+    try {
+      await this.db.query(`
+        DO $$
+        BEGIN
+          IF NOT EXISTS (
+            SELECT 1 FROM information_schema.columns
+            WHERE table_schema = current_schema()
+              AND table_name = 'tblpayroll_daily_records'
+              AND column_name = 'overtime'
+          ) THEN
+            ALTER TABLE tblpayroll_daily_records ADD COLUMN overtime NUMERIC DEFAULT 0;
+          END IF;
+        END $$;
+      `);
+    } catch (error) {
+      console.error('PayrollService: Failed to ensure overtime column:', error?.message);
+    }
+  }
 
   async getEmployees(filters: { position?: string; projectId?: number }) {
     const conditions: string[] = ['status = 1'];
@@ -213,66 +233,7 @@ export class PayrollService {
     const cutoffs: CutoffRecord[] = [];
 
     for (const rec of result.rows) {
-      // Daily records - use adjusted_rate and is_present from daily records
-      const dailyRecordsResult = await this.db.query<{
-        adjustedRate: number;
-        isPresent: boolean;
-        commission: number;
-      }>(
-        `SELECT dr.adjusted_rate::numeric AS "adjustedRate",
-                dr.is_present AS "isPresent",
-                dr.commission::numeric AS "commission"
-        FROM tblpayroll_daily_records dr
-        WHERE dr.payroll_record_id = $1`,
-        [rec.recordId],
-      );
-
-      // Additional compensation
-      const compensationResult = await this.db.query<{ amount: number }>(
-        `SELECT amount::numeric FROM tblpayroll_additional_compensation WHERE payroll_record_id = $1`,
-        [rec.recordId],
-      );
-
-      // Additional deductions
-      const deductionsResult = await this.db.query<{ amount: number }>(
-        `SELECT amount::numeric FROM tblpayroll_additional_deductions WHERE payroll_record_id = $1`,
-        [rec.recordId],
-      );
-
-      // Government deductions
-      const govResult = await this.db.query<{
-        pagIbigUsed: number;
-        philhealthUsed: number;
-        sssUsed: number;
-      }>(
-        `SELECT pag_ibig_used::numeric AS "pagIbigUsed",
-                philhealth_used::numeric AS "philhealthUsed",
-                sss_used::numeric AS "sssUsed"
-        FROM tblpayroll_records
-        WHERE id = $1`,
-        [rec.recordId],
-      );
-
-      const gov = govResult.rows[0];
-
-      // Compute totals - sum adjustedRate only for present days
-      const presentDays = dailyRecordsResult.rows.filter(dr => dr.isPresent);
-      const totalAdjustedRate = presentDays.reduce((sum, dr) => sum + Number(dr.adjustedRate ?? 0), 0);
-      const totalCommissions = presentDays.reduce((sum, dr) => sum + Number(dr.commission ?? 0), 0);
-      const totalAdditionalCompensation = compensationResult.rows.reduce((sum, c) => sum + Number(c.amount ?? 0), 0);
-      const totalAdditionalDeductions = deductionsResult.rows.reduce((sum, d) => sum + Number(d.amount ?? 0), 0);
-      const totalGovernmentDeductions =
-        Number(gov?.pagIbigUsed ?? 0) +
-        Number(gov?.philhealthUsed ?? 0) +
-        Number(gov?.sssUsed ?? 0);
-
-      const computedPayout =
-        totalAdjustedRate +
-        totalCommissions +
-        totalAdditionalCompensation -
-        totalAdditionalDeductions -
-        totalGovernmentDeductions;
-
+      const computedPayout = await this.computePayout(rec.recordId);
       cutoffs.push({
         ...rec,
         payoutAmount: computedPayout,
@@ -285,11 +246,12 @@ export class PayrollService {
   // payroll.service.ts
 
   async computePayout(recordId: number): Promise<number> {
-    // 1. Daily records - use adjusted_rate and is_present from daily records
-    const dailyRecordsResult = await this.db.query<{ adjustedRate: number; isPresent: boolean; commission: number }>(
+    // 1. Daily records - use adjusted_rate, overtime, and is_present from daily records
+    const dailyRecordsResult = await this.db.query<{ adjustedRate: number; isPresent: boolean; commission: number; overtime: number }>(
       `SELECT dr.adjusted_rate::numeric AS "adjustedRate",
               dr.is_present AS "isPresent",
-              dr.commission::numeric AS "commission"
+              dr.commission::numeric AS "commission",
+              COALESCE(dr.overtime, 0)::numeric AS "overtime"
       FROM tblpayroll_daily_records dr
       WHERE dr.payroll_record_id = $1`,
       [recordId],
@@ -323,9 +285,10 @@ export class PayrollService {
 
     const gov = govResult.rows[0];
 
-    // 5. Compute totals - sum adjustedRate only for present days
+    // 5. Compute totals - sum adjustedRate and overtime only for present days
     const presentDays = dailyRecordsResult.rows.filter(dr => dr.isPresent);
     const totalAdjustedRate = presentDays.reduce((sum, dr) => sum + Number(dr.adjustedRate ?? 0), 0);
+    const totalOvertime = presentDays.reduce((sum, dr) => sum + Number(dr.overtime ?? 0), 0);
     const totalCommissions = presentDays.reduce((sum, dr) => sum + Number(dr.commission ?? 0), 0);
     const totalAdditionalCompensation = compensationResult.rows.reduce((sum, c) => sum + Number(c.amount ?? 0), 0);
     const totalAdditionalDeductions = deductionsResult.rows.reduce((sum, d) => sum + Number(d.amount ?? 0), 0);
@@ -336,6 +299,7 @@ export class PayrollService {
 
     return (
       totalAdjustedRate +
+      totalOvertime +
       totalCommissions +
       totalAdditionalCompensation -
       totalAdditionalDeductions -
@@ -789,7 +753,11 @@ export class PayrollService {
       .filter((r) => r.isPresent)
       .reduce((sum, r) => sum + (r.adjustedRate ?? 0), 0);
 
-    const netPay = totalAdjustedRate + totalCommissions + totalAdditionalComp - totalAdditionalDed - totalGovDeductions;
+    const totalOvertime = dto.dailyRecords
+      .filter((r) => r.isPresent)
+      .reduce((sum, r) => sum + ((r as any).overtime ?? 0), 0);
+
+    const netPay = totalAdjustedRate + totalOvertime + totalCommissions + totalAdditionalComp - totalAdditionalDed - totalGovDeductions;
 
     // 7. Execute in a transaction
     try {
@@ -852,7 +820,7 @@ export class PayrollService {
 
           for (const record of dto.dailyRecords) {
             dailyPlaceholders.push(
-              `($${paramIdx++}, $${paramIdx++}, $${paramIdx++}, $${paramIdx++}, $${paramIdx++}, $${paramIdx++}, $${paramIdx++})`,
+              `($${paramIdx++}, $${paramIdx++}, $${paramIdx++}, $${paramIdx++}, $${paramIdx++}, $${paramIdx++}, $${paramIdx++}, $${paramIdx++})`,
             );
             dailyValues.push(
               payrollRecord.id,
@@ -862,11 +830,12 @@ export class PayrollService {
               record.commission ?? 0,
               record.remarks ?? null,
               record.adjustedRate ?? 0,
+              (record as any).overtime ?? 0,
             );
           }
 
           await client.query(
-            `INSERT INTO tblpayroll_daily_records (payroll_record_id, record_date, is_present, assigned_project_id, commission, remarks, adjusted_rate)
+            `INSERT INTO tblpayroll_daily_records (payroll_record_id, record_date, is_present, assigned_project_id, commission, remarks, adjusted_rate, overtime)
              VALUES ${dailyPlaceholders.join(', ')}`,
             dailyValues,
           );
@@ -996,7 +965,8 @@ export class PayrollService {
       `SELECT dr.record_date AS "date", dr.is_present AS "isPresent",
               dr.assigned_project_id AS "assignedProjectId",
               dr.commission::numeric AS "commission", dr.remarks,
-              dr.adjusted_rate::numeric AS "adjustedRate"
+              dr.adjusted_rate::numeric AS "adjustedRate",
+              COALESCE(dr.overtime, 0)::numeric AS "overtime"
        FROM tblpayroll_daily_records dr
        WHERE dr.payroll_record_id = $1
        ORDER BY dr.record_date ASC`,
@@ -1077,5 +1047,164 @@ export class PayrollService {
         sss: record.sssUsed,
       },
     };
+  }
+
+  async updatePayrollRecord(recordId: number, dto: CreatePayrollDto) {
+    // 1. Verify record exists and get employee info
+    const recordResult = await this.db.query<{
+      id: number;
+      employeeId: number;
+      cutoffId: number;
+      baseSalary: string;
+      pagIbig: string;
+      philhealth: string;
+      sss: string;
+    }>(
+      `SELECT
+         r.id,
+         r.employee_id AS "employeeId",
+         r.cutoff_id AS "cutoffId",
+         r.base_salary_used::text AS "baseSalary",
+         r.pag_ibig_used::text AS "pagIbig",
+         r.philhealth_used::text AS "philhealth",
+         r.sss_used::text AS "sss"
+       FROM tblpayroll_records r
+       WHERE r.id = $1`,
+      [recordId],
+    );
+
+    if (recordResult.rows.length === 0) {
+      throw new NotFoundException('Payroll record not found');
+    }
+
+    const record = recordResult.rows[0];
+    const pagIbig = parseFloat(record.pagIbig);
+    const philhealth = parseFloat(record.philhealth);
+    const sss = parseFloat(record.sss);
+
+    // 2. Compute new totals
+    const totalCommissions = dto.dailyRecords
+      .filter((r) => r.isPresent)
+      .reduce((sum, r) => sum + (r.commission ?? 0), 0);
+
+    const totalAdditionalComp = (dto.additionalCompensation ?? [])
+      .reduce((sum, entry) => sum + entry.amount, 0);
+
+    const totalAdditionalDed = (dto.additionalDeductions ?? [])
+      .reduce((sum, entry) => sum + entry.amount, 0);
+
+    const totalGovDeductions = pagIbig + philhealth + sss;
+
+    const totalAdjustedRate = dto.dailyRecords
+      .filter((r) => r.isPresent)
+      .reduce((sum, r) => sum + (r.adjustedRate ?? 0), 0);
+
+    const totalOvertime = dto.dailyRecords
+      .filter((r) => r.isPresent)
+      .reduce((sum, r) => sum + ((r as any).overtime ?? 0), 0);
+
+    const netPay = totalAdjustedRate + totalOvertime + totalCommissions + totalAdditionalComp - totalAdditionalDed - totalGovDeductions;
+
+    // 3. Execute update in a transaction
+    try {
+      await this.db.withTransaction(async (client) => {
+        // 3a. Update payout amount and total commissions
+        await client.query(
+          `UPDATE tblpayroll_records
+           SET payout_amount = $1, total_commissions = $2
+           WHERE id = $3`,
+          [netPay, totalCommissions, recordId],
+        );
+
+        // 3b. Delete existing daily records and re-insert
+        await client.query(
+          `DELETE FROM tblpayroll_daily_records WHERE payroll_record_id = $1`,
+          [recordId],
+        );
+
+        if (dto.dailyRecords.length > 0) {
+          const dailyValues: unknown[] = [];
+          const dailyPlaceholders: string[] = [];
+          let paramIdx = 1;
+
+          for (const dailyRecord of dto.dailyRecords) {
+            dailyPlaceholders.push(
+              `($${paramIdx++}, $${paramIdx++}, $${paramIdx++}, $${paramIdx++}, $${paramIdx++}, $${paramIdx++}, $${paramIdx++}, $${paramIdx++})`,
+            );
+            dailyValues.push(
+              recordId,
+              dailyRecord.date,
+              dailyRecord.isPresent ?? false,
+              dailyRecord.assignedProjectId ?? null,
+              dailyRecord.commission ?? 0,
+              dailyRecord.remarks ?? null,
+              dailyRecord.adjustedRate ?? 0,
+              (dailyRecord as any).overtime ?? 0,
+            );
+          }
+
+          await client.query(
+            `INSERT INTO tblpayroll_daily_records (payroll_record_id, record_date, is_present, assigned_project_id, commission, remarks, adjusted_rate, overtime)
+             VALUES ${dailyPlaceholders.join(', ')}`,
+            dailyValues,
+          );
+        }
+
+        // 3c. Delete existing compensation and re-insert
+        await client.query(
+          `DELETE FROM tblpayroll_additional_compensation WHERE payroll_record_id = $1`,
+          [recordId],
+        );
+
+        const compensationEntries = dto.additionalCompensation ?? [];
+        if (compensationEntries.length > 0) {
+          const compValues: unknown[] = [];
+          const compPlaceholders: string[] = [];
+          let paramIdx = 1;
+
+          for (const entry of compensationEntries) {
+            compPlaceholders.push(`($${paramIdx++}, $${paramIdx++}, $${paramIdx++})`);
+            compValues.push(recordId, entry.description, entry.amount);
+          }
+
+          await client.query(
+            `INSERT INTO tblpayroll_additional_compensation (payroll_record_id, description, amount)
+             VALUES ${compPlaceholders.join(', ')}`,
+            compValues,
+          );
+        }
+
+        // 3d. Delete existing deductions and re-insert
+        await client.query(
+          `DELETE FROM tblpayroll_additional_deductions WHERE payroll_record_id = $1`,
+          [recordId],
+        );
+
+        const deductionEntries = dto.additionalDeductions ?? [];
+        if (deductionEntries.length > 0) {
+          const dedValues: unknown[] = [];
+          const dedPlaceholders: string[] = [];
+          let paramIdx = 1;
+
+          for (const entry of deductionEntries) {
+            dedPlaceholders.push(`($${paramIdx++}, $${paramIdx++}, $${paramIdx++})`);
+            dedValues.push(recordId, entry.description, entry.amount);
+          }
+
+          await client.query(
+            `INSERT INTO tblpayroll_additional_deductions (payroll_record_id, description, amount)
+             VALUES ${dedPlaceholders.join(', ')}`,
+            dedValues,
+          );
+        }
+      });
+
+      return { id: recordId, payoutAmount: netPay };
+    } catch (error) {
+      if (error instanceof NotFoundException) {
+        throw error;
+      }
+      throw new InternalServerErrorException('Failed to update payroll record');
+    }
   }
 }

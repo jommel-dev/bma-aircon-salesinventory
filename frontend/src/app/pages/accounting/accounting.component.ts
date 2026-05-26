@@ -5777,120 +5777,465 @@ export class AccountingComponent implements OnInit {
     }
 
     try {
-      const { PDFDocument, rgb } = await import('pdf-lib');
+      const { PDFDocument, rgb, StandardFonts } = await import('pdf-lib');
       const pdfDoc = await PDFDocument.create();
-      const page = pdfDoc.addPage([612, 792]);
+      const font = await pdfDoc.embedFont(StandardFonts.Helvetica);
+      const boldFont = await pdfDoc.embedFont(StandardFonts.HelveticaBold);
 
       const v = this.viewingVoucher;
-      let yPosition = 750;
-      const lineHeight = 15;
-      const fontSize = 10;
+      const settings = this.chequeVoucherPrintSettings;
+      const pageWidth = 612;
+      const pageHeight = 792;
+      const marginLeft = 50;
+      const marginRight = 50;
+      const contentWidth = pageWidth - marginLeft - marginRight;
+      const fontSize = 9;
+      const headerFontSize = 10;
+      const titleFontSize = 14;
+      const lineHeight = 14;
+      const tableRowHeight = 16;
+      const sectionGap = 16;
 
-      // Header
-      page.drawText('CHEQUE VOUCHER', {
-        x: 250,
-        y: yPosition,
-        size: 18,
+      let page = pdfDoc.addPage([pageWidth, pageHeight]);
+      let y = pageHeight - 40;
+
+      const addNewPage = () => {
+        page = pdfDoc.addPage([pageWidth, pageHeight]);
+        y = pageHeight - 40;
+      };
+
+      const ensureSpace = (needed: number) => {
+        if (y - needed < 60) {
+          addNewPage();
+        }
+      };
+
+      const drawLine = (x1: number, y1: number, x2: number, thickness = 0.5) => {
+        page.drawLine({
+          start: { x: x1, y: y1 },
+          end: { x: x2, y: y1 },
+          thickness,
+          color: rgb(0.6, 0.6, 0.6),
+        });
+      };
+
+      const formatCurrency = (amount: number): string => {
+        return `PHP ${amount.toLocaleString('en-PH', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
+      };
+
+      // === HEADER ===
+      if (settings.showHeader) {
+        const businessName = this.getChequeVoucherBusinessName();
+        const headerLines = this.getChequeVoucherHeaderLines();
+
+        // Try to embed logo
+        const logoSrc = this.getChequeVoucherPrintLogoSrc();
+        let logoEmbedded = false;
+        if (logoSrc) {
+          try {
+            const logoResponse = await fetch(logoSrc);
+            if (logoResponse.ok) {
+              const logoBytes = new Uint8Array(await logoResponse.arrayBuffer());
+              const isPng = logoSrc.toLowerCase().includes('.png') || logoBytes[0] === 0x89;
+              const image = isPng
+                ? await pdfDoc.embedPng(logoBytes)
+                : await pdfDoc.embedJpg(logoBytes);
+              const maxLogoHeight = 40;
+              const maxLogoWidth = 140;
+              const scale = Math.min(maxLogoWidth / image.width, maxLogoHeight / image.height, 1);
+              const logoWidth = image.width * scale;
+              const logoHeight = image.height * scale;
+              page.drawImage(image, {
+                x: marginLeft,
+                y: y - logoHeight,
+                width: logoWidth,
+                height: logoHeight,
+              });
+              logoEmbedded = true;
+            }
+          } catch {
+            // Logo embed failed, fall back to text
+          }
+        }
+
+        if (!logoEmbedded) {
+          page.drawText(businessName, {
+            x: marginLeft,
+            y: y - 12,
+            size: 12,
+            font: boldFont,
+            color: rgb(0, 0, 0),
+          });
+        }
+
+        // Header lines (right-aligned)
+        let headerY = y - 4;
+        for (const line of headerLines) {
+          const lineWidth = font.widthOfTextAtSize(line, 8);
+          page.drawText(line, {
+            x: pageWidth - marginRight - lineWidth,
+            y: headerY,
+            size: 8,
+            font: font,
+            color: rgb(0.12, 0.25, 0.6),
+          });
+          headerY -= 11;
+        }
+
+        y -= 48;
+        drawLine(marginLeft, y, pageWidth - marginRight, 1);
+        y -= sectionGap;
+      }
+
+      // === TITLE ===
+      ensureSpace(30);
+      const titleText = `Cheque Voucher`;
+      const cvNoText = v.cvNo;
+      const titleWidth = boldFont.widthOfTextAtSize(titleText, titleFontSize);
+      const cvNoWidth = boldFont.widthOfTextAtSize(cvNoText, titleFontSize);
+      page.drawText(titleText, {
+        x: pageWidth - marginRight - titleWidth - cvNoWidth - 6,
+        y,
+        size: titleFontSize,
+        font: boldFont,
         color: rgb(0, 0, 0),
       });
-      yPosition -= 20;
-      page.drawText(v.cvNo, {
-        x: 270,
-        y: yPosition,
-        size: 12,
-        color: rgb(100, 100, 100),
+      page.drawText(cvNoText, {
+        x: pageWidth - marginRight - cvNoWidth,
+        y,
+        size: titleFontSize,
+        font: boldFont,
+        color: rgb(0.8, 0.2, 0.2),
       });
-      yPosition -= 30;
+      y -= sectionGap + 8;
 
-      // Details
-      const details = [
-        { label: 'Voucher Date:', value: this.formatDateOnly(v.voucherDate) },
-        { label: 'Payee:', value: v.payee },
-        { label: 'TIN Number:', value: v.tinNumber || 'N/A' },
-        { label: 'Address:', value: `${v.address || 'N/A'}${v.zipCode ? `, ${v.zipCode}` : ''}` },
-      ];
+      // === DETAILS GRID ===
+      ensureSpace(60);
+      const colMid = marginLeft + contentWidth / 2;
+      const detailLabelSize = 8;
+      const detailValueSize = 9;
 
-      for (const detail of details) {
-        page.drawText(detail.label, {
-          x: 50,
-          y: yPosition,
-          size: fontSize,
-          color: rgb(0, 0, 0),
-        });
-        page.drawText(detail.value, {
-          x: 150,
-          y: yPosition,
-          size: fontSize,
-          color: rgb(50, 50, 50),
-        });
-        yPosition -= lineHeight;
-      }
+      // Left column
+      page.drawText('Payee:', { x: marginLeft, y, size: detailLabelSize, font: boldFont, color: rgb(0.3, 0.3, 0.3) });
+      y -= 12;
+      page.drawText(v.payee || '-', { x: marginLeft, y, size: detailValueSize, font, color: rgb(0, 0, 0) });
+      y -= 16;
+      page.drawText('Address:', { x: marginLeft, y, size: detailLabelSize, font: boldFont, color: rgb(0.3, 0.3, 0.3) });
+      y -= 12;
+      const addressText = `${v.address || '-'}${v.zipCode ? `, ${v.zipCode}` : ''}`;
+      page.drawText(addressText.substring(0, 60), { x: marginLeft, y, size: detailValueSize, font, color: rgb(0, 0, 0) });
 
-      yPosition -= 10;
+      // Right column
+      let rightY = y + 40;
+      page.drawText('Date:', { x: colMid + 20, y: rightY, size: detailLabelSize, font: boldFont, color: rgb(0.3, 0.3, 0.3) });
+      rightY -= 12;
+      page.drawText(this.formatDateOnly(v.voucherDate), { x: colMid + 20, y: rightY, size: detailValueSize, font, color: rgb(0, 0, 0) });
+      rightY -= 16;
+      page.drawText('TIN:', { x: colMid + 20, y: rightY, size: detailLabelSize, font: boldFont, color: rgb(0.3, 0.3, 0.3) });
+      rightY -= 12;
+      page.drawText(v.tinNumber || 'N/A', { x: colMid + 20, y: rightY, size: detailValueSize, font, color: rgb(0, 0, 0) });
 
-      // Particulars
+      y -= sectionGap + 4;
+
+      // === PARTICULARS ===
       if (v.particulars) {
-        page.drawText('Particulars:', {
-          x: 50,
-          y: yPosition,
-          size: fontSize + 1,
-          color: rgb(0, 0, 0),
-        });
-        yPosition -= lineHeight;
-        const particulars = v.particulars.substring(0, 100);
-        page.drawText(particulars, {
-          x: 50,
-          y: yPosition,
-          size: fontSize,
-          color: rgb(50, 50, 50),
-        });
-        yPosition -= lineHeight * 2;
+        ensureSpace(40);
+        y -= 4;
+        drawLine(marginLeft, y + 6, pageWidth - marginRight, 0.5);
+        y -= 8;
+        page.drawText('Particulars:', { x: marginLeft, y, size: fontSize, font: boldFont, color: rgb(0.3, 0.3, 0.3) });
+        y -= lineHeight;
+        // Wrap particulars text
+        const maxCharsPerLine = 90;
+        const particularsLines = v.particulars.split('\n');
+        for (const pLine of particularsLines) {
+          const chunks = [];
+          for (let i = 0; i < pLine.length; i += maxCharsPerLine) {
+            chunks.push(pLine.substring(i, i + maxCharsPerLine));
+          }
+          if (chunks.length === 0) chunks.push('');
+          for (const chunk of chunks) {
+            ensureSpace(lineHeight);
+            page.drawText(chunk, { x: marginLeft, y, size: fontSize, font, color: rgb(0, 0, 0) });
+            y -= lineHeight;
+          }
+        }
+        y -= 4;
       }
 
-      // Deposits summary
+      // === DEPOSITS TABLE ===
       if (v.deposits.length > 0) {
-        const depositTotal = v.deposits.reduce((sum, d) => sum + (Number(d.amount) || 0), 0);
-        page.drawText(`Deposits Total: ${depositTotal.toFixed(2)}`, {
-          x: 50,
-          y: yPosition,
-          size: fontSize,
-          color: rgb(0, 0, 0),
+        ensureSpace(50);
+        y -= sectionGap;
+        page.drawText('Cheque Deposits', { x: marginLeft, y, size: headerFontSize, font: boldFont, color: rgb(0, 0, 0) });
+        y -= sectionGap;
+
+        // Table header
+        const depCols = [
+          { label: 'Bank Name', x: marginLeft, width: 160 },
+          { label: 'Cheque No.', x: marginLeft + 160, width: 120 },
+          { label: 'Cheque Date', x: marginLeft + 280, width: 100 },
+          { label: 'Amount', x: marginLeft + 380, width: contentWidth - 380, align: 'right' as const },
+        ];
+
+        // Header background
+        page.drawRectangle({
+          x: marginLeft,
+          y: y - 3,
+          width: contentWidth,
+          height: tableRowHeight,
+          color: rgb(0.95, 0.95, 0.95),
         });
-        yPosition -= lineHeight;
+
+        for (const col of depCols) {
+          const text = col.label;
+          if (col.align === 'right') {
+            const tw = boldFont.widthOfTextAtSize(text, 8);
+            page.drawText(text, { x: pageWidth - marginRight - tw, y, size: 8, font: boldFont, color: rgb(0, 0, 0) });
+          } else {
+            page.drawText(text, { x: col.x, y, size: 8, font: boldFont, color: rgb(0, 0, 0) });
+          }
+        }
+        y -= 4;
+        drawLine(marginLeft, y, pageWidth - marginRight, 1.5);
+        y -= tableRowHeight - 4;
+
+        // Table rows
+        for (const deposit of v.deposits) {
+          ensureSpace(tableRowHeight);
+          page.drawText(String(deposit.bankName || '').substring(0, 30), { x: depCols[0].x, y, size: fontSize, font, color: rgb(0, 0, 0) });
+          page.drawText(String(deposit.chequeNo || ''), { x: depCols[1].x, y, size: fontSize, font, color: rgb(0, 0, 0) });
+          page.drawText(this.formatDateOnly(deposit.chequeDate), { x: depCols[2].x, y, size: fontSize, font, color: rgb(0, 0, 0) });
+          const amtText = formatCurrency(Number(deposit.amount) || 0);
+          const amtWidth = font.widthOfTextAtSize(amtText, fontSize);
+          page.drawText(amtText, { x: pageWidth - marginRight - amtWidth, y, size: fontSize, font, color: rgb(0, 0, 0) });
+          y -= tableRowHeight;
+          drawLine(marginLeft, y + 4, pageWidth - marginRight, 0.3);
+        }
       }
 
-      // Invoices summary
+      // === INVOICES TABLE ===
       if (v.invoices.length > 0) {
-        const invoiceTotal = v.invoices.reduce((sum, i) => sum + (Number(i.amount) || 0), 0);
-        page.drawText(`Invoices Total: ${invoiceTotal.toFixed(2)}`, {
-          x: 50,
-          y: yPosition,
-          size: fontSize,
-          color: rgb(0, 0, 0),
+        ensureSpace(50);
+        y -= sectionGap;
+        page.drawText('Invoices', { x: marginLeft, y, size: headerFontSize, font: boldFont, color: rgb(0, 0, 0) });
+        y -= sectionGap;
+
+        const invCols = [
+          { label: 'Invoice No.', x: marginLeft, width: 110 },
+          { label: 'Invoice Date', x: marginLeft + 110, width: 100 },
+          { label: 'Description', x: marginLeft + 210, width: 180 },
+          { label: 'Amount', x: marginLeft + 390, width: contentWidth - 390, align: 'right' as const },
+        ];
+
+        // Header background
+        page.drawRectangle({
+          x: marginLeft,
+          y: y - 3,
+          width: contentWidth,
+          height: tableRowHeight,
+          color: rgb(0.95, 0.95, 0.95),
         });
-        yPosition -= lineHeight;
+
+        for (const col of invCols) {
+          const text = col.label;
+          if (col.align === 'right') {
+            const tw = boldFont.widthOfTextAtSize(text, 8);
+            page.drawText(text, { x: pageWidth - marginRight - tw, y, size: 8, font: boldFont, color: rgb(0, 0, 0) });
+          } else {
+            page.drawText(text, { x: col.x, y, size: 8, font: boldFont, color: rgb(0, 0, 0) });
+          }
+        }
+        y -= 4;
+        drawLine(marginLeft, y, pageWidth - marginRight, 1.5);
+        y -= tableRowHeight - 4;
+
+        for (const invoice of v.invoices) {
+          ensureSpace(tableRowHeight);
+          page.drawText(String(invoice.invoiceNo || '').substring(0, 20), { x: invCols[0].x, y, size: fontSize, font, color: rgb(0, 0, 0) });
+          page.drawText(this.formatDateOnly(invoice.invoiceDate), { x: invCols[1].x, y, size: fontSize, font, color: rgb(0, 0, 0) });
+          page.drawText(String(invoice.description || '').substring(0, 35), { x: invCols[2].x, y, size: fontSize, font, color: rgb(0, 0, 0) });
+          const amtText = formatCurrency(Number(invoice.amount) || 0);
+          const amtWidth = font.widthOfTextAtSize(amtText, fontSize);
+          page.drawText(amtText, { x: pageWidth - marginRight - amtWidth, y, size: fontSize, font, color: rgb(0, 0, 0) });
+          y -= tableRowHeight;
+          drawLine(marginLeft, y + 4, pageWidth - marginRight, 0.3);
+        }
       }
 
-      // Account titles summary
+      // === ACCOUNT TITLES TABLE ===
       if (v.accountTitles.length > 0) {
-        const debitTotal = v.accountTitles.reduce((sum, a) => sum + (Number(a.debit) || 0), 0);
-        const creditTotal = v.accountTitles.reduce((sum, a) => sum + (Number(a.credit) || 0), 0);
-        page.drawText(`Debits: ${debitTotal.toFixed(2)} | Credits: ${creditTotal.toFixed(2)}`, {
-          x: 50,
-          y: yPosition,
-          size: fontSize,
-          color: rgb(0, 0, 0),
+        ensureSpace(50);
+        y -= sectionGap;
+        page.drawText('Account Titles', { x: marginLeft, y, size: headerFontSize, font: boldFont, color: rgb(0, 0, 0) });
+        y -= sectionGap;
+
+        const acctCols = [
+          { label: 'Account No.', x: marginLeft, width: 100 },
+          { label: 'Description', x: marginLeft + 100, width: 220 },
+          { label: 'Debit', x: marginLeft + 320, width: 95, align: 'right' as const },
+          { label: 'Credit', x: marginLeft + 415, width: contentWidth - 415, align: 'right' as const },
+        ];
+
+        // Header background
+        page.drawRectangle({
+          x: marginLeft,
+          y: y - 3,
+          width: contentWidth,
+          height: tableRowHeight,
+          color: rgb(0.95, 0.95, 0.95),
         });
-        yPosition -= lineHeight;
+
+        for (const col of acctCols) {
+          const text = col.label;
+          if (col.align === 'right') {
+            const colRightEdge = col.x + col.width;
+            const tw = boldFont.widthOfTextAtSize(text, 8);
+            page.drawText(text, { x: colRightEdge - tw, y, size: 8, font: boldFont, color: rgb(0, 0, 0) });
+          } else {
+            page.drawText(text, { x: col.x, y, size: 8, font: boldFont, color: rgb(0, 0, 0) });
+          }
+        }
+        y -= 4;
+        drawLine(marginLeft, y, pageWidth - marginRight, 1.5);
+        y -= tableRowHeight - 4;
+
+        for (const acct of v.accountTitles) {
+          ensureSpace(tableRowHeight);
+          page.drawText(String(acct.accountNumber || '').substring(0, 18), { x: acctCols[0].x, y, size: fontSize, font, color: rgb(0, 0, 0) });
+          page.drawText(String(acct.description || '').substring(0, 40), { x: acctCols[1].x, y, size: fontSize, font, color: rgb(0, 0, 0) });
+
+          const debitText = (Number(acct.debit) || 0) > 0 ? formatCurrency(Number(acct.debit)) : '-';
+          const debitWidth = font.widthOfTextAtSize(debitText, fontSize);
+          page.drawText(debitText, { x: acctCols[2].x + acctCols[2].width - debitWidth, y, size: fontSize, font, color: rgb(0, 0, 0) });
+
+          const creditText = (Number(acct.credit) || 0) > 0 ? formatCurrency(Number(acct.credit)) : '-';
+          const creditWidth = font.widthOfTextAtSize(creditText, fontSize);
+          page.drawText(creditText, { x: acctCols[3].x + acctCols[3].width - creditWidth, y, size: fontSize, font, color: rgb(0, 0, 0) });
+
+          y -= tableRowHeight;
+          drawLine(marginLeft, y + 4, pageWidth - marginRight, 0.3);
+        }
+
+        // Totals row
+        ensureSpace(tableRowHeight + 4);
+        drawLine(marginLeft, y + 4, pageWidth - marginRight, 1.5);
+        y -= 2;
+
+        page.drawRectangle({
+          x: marginLeft,
+          y: y - 3,
+          width: contentWidth,
+          height: tableRowHeight,
+          color: rgb(0.97, 0.97, 0.97),
+        });
+
+        page.drawText('Total', { x: marginLeft, y, size: fontSize, font: boldFont, color: rgb(0, 0, 0) });
+
+        const debitTotal = this.getVoucherAccountTitleDebitTotal(v);
+        const creditTotal = this.getVoucherAccountTitleCreditTotal(v);
+
+        const debitTotalText = formatCurrency(debitTotal);
+        const debitTotalWidth = boldFont.widthOfTextAtSize(debitTotalText, fontSize);
+        page.drawText(debitTotalText, { x: acctCols[2].x + acctCols[2].width - debitTotalWidth, y, size: fontSize, font: boldFont, color: rgb(0, 0, 0) });
+
+        const creditTotalText = formatCurrency(creditTotal);
+        const creditTotalWidth = boldFont.widthOfTextAtSize(creditTotalText, fontSize);
+        page.drawText(creditTotalText, { x: acctCols[3].x + acctCols[3].width - creditTotalWidth, y, size: fontSize, font: boldFont, color: rgb(0, 0, 0) });
+
+        y -= tableRowHeight;
       }
 
-      // Footer
-      page.drawText(`Released: ${this.formatDateOnly(v.releasedAt)} | Prepared by: ${v.preparedBy || 'N/A'}`, {
-        x: 50,
-        y: 20,
-        size: 9,
-        color: rgb(100, 100, 100),
-      });
+      // === FOOTER ===
+      ensureSpace(60);
+      y -= sectionGap + 8;
+      drawLine(marginLeft, y + 6, pageWidth - marginRight, 1);
+      y -= 8;
+      page.drawText(`Released on: ${this.formatDateOnly(v.releasedAt)}`, { x: marginLeft, y, size: 8, font, color: rgb(0.4, 0.4, 0.4) });
+      y -= 12;
+      if (settings.showPreparedBy && v.preparedBy) {
+        page.drawText(`Prepared by: ${v.preparedBy}`, { x: marginLeft, y, size: 8, font, color: rgb(0.4, 0.4, 0.4) });
+        y -= 12;
+      }
+
+      // Footer notes
+      const footerLeft = settings.footerLeft || '';
+      const footerCenter = settings.footerCenter || '';
+      const footerRight = settings.footerRight || '';
+      if (footerLeft || footerCenter || footerRight) {
+        y -= 8;
+        drawLine(marginLeft, y + 6, pageWidth - marginRight, 0.3);
+        y -= 6;
+        if (footerLeft) {
+          page.drawText(footerLeft, { x: marginLeft, y, size: 7, font, color: rgb(0.4, 0.4, 0.4) });
+        }
+        if (footerCenter) {
+          const centerWidth = font.widthOfTextAtSize(footerCenter, 7);
+          page.drawText(footerCenter, { x: (pageWidth - centerWidth) / 2, y, size: 7, font, color: rgb(0.4, 0.4, 0.4) });
+        }
+        if (footerRight) {
+          const rightWidth = font.widthOfTextAtSize(footerRight, 7);
+          page.drawText(footerRight, { x: pageWidth - marginRight - rightWidth, y, size: 7, font, color: rgb(0.4, 0.4, 0.4) });
+        }
+        y -= 12;
+      }
+
+      // === SIGNATORIES ===
+      const signatories = this.getActiveChequeVoucherSignatories();
+      if (settings.showSignatureLine && signatories.length > 0) {
+        ensureSpace(70);
+        y -= 30;
+        const sigCount = Math.min(signatories.length, 4);
+        const sigWidth = contentWidth / sigCount;
+
+        for (let i = 0; i < sigCount; i++) {
+          const signatory = signatories[i];
+          const sigX = marginLeft + i * sigWidth;
+          const sigCenterX = sigX + sigWidth / 2;
+
+          // Signature image
+          const imageSrc = this.getSignatoryImageSrc(signatory);
+          if (imageSrc) {
+            try {
+              const sigResponse = await fetch(imageSrc);
+              if (sigResponse.ok) {
+                const sigBytes = new Uint8Array(await sigResponse.arrayBuffer());
+                const isPng = imageSrc.toLowerCase().includes('.png') || sigBytes[0] === 0x89;
+                const sigImage = isPng
+                  ? await pdfDoc.embedPng(sigBytes)
+                  : await pdfDoc.embedJpg(sigBytes);
+                const maxSigH = 30;
+                const maxSigW = sigWidth - 20;
+                const sigScale = Math.min(maxSigW / sigImage.width, maxSigH / sigImage.height, 1);
+                const sw = sigImage.width * sigScale;
+                const sh = sigImage.height * sigScale;
+                page.drawImage(sigImage, {
+                  x: sigCenterX - sw / 2,
+                  y: y + 4,
+                  width: sw,
+                  height: sh,
+                });
+              }
+            } catch {
+              // Signature image embed failed, skip
+            }
+          }
+
+          // Line
+          drawLine(sigX + 10, y, sigX + sigWidth - 10, 0.8);
+
+          // Name
+          const displayName = this.getSignatoryDisplayName(signatory, v);
+          if (displayName) {
+            const nameWidth = boldFont.widthOfTextAtSize(displayName, 8);
+            page.drawText(displayName, { x: sigCenterX - nameWidth / 2, y: y - 12, size: 8, font: boldFont, color: rgb(0.1, 0.1, 0.1) });
+          }
+
+          // Label
+          const labelWidth = font.widthOfTextAtSize(signatory.label, 7);
+          page.drawText(signatory.label, { x: sigCenterX - labelWidth / 2, y: y - 22, size: 7, font, color: rgb(0.4, 0.4, 0.4) });
+        }
+      }
 
       const pdfBytes = await pdfDoc.save();
       const blob = new Blob([pdfBytes.buffer as ArrayBuffer], { type: 'application/pdf' });

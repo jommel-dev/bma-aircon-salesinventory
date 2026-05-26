@@ -30,9 +30,12 @@ export interface PayrollEmployee {
 export interface DailyRecord {
   date: string;
   isPresent: boolean;
+  leaveType: 'none' | 'on_leave' | 'sick_leave' | 'emergency_leave';
+  leavePaid: boolean;
   assignedProjectId: number | null;
   commission: number;
   adjustedRate: number;
+  overtime: number;
   remarks: string;
 }
 
@@ -74,6 +77,7 @@ export interface PayrollRecordDetail {
     assignedProjectName: string | null;
     commission: number;
     adjustedRate: number;
+    overtime: number;
     remarks: string;
   }>;
   additionalCompensation: Array<{ description: string; amount: number }>;
@@ -204,6 +208,15 @@ export class PayrollComponent implements OnInit {
   // Enhanced Payroll Record Detail state
   payrollRecordDetail: PayrollRecordDetail | null = null;
   isPayrollRecordDetailLoading = false;
+
+  // Edit Payroll Record state
+  isEditingPayrollRecord = false;
+  isSavingPayrollEdit = false;
+  payrollEditError = '';
+  editPayrollDailyRecords: DailyRecord[] = [];
+  editPayrollCompensation: CompensationEntry[] = [];
+  editPayrollDeductions: DeductionEntry[] = [];
+  editPayrollSelectedTab = 0;
 
   constructor(private readonly rbacService: RbacService) {}
 
@@ -778,6 +791,23 @@ export class PayrollComponent implements OnInit {
     const presentAtt = this.payrollRecordDetail.dailyRecords.filter(r => r.isPresent);
     return presentAtt.reduce((sum, e) => Number(sum) + Number(e.commission), 0);
   }
+  getSubTotalOvertime(): number {
+    if (!this.payrollRecordDetail) return 0;
+    return this.payrollRecordDetail.dailyRecords
+      .filter(r => r.isPresent)
+      .reduce((sum, r) => sum + Number(r.overtime ?? 0), 0);
+  }
+
+  getCalculatedNetPay(): number {
+    if (!this.payrollRecordDetail) return 0;
+    const netTotal = this.getSubTotalAdjustedRate() + this.getSubTotalOvertime() + this.getSubTotalCommissions();
+    const govDeductions = Number(this.payrollRecordDetail.governmentDeductions.pagIbig)
+      + Number(this.payrollRecordDetail.governmentDeductions.philhealth)
+      + Number(this.payrollRecordDetail.governmentDeductions.sss);
+    const addComp = this.getAdditionalCompensationTotal();
+    const addDed = this.getAdditionalDeductionsTotal();
+    return netTotal + addComp - addDed - govDeductions;
+  }
 
   getAdditionalCompensationTotal(): number {
     if (!this.payrollRecordDetail) return 0;
@@ -800,11 +830,154 @@ export class PayrollComponent implements OnInit {
     return totalGovernmentDeductions;
   }
 
+  // Payroll Record Edit methods
+  startEditPayrollRecord(): void {
+    if (!this.payrollRecordDetail) return;
+    const detail = this.payrollRecordDetail;
+
+    this.editPayrollDailyRecords = detail.dailyRecords.map(r => ({
+      date: r.date,
+      isPresent: r.isPresent,
+      leaveType: 'none' as const,
+      leavePaid: false,
+      assignedProjectId: r.assignedProjectId,
+      commission: r.commission,
+      adjustedRate: r.adjustedRate,
+      overtime: (r as any).overtime ?? 0,
+      remarks: r.remarks,
+    }));
+
+    this.editPayrollCompensation = detail.additionalCompensation.map(e => ({
+      description: e.description,
+      amount: e.amount,
+    }));
+
+    this.editPayrollDeductions = detail.additionalDeductions.map(e => ({
+      description: e.description,
+      amount: e.amount,
+    }));
+
+    this.editPayrollSelectedTab = 0;
+    this.payrollEditError = '';
+    this.isEditingPayrollRecord = true;
+  }
+
+  cancelEditPayrollRecord(): void {
+    this.isEditingPayrollRecord = false;
+    this.payrollEditError = '';
+    this.editPayrollDailyRecords = [];
+    this.editPayrollCompensation = [];
+    this.editPayrollDeductions = [];
+  }
+
+  onEditDailyRecordPresentChange(index: number): void {
+    const record = this.editPayrollDailyRecords[index];
+    if (record.isPresent) {
+      record.leaveType = 'none';
+      record.leavePaid = false;
+      record.adjustedRate = this.selectedEmployee?.baseSalary ?? record.adjustedRate;
+    } else {
+      record.commission = 0;
+    }
+  }
+
+  onEditDailyRecordLeaveTypeChange(index: number): void {
+    const record = this.editPayrollDailyRecords[index];
+    if (record.leaveType !== 'none') {
+      record.isPresent = false;
+      record.commission = 0;
+      if (!record.leavePaid) {
+        record.adjustedRate = 0;
+      }
+    } else {
+      record.isPresent = true;
+      record.leavePaid = false;
+      record.adjustedRate = this.selectedEmployee?.baseSalary ?? 0;
+    }
+  }
+
+  onEditDailyRecordLeavePaidChange(index: number): void {
+    const record = this.editPayrollDailyRecords[index];
+    if (record.leavePaid) {
+      record.adjustedRate = this.selectedEmployee?.baseSalary ?? 0;
+    } else {
+      record.adjustedRate = 0;
+    }
+  }
+
+  addEditCompensationEntry(): void {
+    this.editPayrollCompensation.push({ description: '', amount: null });
+  }
+
+  removeEditCompensationEntry(index: number): void {
+    this.editPayrollCompensation.splice(index, 1);
+  }
+
+  addEditDeductionEntry(): void {
+    this.editPayrollDeductions.push({ description: '', amount: null });
+  }
+
+  removeEditDeductionEntry(index: number): void {
+    this.editPayrollDeductions.splice(index, 1);
+  }
+
+  async savePayrollEdit(): Promise<void> {
+    if (!this.payrollRecordDetail || this.isSavingPayrollEdit) return;
+
+    this.isSavingPayrollEdit = true;
+    this.payrollEditError = '';
+
+    try {
+      const body = {
+        cutoffStart: this.payrollRecordDetail.cutoffStart,
+        cutoffEnd: this.payrollRecordDetail.cutoffEnd,
+        dailyRecords: this.editPayrollDailyRecords.map(r => ({
+          date: r.date,
+          isPresent: r.isPresent,
+          leaveType: r.leaveType !== 'none' ? r.leaveType : undefined,
+          leavePaid: r.leaveType !== 'none' ? r.leavePaid : undefined,
+          assignedProjectId: r.assignedProjectId || null,
+          commission: r.commission || 0,
+          adjustedRate: r.adjustedRate ?? 0,
+          overtime: r.overtime || 0,
+          remarks: r.remarks || undefined,
+        })),
+        additionalCompensation: this.editPayrollCompensation
+          .filter(e => e.amount && e.amount > 0 && e.description.trim())
+          .map(e => ({ description: e.description.trim(), amount: e.amount! })),
+        additionalDeductions: this.editPayrollDeductions
+          .filter(e => e.amount && e.amount > 0 && e.description.trim())
+          .map(e => ({ description: e.description.trim(), amount: e.amount! })),
+      };
+
+      const response = await apiClient.patch<{ success: boolean; message?: string }>(
+        `/payroll/records/${this.payrollRecordDetail.id}`,
+        body,
+      );
+
+      if (response.data?.success) {
+        // Reload the detail
+        await this.loadPayrollRecordDetail(this.payrollRecordDetail.id);
+        this.isEditingPayrollRecord = false;
+      } else {
+        this.payrollEditError = response.data?.message || 'Failed to update payroll record';
+      }
+    } catch (error: unknown) {
+      if (axios.isAxiosError(error)) {
+        this.payrollEditError = (error.response?.data as { message?: string })?.message || 'Failed to update payroll record';
+      } else {
+        this.payrollEditError = 'Failed to update payroll record';
+      }
+    } finally {
+      this.isSavingPayrollEdit = false;
+    }
+  }
+
   // Payroll Creator methods
   openPayrollCreator(): void {
     this.showPayrollCreator = true;
-    this.payrollCreatorCutoffStart = '';
-    this.payrollCreatorCutoffEnd = '';
+    this.payrollCreatorCutoffStart = currentDate;
+    this.payrollCreatorCutoffEnd = currentDate;
     this.payrollCreatorDailyRecords = [];
     this.payrollCreatorCompensation = [];
     this.payrollCreatorDeductions = [];
@@ -846,9 +1019,12 @@ export class PayrollComponent implements OnInit {
       records.push({
         date: current.toISOString().split('T')[0],
         isPresent: true,
+        leaveType: 'none',
+        leavePaid: false,
         assignedProjectId: null,
         commission: 0,
         adjustedRate: this.selectedEmployee!.baseSalary,
+        overtime: 0,
         remarks: ''
       });
       current.setDate(current.getDate() + 1);
@@ -876,13 +1052,51 @@ export class PayrollComponent implements OnInit {
   }
 
   onDailyRecordPresentChange(index: number): void {
-    if (!this.payrollCreatorDailyRecords[index].isPresent) {
-      this.payrollCreatorDailyRecords[index].commission = 0;
+    const record = this.payrollCreatorDailyRecords[index];
+    if (record.isPresent) {
+      // If marked present, clear any leave
+      record.leaveType = 'none';
+      record.leavePaid = false;
+      record.adjustedRate = this.selectedEmployee?.baseSalary ?? 0;
+    } else {
+      record.commission = 0;
+    }
+  }
+
+  onDailyRecordLeaveTypeChange(index: number): void {
+    const record = this.payrollCreatorDailyRecords[index];
+    if (record.leaveType !== 'none') {
+      // If a leave type is selected, mark as not present
+      record.isPresent = false;
+      record.commission = 0;
+      // Default to unpaid — rate becomes 0
+      if (!record.leavePaid) {
+        record.adjustedRate = 0;
+      }
+    } else {
+      // If leave cleared, reset to present
+      record.isPresent = true;
+      record.leavePaid = false;
+      record.adjustedRate = this.selectedEmployee?.baseSalary ?? 0;
+    }
+  }
+
+  onDailyRecordLeavePaidChange(index: number): void {
+    const record = this.payrollCreatorDailyRecords[index];
+    if (record.leavePaid) {
+      // Paid leave — keep the base salary rate
+      record.adjustedRate = this.selectedEmployee?.baseSalary ?? 0;
+    } else {
+      // Unpaid leave — zero rate
+      record.adjustedRate = 0;
     }
   }
 
   formatTabDate(dateStr: string): string {
-    const date = new Date(dateStr + 'T00:00:00');
+    const raw = String(dateStr ?? '').trim();
+    // Handle ISO format (2026-05-09T16:00:00.000Z) and plain date (2026-05-09)
+    const date = raw.includes('T') ? new Date(raw) : new Date(raw + 'T00:00:00');
+    if (isNaN(date.getTime())) return raw || 'Invalid Date';
     return date.toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
   }
 
@@ -923,9 +1137,12 @@ export class PayrollComponent implements OnInit {
         dailyRecords: this.payrollCreatorDailyRecords.map(r => ({
           date: r.date,
           isPresent: r.isPresent,
+          leaveType: r.leaveType !== 'none' ? r.leaveType : undefined,
+          leavePaid: r.leaveType !== 'none' ? r.leavePaid : undefined,
           assignedProjectId: r.assignedProjectId || null,
           commission: r.commission || 0,
           adjustedRate: r.adjustedRate ?? 0,
+          overtime: r.overtime || 0,
           remarks: r.remarks || undefined
         })),
         additionalCompensation: this.payrollCreatorCompensation
@@ -1009,7 +1226,7 @@ export class PayrollComponent implements OnInit {
 
     const pageWidth = 595.28;
     const pageHeight = 841.89;
-    const margin = 50;
+    const margin = 40;
     const contentWidth = pageWidth - margin * 2;
 
     let page = pdfDoc.addPage([pageWidth, pageHeight]);
@@ -1036,11 +1253,11 @@ export class PayrollComponent implements OnInit {
       });
     };
 
-    const drawLine = (x1: number, yPos: number, x2: number) => {
+    const drawLine = (x1: number, yPos: number, x2: number, thickness = 0.5) => {
       page.drawLine({
         start: { x: x1, y: yPos },
         end: { x: x2, y: yPos },
-        thickness: 0.5,
+        thickness,
         color: rgb(0.7, 0.7, 0.7),
       });
     };
@@ -1049,13 +1266,18 @@ export class PayrollComponent implements OnInit {
       return amount.toLocaleString('en-PH', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
     };
 
-    // === HEADER ===
-    drawText('PAYSLIP', margin, y, { font: fontBold, size: 18 });
+    // === HEADER (Left: Employee Info, Right: Compensation Summary) ===
+    const headerLeftX = margin;
+    const headerRightX = margin + contentWidth * 0.55;
+
+    // Left side - Employee Info
+    drawText('PAYSLIP', headerLeftX, y, { font: fontBold, size: 18 });
     y -= 28;
 
-    drawText(`Employee: ${detail.employeeName}`, margin, y, { size: 10 });
+    drawText(`Employee: ${detail.employeeName}`, headerLeftX, y, { size: 10 });
+    const compSummaryStartY = y; // Save Y for right column
     y -= 16;
-    drawText(`Department: ${detail.department}`, margin, y, { size: 10 });
+    drawText(`Department: ${detail.department}`, headerLeftX, y, { size: 10 });
     y -= 16;
     const sdate = new Date(detail.cutoffStart);
     const edate = new Date(detail.cutoffEnd);
@@ -1069,19 +1291,12 @@ export class PayrollComponent implements OnInit {
       month: "long",
       day: "numeric",
     });
-    drawText(`Cutoff Period: ${startFormatted} to ${endFormatted}`, margin, y, { size: 10 });
+    drawText(`Cutoff Period: ${startFormatted} to ${endFormatted}`, headerLeftX, y, { size: 10 });
     y -= 16;
     const generationDate = new Date(detail.generatedAt).toLocaleDateString('en-PH', { year: 'numeric', month: 'long', day: 'numeric' });
-    drawText(`Generation Date: ${generationDate}`, margin, y, { size: 10 });
-    y -= 24;
-    drawLine(margin, y, pageWidth - margin);
-    y -= 20;
+    drawText(`Generation Date: ${generationDate}`, headerLeftX, y, { size: 10 });
 
-    // === COMPENSATION SUMMARY ===
-    checkPageBreak(80);
-    drawText('Compensation Summary', margin, y, { font: fontBold, size: 12 });
-    y -= 20;
-
+    // Right side - Compensation Summary
     const totalDaysPresent = detail.dailyRecords.filter(r => r.isPresent).length;
     const totalDays = detail.dailyRecords.length;
     const totalCommissions = detail.dailyRecords
@@ -1091,111 +1306,91 @@ export class PayrollComponent implements OnInit {
       .filter(r => r.isPresent)
       .reduce((sum, r) => Number(sum) + Number(r.adjustedRate), 0);
 
-    drawText(`Base Salary: ${detail.baseSalaryUsed}`, margin + 10, y, { size: 10 });
-    y -= 16;
-    drawText(`Days Present: ${totalDaysPresent} / ${totalDays}`, margin + 10, y, { size: 10 });
-    y -= 16;
-    drawText(`Total Gross Pay: ${fmtCurrency(totalBaseSalary)}`, margin + 10, y, { size: 10 });
-    y -= 16;
-    drawText(`Total Commissions: ${fmtCurrency(totalCommissions)}`, margin + 10, y, { size: 10 });
+    let rightY = compSummaryStartY;
+    drawText('Compensation Summary', headerRightX, rightY, { font: fontBold, size: 10 });
+    rightY -= 16;
+    drawText(`Base Salary: ${fmtCurrency(detail.baseSalaryUsed)}`, headerRightX, rightY, { size: 9 });
+    rightY -= 14;
+    drawText(`Days Present: ${totalDaysPresent} / ${totalDays}`, headerRightX, rightY, { size: 9 });
+    rightY -= 14;
+    drawText(`Total Gross Pay: ${fmtCurrency(totalBaseSalary)}`, headerRightX, rightY, { size: 9 });
+    rightY -= 14;
+    drawText(`Total Commissions: ${fmtCurrency(totalCommissions)}`, headerRightX, rightY, { size: 9 });
+
     y -= 24;
     drawLine(margin, y, pageWidth - margin);
     y -= 20;
 
     // === ATTENDANCE TABLE ===
+    // Compute overtime total from daily records
+    const otTotal = detail.dailyRecords
+      .filter(r => r.isPresent)
+      .reduce((sum, r) => sum + Number((r as any).overtime ?? 0), 0);
+
     checkPageBreak(60);
     drawText('Attendance', margin, y, { font: fontBold, size: 12 });
     y -= 18;
 
-    // Table headers
+    // Table headers: Date, Deployment(Project), Over Time, Rate, Excess(Commission), Remarks
     const colDate = margin;
-    const colStatus = margin + 80;
-    const colProject = margin + 140;
-    const colRate = margin + 220;
-    const colCommission = margin + 290;
-    const colRemarks = margin + 370;
+    const colDeployment = margin + 72;
+    const colOT = margin + 175;
+    const colRate = margin + 250;
+    const colExcess = margin + 340;
+    const colRemarks = margin + 430;
 
-    drawText('Date', colDate, y, { font: fontBold, size: 9 });
-    drawText('Status', colStatus, y, { font: fontBold, size: 9 });
-    drawText('Project', colProject, y, { font: fontBold, size: 9 });
-    drawText('Rate', colRate, y, { font: fontBold, size: 9 });
-    drawText('Commission', colCommission, y, { font: fontBold, size: 9 });
-    drawText('Remarks', colRemarks, y, { font: fontBold, size: 9 });
+    drawText('Date', colDate, y, { font: fontBold, size: 8 });
+    drawText('Deployment', colDeployment, y, { font: fontBold, size: 8 });
+    drawText('Over Time', colOT, y, { font: fontBold, size: 8 });
+    drawText('Rate', colRate, y, { font: fontBold, size: 8 });
+    drawText('Excess', colExcess, y, { font: fontBold, size: 8 });
+    drawText('Remarks', colRemarks, y, { font: fontBold, size: 8 });
     y -= 4;
-    drawLine(margin, y, pageWidth - margin);
+    drawLine(margin, y, pageWidth - margin, 1);
     y -= 14;
 
     for (const record of detail.dailyRecords) {
-      checkPageBreak(18);
+      checkPageBreak(16);
 
-      const dateStr = record.date;
-      const date = new Date(dateStr);
-
+      const date = new Date(record.date);
       const formatted = date.toLocaleDateString("en-PH", {
-        year: "numeric",
-        month: "long",
+        month: "short",
         day: "numeric",
       });
-      drawText(formatted, colDate, y, { size: 9 });
-      drawText(record.isPresent ? 'Present' : 'Absent', colStatus, y, { size: 9 });
-      drawText(record.assignedProjectName ?? '-', colProject, y, { size: 9 });
-      drawText(fmtCurrency(record.adjustedRate), colRate, y, { size: 9 });
-      drawText(fmtCurrency(record.commission), colCommission, y, { size: 9 });
-      const remarks = (record.remarks || '-').substring(0, 30);
-      drawText(remarks, colRemarks, y, { size: 9 });
-      y -= 14;
+      drawText(formatted, colDate, y, { size: 8 });
+      drawText((record.assignedProjectName ?? '-').substring(0, 16), colDeployment, y, { size: 8 });
+
+      if (record.isPresent) {
+        const recordOT = Number((record as any).overtime ?? 0);
+        drawText(recordOT > 0 ? fmtCurrency(recordOT) : '-', colOT, y, { size: 8 });
+        drawText(fmtCurrency(record.adjustedRate), colRate, y, { size: 8 });
+        drawText(record.commission > 0 ? fmtCurrency(record.commission) : '-', colExcess, y, { size: 8 });
+      } else {
+        drawText('-', colOT, y, { size: 8 });
+        drawText('-', colRate, y, { size: 8 });
+        drawText('-', colExcess, y, { size: 8 });
+      }
+
+      const remarks = (record.remarks || (record.isPresent ? '' : 'Absent')).substring(0, 22);
+      drawText(remarks || '-', colRemarks, y, { size: 8 });
+      y -= 13;
     }
 
+    // Attendance totals row
+    y -= 4;
+    drawLine(margin, y + 4, pageWidth - margin, 0.8);
     y -= 10;
-    drawLine(margin, y, pageWidth - margin);
-    y -= 20;
+    drawText('TOTAL', colDate, y, { font: fontBold, size: 8 });
+    drawText(otTotal > 0 ? fmtCurrency(otTotal) : '-', colOT, y, { font: fontBold, size: 8 });
+    drawText(fmtCurrency(totalBaseSalary), colRate, y, { font: fontBold, size: 8 });
+    drawText(totalCommissions > 0 ? fmtCurrency(totalCommissions) : '-', colExcess, y, { font: fontBold, size: 8 });
+    y -= 16;
 
-    // === ADDITIONAL COMPENSATION ===
-    checkPageBreak(60);
-    drawText('Additional Compensation', margin, y, { font: fontBold, size: 12 });
-    y -= 18;
-
-    if (detail.additionalCompensation.length > 0) {
-      for (const entry of detail.additionalCompensation) {
-        checkPageBreak(16);
-        drawText(entry.description, margin + 10, y, { size: 10 });
-        drawText(fmtCurrency(entry.amount), pageWidth - margin - 80, y, { size: 10 });
-        y -= 14;
-      }
-      const compTotal = detail.additionalCompensation.reduce((sum, e) => Number(sum) + Number(e.amount), 0);
-      y -= 4;
-      drawText('Subtotal:', margin + 10, y, { font: fontBold, size: 10 });
-      drawText(fmtCurrency(compTotal), pageWidth - margin - 80, y, { font: fontBold, size: 10 });
-      y -= 18;
-    } else {
-      drawText('None', margin + 10, y, { size: 10 });
-      y -= 18;
-    }
-
-    drawLine(margin, y, pageWidth - margin);
-    y -= 20;
-
-    // === ADDITIONAL DEDUCTIONS ===
-    checkPageBreak(60);
-    drawText('Additional Deductions', margin, y, { font: fontBold, size: 12 });
-    y -= 18;
-
-    if (detail.additionalDeductions.length > 0) {
-      for (const entry of detail.additionalDeductions) {
-        checkPageBreak(16);
-        drawText(entry.description, margin + 10, y, { size: 10 });
-        drawText(fmtCurrency(entry.amount), pageWidth - margin - 80, y, { size: 10 });
-        y -= 14;
-      }
-      const dedTotal = detail.additionalDeductions.reduce((sum, e) => Number(sum) + Number(e.amount), 0);
-      y -= 4;
-      drawText('Subtotal:', margin + 10, y, { font: fontBold, size: 10 });
-      drawText(fmtCurrency(dedTotal), pageWidth - margin - 80, y, { font: fontBold, size: 10 });
-      y -= 18;
-    } else {
-      drawText('None', margin + 10, y, { size: 10 });
-      y -= 18;
-    }
+    // NET TOTAL row
+    const netTotal = totalBaseSalary + otTotal + totalCommissions;
+    drawText('NET TOTAL', colDate, y, { font: fontBold, size: 9 });
+    drawText(fmtCurrency(netTotal), colRate, y, { font: fontBold, size: 9 });
+    y -= 16;
 
     drawLine(margin, y, pageWidth - margin);
     y -= 20;
@@ -1225,8 +1420,9 @@ export class PayrollComponent implements OnInit {
 
     // === NET PAY ===
     checkPageBreak(40);
+    const calculatedNetPay = netTotal - govTotal;
     drawText('NET PAY', margin, y, { font: fontBold, size: 14 });
-    drawText(fmtCurrency(detail.payoutAmount), pageWidth - margin - 100, y, { font: fontBold, size: 14 });
+    drawText(fmtCurrency(calculatedNetPay), pageWidth - margin - 100, y, { font: fontBold, size: 14 });
     y -= 20;
 
     // // === SAVE AND DOWNLOAD ===

@@ -39,6 +39,14 @@ export class DailyRecordDto {
   isPresent: boolean;
 
   @IsOptional()
+  @IsString()
+  leaveType?: string;
+
+  @IsOptional()
+  @IsBoolean()
+  leavePaid?: boolean;
+
+  @IsOptional()
   @IsNumber()
   assignedProjectId?: number | null;
 
@@ -49,6 +57,11 @@ export class DailyRecordDto {
   @IsNumber()
   @Min(0)
   adjustedRate: number;
+
+  @IsOptional()
+  @IsNumber()
+  @Min(0)
+  overtime?: number;
 
   @IsOptional()
   @IsString()

@@ -863,10 +863,25 @@
         <div class="flex items-center justify-between">
           <h3 class="text-lg font-semibold text-gray-800 dark:text-white/90">Payroll Record Detail</h3>
           <div class="flex items-center gap-2">
-            <button (click)="generatePayslipPdf()" [disabled]="!payrollRecordDetail"
-              class="inline-flex items-center gap-2 rounded-lg bg-brand-500 px-4 py-2 text-sm font-medium text-white transition hover:bg-brand-600 disabled:opacity-50 disabled:cursor-not-allowed">
-              Generate PDF
-            </button>
+            @if (!isEditingPayrollRecord) {
+              <button (click)="startEditPayrollRecord()" [disabled]="!payrollRecordDetail"
+                class="inline-flex items-center gap-2 rounded-lg border border-brand-300 px-4 py-2 text-sm font-medium text-brand-600 transition hover:bg-brand-50 disabled:opacity-50 disabled:cursor-not-allowed dark:border-brand-500/30 dark:text-brand-400 dark:hover:bg-brand-500/10">
+                Edit
+              </button>
+              <button (click)="generatePayslipPdf()" [disabled]="!payrollRecordDetail"
+                class="inline-flex items-center gap-2 rounded-lg bg-brand-500 px-4 py-2 text-sm font-medium text-white transition hover:bg-brand-600 disabled:opacity-50 disabled:cursor-not-allowed">
+                Generate PDF
+              </button>
+            } @else {
+              <button (click)="cancelEditPayrollRecord()"
+                class="rounded-lg border border-gray-300 px-4 py-2 text-sm font-medium text-gray-700 transition hover:bg-gray-50 dark:border-gray-600 dark:text-gray-300 dark:hover:bg-gray-800">
+                Cancel
+              </button>
+              <button (click)="savePayrollEdit()" [disabled]="isSavingPayrollEdit"
+                class="inline-flex items-center gap-2 rounded-lg bg-success-500 px-4 py-2 text-sm font-medium text-white transition hover:bg-success-600 disabled:opacity-50 disabled:cursor-not-allowed">
+                {{ isSavingPayrollEdit ? 'Saving...' : 'Save Changes' }}
+              </button>
+            }
             <button
               type="button"
               (click)="closeCutoffDetail()"
@@ -907,15 +922,171 @@
           <!-- Daily Attendance Records Table -->
           <div class="mt-5">
             <h5 class="mb-3 text-sm font-semibold text-gray-700 dark:text-gray-200">Daily Attendance Records</h5>
+
+            @if (isEditingPayrollRecord) {
+              <!-- Edit Mode: Tabbed daily records -->
+              @if (payrollEditError) {
+                <div class="mb-3 rounded-lg border border-error-300 bg-error-50 px-3 py-2 text-sm text-error-600 dark:border-error-500/30 dark:bg-error-500/10 dark:text-error-400">
+                  {{ payrollEditError }}
+                </div>
+              }
+
+              <div class="flex flex-wrap gap-1 border-b border-gray-200 dark:border-gray-700">
+                @for (record of editPayrollDailyRecords; track record.date; let i = $index) {
+                  <button
+                    type="button"
+                    (click)="editPayrollSelectedTab = i"
+                    class="px-3 py-1.5 text-xs font-medium transition"
+                    [class.text-brand-600]="editPayrollSelectedTab === i"
+                    [class.border-b-2]="editPayrollSelectedTab === i"
+                    [class.border-brand-500]="editPayrollSelectedTab === i"
+                    [class.text-gray-500]="editPayrollSelectedTab !== i"
+                  >
+                    {{ formatTabDate(record.date) }}
+                  </button>
+                }
+              </div>
+
+              @if (editPayrollDailyRecords[editPayrollSelectedTab]) {
+                <div class="mt-4 rounded-lg border border-gray-200 p-4 dark:border-gray-700">
+                  <p class="mb-3 text-xs font-medium text-gray-500 dark:text-gray-400">
+                    {{ editPayrollDailyRecords[editPayrollSelectedTab].date | date:'mediumDate' }}
+                  </p>
+
+                  <div class="grid grid-cols-1 gap-4 sm:grid-cols-2">
+                    <!-- Present Checkbox -->
+                    <div class="sm:col-span-2">
+                      <label class="flex items-center gap-2 cursor-pointer">
+                        <input
+                          type="checkbox"
+                          [(ngModel)]="editPayrollDailyRecords[editPayrollSelectedTab].isPresent"
+                          (ngModelChange)="onEditDailyRecordPresentChange(editPayrollSelectedTab)"
+                          class="h-4 w-4 rounded border-gray-300 text-brand-500 focus:ring-brand-300 dark:border-gray-600"
+                        />
+                        <span class="text-sm font-medium text-gray-700 dark:text-gray-300">Present</span>
+                      </label>
+                    </div>
+
+                    <!-- Leave Type Options -->
+                    <div class="sm:col-span-2">
+                      <label class="mb-1 block text-xs font-medium text-gray-700 dark:text-gray-300">Leave Type</label>
+                      <div class="flex flex-wrap items-center gap-4">
+                        <label class="flex items-center gap-1.5 cursor-pointer">
+                          <input type="radio" name="editLeaveType_{{editPayrollSelectedTab}}" [value]="'none'"
+                            [(ngModel)]="editPayrollDailyRecords[editPayrollSelectedTab].leaveType"
+                            (ngModelChange)="onEditDailyRecordLeaveTypeChange(editPayrollSelectedTab)"
+                            class="h-3.5 w-3.5 border-gray-300 text-brand-500 focus:ring-brand-300 dark:border-gray-600" />
+                          <span class="text-xs text-gray-600 dark:text-gray-400">None</span>
+                        </label>
+                        <label class="flex items-center gap-1.5 cursor-pointer">
+                          <input type="radio" name="editLeaveType_{{editPayrollSelectedTab}}" [value]="'on_leave'"
+                            [(ngModel)]="editPayrollDailyRecords[editPayrollSelectedTab].leaveType"
+                            (ngModelChange)="onEditDailyRecordLeaveTypeChange(editPayrollSelectedTab)"
+                            class="h-3.5 w-3.5 border-gray-300 text-brand-500 focus:ring-brand-300 dark:border-gray-600" />
+                          <span class="text-xs text-gray-600 dark:text-gray-400">On Leave</span>
+                        </label>
+                        <label class="flex items-center gap-1.5 cursor-pointer">
+                          <input type="radio" name="editLeaveType_{{editPayrollSelectedTab}}" [value]="'sick_leave'"
+                            [(ngModel)]="editPayrollDailyRecords[editPayrollSelectedTab].leaveType"
+                            (ngModelChange)="onEditDailyRecordLeaveTypeChange(editPayrollSelectedTab)"
+                            class="h-3.5 w-3.5 border-gray-300 text-brand-500 focus:ring-brand-300 dark:border-gray-600" />
+                          <span class="text-xs text-gray-600 dark:text-gray-400">Sick Leave</span>
+                        </label>
+                        <label class="flex items-center gap-1.5 cursor-pointer">
+                          <input type="radio" name="editLeaveType_{{editPayrollSelectedTab}}" [value]="'emergency_leave'"
+                            [(ngModel)]="editPayrollDailyRecords[editPayrollSelectedTab].leaveType"
+                            (ngModelChange)="onEditDailyRecordLeaveTypeChange(editPayrollSelectedTab)"
+                            class="h-3.5 w-3.5 border-gray-300 text-brand-500 focus:ring-brand-300 dark:border-gray-600" />
+                          <span class="text-xs text-gray-600 dark:text-gray-400">Emergency Leave</span>
+                        </label>
+                      </div>
+                    </div>
+
+                    <!-- Paid/Unpaid Toggle -->
+                    @if (editPayrollDailyRecords[editPayrollSelectedTab].leaveType !== 'none') {
+                      <div class="sm:col-span-2">
+                        <div class="flex items-center gap-4 rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 dark:border-amber-500/30 dark:bg-amber-500/10">
+                          <span class="text-xs font-medium text-amber-700 dark:text-amber-400">Leave Payment:</span>
+                          <label class="flex items-center gap-1.5 cursor-pointer">
+                            <input type="radio" name="editLeavePaid_{{editPayrollSelectedTab}}" [value]="false"
+                              [(ngModel)]="editPayrollDailyRecords[editPayrollSelectedTab].leavePaid"
+                              (ngModelChange)="onEditDailyRecordLeavePaidChange(editPayrollSelectedTab)"
+                              class="h-3.5 w-3.5 border-gray-300 text-amber-500 focus:ring-amber-300 dark:border-gray-600" />
+                            <span class="text-xs font-medium text-gray-700 dark:text-gray-300">Unpaid</span>
+                          </label>
+                          <label class="flex items-center gap-1.5 cursor-pointer">
+                            <input type="radio" name="editLeavePaid_{{editPayrollSelectedTab}}" [value]="true"
+                              [(ngModel)]="editPayrollDailyRecords[editPayrollSelectedTab].leavePaid"
+                              (ngModelChange)="onEditDailyRecordLeavePaidChange(editPayrollSelectedTab)"
+                              class="h-3.5 w-3.5 border-gray-300 text-success-500 focus:ring-success-300 dark:border-gray-600" />
+                            <span class="text-xs font-medium text-gray-700 dark:text-gray-300">Paid</span>
+                          </label>
+                        </div>
+                      </div>
+                    }
+
+                    <!-- Assigned Project -->
+                    <div>
+                      <label class="mb-1 block text-xs font-medium text-gray-700 dark:text-gray-300">Assigned Project</label>
+                      <select
+                        [(ngModel)]="editPayrollDailyRecords[editPayrollSelectedTab].assignedProjectId"
+                        class="h-10 w-full rounded-lg border border-gray-300 bg-transparent px-3 text-sm text-gray-800 focus:border-brand-300 focus:outline-none dark:border-gray-700 dark:text-white/90">
+                        <option [ngValue]="null">No Project</option>
+                        @for (project of projects; track project.id) {
+                          <option [ngValue]="project.id">{{ project.name }}</option>
+                        }
+                      </select>
+                    </div>
+
+                    <!-- Commission -->
+                    <div>
+                      <label class="mb-1 block text-xs font-medium text-gray-700 dark:text-gray-300">Commission</label>
+                      <input type="number" [(ngModel)]="editPayrollDailyRecords[editPayrollSelectedTab].commission"
+                        [disabled]="!editPayrollDailyRecords[editPayrollSelectedTab].isPresent"
+                        min="0" step="0.01"
+                        class="h-10 w-full rounded-lg border border-gray-300 px-3 text-sm text-gray-800 focus:border-brand-300 focus:outline-none dark:border-gray-700 dark:text-white/90 disabled:bg-gray-100 disabled:text-gray-400 disabled:cursor-not-allowed dark:disabled:bg-gray-800 dark:disabled:text-gray-500"
+                        placeholder="0" />
+                    </div>
+
+                    <!-- Adjusted Rate -->
+                    <div>
+                      <label class="mb-1 block text-xs font-medium text-gray-700 dark:text-gray-300">Adjusted Rate</label>
+                      <input type="number" [(ngModel)]="editPayrollDailyRecords[editPayrollSelectedTab].adjustedRate"
+                        min="0" step="0.01"
+                        class="h-10 w-full rounded-lg border border-gray-300 px-3 text-sm text-gray-800 focus:border-brand-300 focus:outline-none dark:border-gray-700 dark:text-white/90"
+                        placeholder="0" />
+                    </div>
+
+                    <!-- Overtime -->
+                    <div>
+                      <label class="mb-1 block text-xs font-medium text-gray-700 dark:text-gray-300">Overtime</label>
+                      <input type="number" [(ngModel)]="editPayrollDailyRecords[editPayrollSelectedTab].overtime"
+                        [disabled]="!editPayrollDailyRecords[editPayrollSelectedTab].isPresent"
+                        min="0" step="0.01"
+                        class="h-10 w-full rounded-lg border border-gray-300 px-3 text-sm text-gray-800 focus:border-brand-300 focus:outline-none dark:border-gray-700 dark:text-white/90 disabled:bg-gray-100 disabled:text-gray-400 disabled:cursor-not-allowed dark:disabled:bg-gray-800 dark:disabled:text-gray-500"
+                        placeholder="0" />
+                    </div>
+
+                    <!-- Remarks -->
+                    <div class="sm:col-span-2">
+                      <label class="mb-1 block text-xs font-medium text-gray-700 dark:text-gray-300">Remarks</label>
+                      <input type="text" [(ngModel)]="editPayrollDailyRecords[editPayrollSelectedTab].remarks"
+                        class="h-10 w-full rounded-lg border border-gray-300 px-3 text-sm text-gray-800 placeholder-gray-400 focus:border-brand-300 focus:outline-none dark:border-gray-700 dark:text-white/90 dark:placeholder-gray-500"
+                        placeholder="Enter remarks (optional)" />
+                    </div>
+                  </div>
+                </div>
+              }
+            } @else {
             <div class="overflow-x-auto rounded-lg border border-gray-200 dark:border-gray-700">
               <table class="w-full text-left text-sm">
                 <thead class="bg-gray-50 dark:bg-gray-800">
                   <tr>
                     <th class="px-4 py-2.5 font-medium text-gray-700 dark:text-gray-300">Date</th>
-                    <th class="px-4 py-2.5 font-medium text-gray-700 dark:text-gray-300">Status</th>
-                    <th class="px-4 py-2.5 font-medium text-gray-700 dark:text-gray-300">Project</th>
-                    <th class="px-4 py-2.5 font-medium text-gray-700 dark:text-gray-300">Rate</th>
-                    <th class="px-4 py-2.5 font-medium text-gray-700 dark:text-gray-300 text-right">Commission</th>
+                    <th class="px-4 py-2.5 font-medium text-gray-700 dark:text-gray-300">Deployment</th>
+                    <th class="px-4 py-2.5 font-medium text-gray-700 dark:text-gray-300 text-right">Over Time</th>
+                    <th class="px-4 py-2.5 font-medium text-gray-700 dark:text-gray-300 text-right">Rate</th>
+                    <th class="px-4 py-2.5 font-medium text-gray-700 dark:text-gray-300 text-right">Excess (Commission)</th>
                     <th class="px-4 py-2.5 font-medium text-gray-700 dark:text-gray-300">Remarks</th>
                   </tr>
                 </thead>
@@ -923,89 +1094,159 @@
                   @for (record of payrollRecordDetail.dailyRecords; track record.date) {
                     <tr>
                       <td class="px-4 py-2 text-gray-800 dark:text-white/90">{{ record.date | date:'mediumDate' }}</td>
-                      <td class="px-4 py-2">
-                        @if (record.isPresent) {
-                          <span class="inline-flex items-center rounded-full bg-success-50 px-2 py-0.5 text-xs font-medium text-success-700 dark:bg-success-500/10 dark:text-success-400">Present</span>
-                        } @else {
-                          <span class="inline-flex items-center rounded-full bg-error-50 px-2 py-0.5 text-xs font-medium text-error-700 dark:bg-error-500/10 dark:text-error-400">Absent</span>
-                        }
-                      </td>
                       <td class="px-4 py-2 text-gray-600 dark:text-gray-400">{{ record.assignedProjectName || '—' }}</td>
-                      <td class="px-4 py-2 text-gray-600 dark:text-gray-400">{{ formatCurrency(record.adjustedRate) }}</td>
-                      <td class="px-4 py-2 text-right text-gray-800 dark:text-white/90">{{ formatCurrency(record.commission) }}</td>
-                      <td class="px-4 py-2 text-gray-600 dark:text-gray-400">{{ record.remarks || '—' }}</td>
+                      <td class="px-4 py-2 text-right text-gray-600 dark:text-gray-400">{{ record.overtime ? formatCurrency(record.overtime) : '—' }}</td>
+                      <td class="px-4 py-2 text-right text-gray-600 dark:text-gray-400">{{ formatCurrency(record.adjustedRate) }}</td>
+                      <td class="px-4 py-2 text-right text-gray-800 dark:text-white/90">{{ record.commission ? formatCurrency(record.commission) : '—' }}</td>
+                      <td class="px-4 py-2 text-gray-600 dark:text-gray-400">{{ record.remarks || (record.isPresent ? '—' : 'Absent') }}</td>
                     </tr>
                   } @empty {
                     <tr>
-                      <td colspan="5" class="px-4 py-4 text-center text-gray-500 dark:text-gray-400">No daily records found.</td>
+                      <td colspan="6" class="px-4 py-4 text-center text-gray-500 dark:text-gray-400">No daily records found.</td>
                     </tr>
                   }
-                  <tr class="bg-gray-50 dark:bg-gray-800/50">
-                    <td colspan="3" class="px-4 py-2 font-medium text-gray-700 dark:text-gray-300">Subtotal</td>
-                    <td class="px-4 py-2 text-left font-semibold text-gray-800 dark:text-white/90">{{ formatCurrency(getSubTotalAdjustedRate()) }}</td>
+                  <tr class="bg-gray-50 dark:bg-gray-800/50 border-t-2 border-gray-300 dark:border-gray-600">
+                    <td colspan="2" class="px-4 py-2 font-medium text-gray-700 dark:text-gray-300">TOTAL</td>
+                    <td class="px-4 py-2 text-right font-semibold text-gray-800 dark:text-white/90">{{ formatCurrency(getSubTotalOvertime()) }}</td>
+                    <td class="px-4 py-2 text-right font-semibold text-gray-800 dark:text-white/90">{{ formatCurrency(getSubTotalAdjustedRate()) }}</td>
                     <td class="px-4 py-2 text-right font-semibold text-gray-800 dark:text-white/90">{{ formatCurrency(getSubTotalCommissions()) }}</td>
-                    <td class="px-4 py-2 text-center font-semibold text-gray-800 dark:text-white/90"></td>
+                    <td class="px-4 py-2"></td>
+                  </tr>
+                  <tr class="bg-gray-100 dark:bg-gray-800">
+                    <td colspan="2" class="px-4 py-2 font-bold text-gray-800 dark:text-white/90">NET TOTAL</td>
+                    <td colspan="3" class="px-4 py-2 text-right font-bold text-gray-800 dark:text-white/90">{{ formatCurrency(getSubTotalAdjustedRate() + getSubTotalOvertime() + getSubTotalCommissions()) }}</td>
+                    <td class="px-4 py-2"></td>
                   </tr>
                 </tbody>
               </table>
             </div>
+            }
           </div>
 
           <!-- Additional Compensation -->
           <div class="mt-5">
-            <h5 class="mb-3 text-sm font-semibold text-gray-700 dark:text-gray-200">Additional Compensation</h5>
-            @if (payrollRecordDetail.additionalCompensation.length > 0) {
-              <div class="overflow-x-auto rounded-lg border border-gray-200 dark:border-gray-700">
-                <table class="w-full text-left text-sm">
-                  <thead class="bg-gray-50 dark:bg-gray-800">
-                    <tr>
-                      <th class="px-4 py-2.5 font-medium text-gray-700 dark:text-gray-300">Description</th>
-                      <th class="px-4 py-2.5 font-medium text-gray-700 dark:text-gray-300 text-right">Amount</th>
-                    </tr>
-                  </thead>
-                  <tbody class="divide-y divide-gray-100 dark:divide-gray-700">
-                    @for (entry of payrollRecordDetail.additionalCompensation; track $index) {
-                      <tr>
-                        <td class="px-4 py-2 text-gray-800 dark:text-white/90">{{ entry.description }}</td>
-                        <td class="px-4 py-2 text-right text-gray-800 dark:text-white/90">{{ formatCurrency(entry.amount) }}</td>
-                      </tr>
-                    }
-                    <tr class="bg-gray-50 dark:bg-gray-800/50">
-                      <td class="px-4 py-2 font-medium text-gray-700 dark:text-gray-300">Subtotal</td>
-                      <td class="px-4 py-2 text-right font-semibold text-gray-800 dark:text-white/90">{{ formatCurrency(getAdditionalCompensationTotal()) }}</td>
-                    </tr>
-                  </tbody>
-                </table>
-              </div>
+            <div class="flex items-center justify-between mb-3">
+              <h5 class="text-sm font-semibold text-gray-700 dark:text-gray-200">Additional Compensation</h5>
+              @if (isEditingPayrollRecord) {
+                <button type="button" (click)="addEditCompensationEntry()"
+                  class="inline-flex items-center gap-1 rounded-lg border border-gray-300 px-2.5 py-1 text-xs font-medium text-gray-600 transition hover:bg-gray-50 dark:border-gray-600 dark:text-gray-400 dark:hover:bg-gray-800">
+                  + Add
+                </button>
+              }
+            </div>
+            @if (isEditingPayrollRecord) {
+              <!-- Edit mode -->
+              @if (editPayrollCompensation.length === 0) {
+                <p class="rounded-lg border border-dashed border-gray-300 px-4 py-3 text-center text-xs text-gray-500 dark:border-gray-700 dark:text-gray-400">
+                  No additional compensation entries. Click "+ Add" to add one.
+                </p>
+              } @else {
+                <div class="space-y-2">
+                  @for (entry of editPayrollCompensation; track $index; let i = $index) {
+                    <div class="flex items-center gap-2">
+                      <input type="text" [(ngModel)]="entry.description" placeholder="Description"
+                        class="h-9 flex-1 rounded-lg border border-gray-300 px-3 text-sm text-gray-800 focus:border-brand-300 focus:outline-none dark:border-gray-700 dark:text-white/90" />
+                      <input type="number" [(ngModel)]="entry.amount" placeholder="Amount" min="0" step="0.01"
+                        class="h-9 w-32 rounded-lg border border-gray-300 px-3 text-sm text-gray-800 focus:border-brand-300 focus:outline-none dark:border-gray-700 dark:text-white/90" />
+                      <button type="button" (click)="removeEditCompensationEntry(i)"
+                        class="rounded-lg p-1.5 text-error-500 transition hover:bg-error-50 dark:hover:bg-error-500/10">
+                        <svg xmlns="http://www.w3.org/2000/svg" class="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
+                          <path stroke-linecap="round" stroke-linejoin="round" d="M6 18L18 6M6 6l12 12" />
+                        </svg>
+                      </button>
+                    </div>
+                  }
+                </div>
+              }
             } @else {
-              <p class="rounded-lg border border-dashed border-gray-300 px-4 py-3 text-center text-xs text-gray-500 dark:border-gray-700 dark:text-gray-400">
-                No additional compensation entries.
-              </p>
+              <!-- View mode -->
+              @if (payrollRecordDetail.additionalCompensation.length > 0) {
+                <div class="overflow-x-auto rounded-lg border border-gray-200 dark:border-gray-700">
+                  <table class="w-full text-left text-sm">
+                    <thead class="bg-gray-50 dark:bg-gray-800">
+                      <tr>
+                        <th class="px-4 py-2.5 font-medium text-gray-700 dark:text-gray-300">Description</th>
+                        <th class="px-4 py-2.5 font-medium text-gray-700 dark:text-gray-300 text-right">Amount</th>
+                      </tr>
+                    </thead>
+                    <tbody class="divide-y divide-gray-100 dark:divide-gray-700">
+                      @for (entry of payrollRecordDetail.additionalCompensation; track $index) {
+                        <tr>
+                          <td class="px-4 py-2 text-gray-800 dark:text-white/90">{{ entry.description }}</td>
+                          <td class="px-4 py-2 text-right text-gray-800 dark:text-white/90">{{ formatCurrency(entry.amount) }}</td>
+                        </tr>
+                      }
+                      <tr class="bg-gray-50 dark:bg-gray-800/50">
+                        <td class="px-4 py-2 font-medium text-gray-700 dark:text-gray-300">Subtotal</td>
+                        <td class="px-4 py-2 text-right font-semibold text-gray-800 dark:text-white/90">{{ formatCurrency(getAdditionalCompensationTotal()) }}</td>
+                      </tr>
+                    </tbody>
+                  </table>
+                </div>
+              } @else {
+                <p class="rounded-lg border border-dashed border-gray-300 px-4 py-3 text-center text-xs text-gray-500 dark:border-gray-700 dark:text-gray-400">
+                  No additional compensation entries.
+                </p>
+              }
             }
           </div>
 
           <!-- Additional Deductions -->
           <div class="mt-5">
-            <h5 class="mb-3 text-sm font-semibold text-gray-700 dark:text-gray-200">Additional Deductions</h5>
-            @if (payrollRecordDetail.additionalDeductions.length > 0) {
-              <div class="overflow-x-auto rounded-lg border border-gray-200 dark:border-gray-700">
-                <table class="w-full text-left text-sm">
-                  <thead class="bg-gray-50 dark:bg-gray-800">
-                    <tr>
-                      <th class="px-4 py-2.5 font-medium text-gray-700 dark:text-gray-300">Description</th>
-                      <th class="px-4 py-2.5 font-medium text-gray-700 dark:text-gray-300 text-right">Amount</th>
-                    </tr>
-                  </thead>
-                  <tbody class="divide-y divide-gray-100 dark:divide-gray-700">
-                    @for (entry of payrollRecordDetail.additionalDeductions; track $index) {
+            <div class="flex items-center justify-between mb-3">
+              <h5 class="text-sm font-semibold text-gray-700 dark:text-gray-200">Additional Deductions</h5>
+              @if (isEditingPayrollRecord) {
+                <button type="button" (click)="addEditDeductionEntry()"
+                  class="inline-flex items-center gap-1 rounded-lg border border-gray-300 px-2.5 py-1 text-xs font-medium text-gray-600 transition hover:bg-gray-50 dark:border-gray-600 dark:text-gray-400 dark:hover:bg-gray-800">
+                  + Add
+                </button>
+              }
+            </div>
+            @if (isEditingPayrollRecord) {
+              <!-- Edit mode -->
+              @if (editPayrollDeductions.length === 0) {
+                <p class="rounded-lg border border-dashed border-gray-300 px-4 py-3 text-center text-xs text-gray-500 dark:border-gray-700 dark:text-gray-400">
+                  No additional deduction entries. Click "+ Add" to add one.
+                </p>
+              } @else {
+                <div class="space-y-2">
+                  @for (entry of editPayrollDeductions; track $index; let i = $index) {
+                    <div class="flex items-center gap-2">
+                      <input type="text" [(ngModel)]="entry.description" placeholder="Description"
+                        class="h-9 flex-1 rounded-lg border border-gray-300 px-3 text-sm text-gray-800 focus:border-brand-300 focus:outline-none dark:border-gray-700 dark:text-white/90" />
+                      <input type="number" [(ngModel)]="entry.amount" placeholder="Amount" min="0" step="0.01"
+                        class="h-9 w-32 rounded-lg border border-gray-300 px-3 text-sm text-gray-800 focus:border-brand-300 focus:outline-none dark:border-gray-700 dark:text-white/90" />
+                      <button type="button" (click)="removeEditDeductionEntry(i)"
+                        class="rounded-lg p-1.5 text-error-500 transition hover:bg-error-50 dark:hover:bg-error-500/10">
+                        <svg xmlns="http://www.w3.org/2000/svg" class="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
+                          <path stroke-linecap="round" stroke-linejoin="round" d="M6 18L18 6M6 6l12 12" />
+                        </svg>
+                      </button>
+                    </div>
+                  }
+                </div>
+              }
+            } @else {
+              <!-- View mode -->
+              @if (payrollRecordDetail.additionalDeductions.length > 0) {
+                <div class="overflow-x-auto rounded-lg border border-gray-200 dark:border-gray-700">
+                  <table class="w-full text-left text-sm">
+                    <thead class="bg-gray-50 dark:bg-gray-800">
                       <tr>
-                        <td class="px-4 py-2 text-gray-800 dark:text-white/90">{{ entry.description }}</td>
-                        <td class="px-4 py-2 text-right text-gray-800 dark:text-white/90">{{ formatCurrency(entry.amount) }}</td>
+                        <th class="px-4 py-2.5 font-medium text-gray-700 dark:text-gray-300">Description</th>
+                        <th class="px-4 py-2.5 font-medium text-gray-700 dark:text-gray-300 text-right">Amount</th>
                       </tr>
-                    }
-                    <tr class="bg-gray-50 dark:bg-gray-800/50">
-                      <td class="px-4 py-2 font-medium text-gray-700 dark:text-gray-300">Subtotal</td>
-                      <td class="px-4 py-2 text-right font-semibold text-gray-800 dark:text-white/90">{{ formatCurrency(getAdditionalDeductionsTotal()) }}</td>
+                    </thead>
+                    <tbody class="divide-y divide-gray-100 dark:divide-gray-700">
+                      @for (entry of payrollRecordDetail.additionalDeductions; track $index) {
+                        <tr>
+                          <td class="px-4 py-2 text-gray-800 dark:text-white/90">{{ entry.description }}</td>
+                          <td class="px-4 py-2 text-right text-gray-800 dark:text-white/90">{{ formatCurrency(entry.amount) }}</td>
+                        </tr>
+                      }
+                      <tr class="bg-gray-50 dark:bg-gray-800/50">
+                        <td class="px-4 py-2 font-medium text-gray-700 dark:text-gray-300">Subtotal</td>
+                        <td class="px-4 py-2 text-right font-semibold text-gray-800 dark:text-white/90">{{ formatCurrency(getAdditionalDeductionsTotal()) }}</td>
                     </tr>
                   </tbody>
                 </table>
@@ -1014,6 +1255,7 @@
               <p class="rounded-lg border border-dashed border-gray-300 px-4 py-3 text-center text-xs text-gray-500 dark:border-gray-700 dark:text-gray-400">
                 No additional deduction entries.
               </p>
+            }
             }
           </div>
 
@@ -1054,15 +1296,15 @@
           <div class="mt-5">
             <div class="rounded-lg border-2 border-brand-200 bg-brand-50/50 px-5 py-4 dark:border-brand-500/30 dark:bg-brand-500/5">
               <div class="flex items-center justify-between">
-                <span class="text-sm font-semibold text-gray-700 dark:text-gray-200">Net Pay</span>
+                <span class="text-sm font-semibold text-gray-700 dark:text-gray-200">NET PAY</span>
                 <span
                   class="text-xl font-bold"
-                  [class.text-error-600]="payrollRecordDetail.payoutAmount < 0"
-                  [class.dark:text-error-400]="payrollRecordDetail.payoutAmount < 0"
-                  [class.text-brand-700]="payrollRecordDetail.payoutAmount >= 0"
-                  [class.dark:text-brand-400]="payrollRecordDetail.payoutAmount >= 0"
+                  [class.text-error-600]="getCalculatedNetPay() < 0"
+                  [class.dark:text-error-400]="getCalculatedNetPay() < 0"
+                  [class.text-brand-700]="getCalculatedNetPay() >= 0"
+                  [class.dark:text-brand-400]="getCalculatedNetPay() >= 0"
                 >
-                  {{ formatCurrency(payrollRecordDetail.payoutAmount) }}
+                  {{ formatCurrency(getCalculatedNetPay()) }}
                 </span>
               </div>
             </div>
@@ -1252,6 +1494,88 @@
                       </label>
                     </div>
 
+                    <!-- Leave Type Options -->
+                    <div class="sm:col-span-2">
+                      <label class="mb-1 block text-xs font-medium text-gray-700 dark:text-gray-300">Leave Type</label>
+                      <div class="flex flex-wrap items-center gap-4">
+                        <label class="flex items-center gap-1.5 cursor-pointer">
+                          <input
+                            type="radio"
+                            name="leaveType_{{payrollCreatorSelectedTab}}"
+                            [value]="'none'"
+                            [(ngModel)]="payrollCreatorDailyRecords[payrollCreatorSelectedTab].leaveType"
+                            (ngModelChange)="onDailyRecordLeaveTypeChange(payrollCreatorSelectedTab)"
+                            class="h-3.5 w-3.5 border-gray-300 text-brand-500 focus:ring-brand-300 dark:border-gray-600"
+                          />
+                          <span class="text-xs text-gray-600 dark:text-gray-400">None</span>
+                        </label>
+                        <label class="flex items-center gap-1.5 cursor-pointer">
+                          <input
+                            type="radio"
+                            name="leaveType_{{payrollCreatorSelectedTab}}"
+                            [value]="'on_leave'"
+                            [(ngModel)]="payrollCreatorDailyRecords[payrollCreatorSelectedTab].leaveType"
+                            (ngModelChange)="onDailyRecordLeaveTypeChange(payrollCreatorSelectedTab)"
+                            class="h-3.5 w-3.5 border-gray-300 text-brand-500 focus:ring-brand-300 dark:border-gray-600"
+                          />
+                          <span class="text-xs text-gray-600 dark:text-gray-400">On Leave</span>
+                        </label>
+                        <label class="flex items-center gap-1.5 cursor-pointer">
+                          <input
+                            type="radio"
+                            name="leaveType_{{payrollCreatorSelectedTab}}"
+                            [value]="'sick_leave'"
+                            [(ngModel)]="payrollCreatorDailyRecords[payrollCreatorSelectedTab].leaveType"
+                            (ngModelChange)="onDailyRecordLeaveTypeChange(payrollCreatorSelectedTab)"
+                            class="h-3.5 w-3.5 border-gray-300 text-brand-500 focus:ring-brand-300 dark:border-gray-600"
+                          />
+                          <span class="text-xs text-gray-600 dark:text-gray-400">Sick Leave</span>
+                        </label>
+                        <label class="flex items-center gap-1.5 cursor-pointer">
+                          <input
+                            type="radio"
+                            name="leaveType_{{payrollCreatorSelectedTab}}"
+                            [value]="'emergency_leave'"
+                            [(ngModel)]="payrollCreatorDailyRecords[payrollCreatorSelectedTab].leaveType"
+                            (ngModelChange)="onDailyRecordLeaveTypeChange(payrollCreatorSelectedTab)"
+                            class="h-3.5 w-3.5 border-gray-300 text-brand-500 focus:ring-brand-300 dark:border-gray-600"
+                          />
+                          <span class="text-xs text-gray-600 dark:text-gray-400">Emergency Leave</span>
+                        </label>
+                      </div>
+                    </div>
+
+                    <!-- Paid/Unpaid Toggle (only shown when a leave type is selected) -->
+                    @if (payrollCreatorDailyRecords[payrollCreatorSelectedTab].leaveType !== 'none') {
+                      <div class="sm:col-span-2">
+                        <div class="flex items-center gap-4 rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 dark:border-amber-500/30 dark:bg-amber-500/10">
+                          <span class="text-xs font-medium text-amber-700 dark:text-amber-400">Leave Payment:</span>
+                          <label class="flex items-center gap-1.5 cursor-pointer">
+                            <input
+                              type="radio"
+                              name="leavePaid_{{payrollCreatorSelectedTab}}"
+                              [value]="false"
+                              [(ngModel)]="payrollCreatorDailyRecords[payrollCreatorSelectedTab].leavePaid"
+                              (ngModelChange)="onDailyRecordLeavePaidChange(payrollCreatorSelectedTab)"
+                              class="h-3.5 w-3.5 border-gray-300 text-amber-500 focus:ring-amber-300 dark:border-gray-600"
+                            />
+                            <span class="text-xs font-medium text-gray-700 dark:text-gray-300">Unpaid</span>
+                          </label>
+                          <label class="flex items-center gap-1.5 cursor-pointer">
+                            <input
+                              type="radio"
+                              name="leavePaid_{{payrollCreatorSelectedTab}}"
+                              [value]="true"
+                              [(ngModel)]="payrollCreatorDailyRecords[payrollCreatorSelectedTab].leavePaid"
+                              (ngModelChange)="onDailyRecordLeavePaidChange(payrollCreatorSelectedTab)"
+                              class="h-3.5 w-3.5 border-gray-300 text-success-500 focus:ring-success-300 dark:border-gray-600"
+                            />
+                            <span class="text-xs font-medium text-gray-700 dark:text-gray-300">Paid</span>
+                          </label>
+                        </div>
+                      </div>
+                    }
+
                     <!-- Assigned Project Dropdown -->
                     <div>
                       <label class="mb-1 block text-xs font-medium text-gray-700 dark:text-gray-300">Assigned Project</label>
@@ -1289,6 +1613,20 @@
                         min="0"
                         step="0.01"
                         class="h-10 w-full rounded-lg border border-gray-300 px-3 text-sm text-gray-800 focus:border-brand-300 focus:outline-none dark:border-gray-700 dark:text-white/90"
+                        placeholder="0"
+                      />
+                    </div>
+
+                    <!-- Overtime Input -->
+                    <div>
+                      <label class="mb-1 block text-xs font-medium text-gray-700 dark:text-gray-300">Overtime</label>
+                      <input
+                        type="number"
+                        [(ngModel)]="payrollCreatorDailyRecords[payrollCreatorSelectedTab].overtime"
+                        [disabled]="!payrollCreatorDailyRecords[payrollCreatorSelectedTab].isPresent"
+                        min="0"
+                        step="0.01"
+                        class="h-10 w-full rounded-lg border border-gray-300 px-3 text-sm text-gray-800 focus:border-brand-300 focus:outline-none dark:border-gray-700 dark:text-white/90 disabled:bg-gray-100 disabled:text-gray-400 disabled:cursor-not-allowed dark:disabled:bg-gray-800 dark:disabled:text-gray-500"
                         placeholder="0"
                       />
                     </div>

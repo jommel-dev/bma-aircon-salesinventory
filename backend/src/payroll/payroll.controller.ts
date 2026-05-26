@@ -154,6 +154,32 @@ export class PayrollController {
     }
   }
 
+  @Patch('records/:id')
+  @Permissions(['payroll.create'])
+  async updatePayrollRecord(
+    @Param('id') id: string,
+    @Body() dto: CreatePayrollDto,
+  ): Promise<{ success: boolean; data?: unknown; message?: string }> {
+    try {
+      const result = await this.payrollService.updatePayrollRecord(Number(id), dto);
+      return { success: true, data: result, message: 'Payroll record updated successfully' };
+    } catch (error) {
+      if (error instanceof NotFoundException) {
+        throw new HttpException(
+          { success: false, message: 'Payroll record not found' },
+          HttpStatus.NOT_FOUND,
+        );
+      }
+      if (error instanceof BadRequestException) {
+        throw new HttpException(
+          { success: false, message: (error as BadRequestException).message },
+          HttpStatus.BAD_REQUEST,
+        );
+      }
+      throw error;
+    }
+  }
+
   @Get('cutoffs/:id')
   @Permissions(['payroll.cutoff.view'])
   async getCutoffDetail(

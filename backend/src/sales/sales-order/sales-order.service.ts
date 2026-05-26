@@ -4949,7 +4949,7 @@ export class SalesOrderService {
            COALESCE(p.project_manager, '') AS "projectManager",
            COALESCE(p.project_status, 'planning') AS "projectStatus",
            COALESCE(p.project_notes, '') AS "projectNotes",
-           COALESCE((SELECT COUNT(*)::text FROM tblsales_order so WHERE so.project_id = p.id), '0') AS "relatedSOCount",
+           COALESCE((SELECT COUNT(*)::text FROM tblsales_order so WHERE COALESCE(to_jsonb(so)->>'project_id', to_jsonb(so)->>'projectId')::bigint = p.id), '0') AS "relatedSOCount",
            COALESCE(p.created_by::text, '') AS "createdBy",
            p.created_at::text AS "createdAt",
            p.updated_at::text AS "updatedAt"
@@ -5082,7 +5082,7 @@ export class SalesOrderService {
          FROM tblsales_order so
          LEFT JOIN tblcustomer c
            ON c.id::text = COALESCE(to_jsonb(so)->>'customer_id', to_jsonb(so)->>'customerId')
-         WHERE so.project_id = $1
+         WHERE COALESCE(to_jsonb(so)->>'project_id', to_jsonb(so)->>'projectId')::text = $1::text
          ORDER BY so.created_at DESC NULLS LAST`,
         [projectId],
       );
@@ -5169,7 +5169,7 @@ export class SalesOrderService {
            COALESCE(so.status, 'pending') AS status,
            COALESCE(to_jsonb(so)->>'scheduleDate', to_jsonb(so)->>'schedule_date', null) AS "scheduleDate",
            COALESCE(to_jsonb(so)->>'salesType', to_jsonb(so)->>'sales_type', '') AS "salesType",
-           COALESCE(so.project_id::text, to_jsonb(so)->>'projectId', to_jsonb(so)->>'project_id', null) AS "projectId",
+           COALESCE(to_jsonb(so)->>'project_id', to_jsonb(so)->>'projectId', null) AS "projectId",
            COALESCE(to_jsonb(so)->>'projectName', to_jsonb(so)->>'project_name', '') AS "projectName",
            COALESCE(to_jsonb(so)->>'projectCode', to_jsonb(so)->>'project_code', '') AS "projectCode",
            COALESCE(to_jsonb(so)->>'installer', '') AS installer,

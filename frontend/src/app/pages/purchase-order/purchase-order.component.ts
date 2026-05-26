@@ -1476,7 +1476,12 @@ export class PurchaseOrderComponent implements OnInit, OnDestroy {
       return;
     }
 
-    const poType = (detail.poType as 'ACU' | 'ACP' | 'ACM') || 'ACU';
+    const rawEditPoType = String(detail.poType ?? '').trim().toUpperCase();
+    const poType: 'ACU' | 'ACP' | 'ACM' = rawEditPoType === 'ACP' || rawEditPoType === 'PO_TYPE_ACP'
+      ? 'ACP'
+      : rawEditPoType === 'ACM' || rawEditPoType === 'PO_TYPE_ACM' || rawEditPoType === 'MATERIAL'
+        ? 'ACM'
+        : 'ACU';
 
       this.isTransferPO = !!detail.isTransferPO;
       this.originatingSalesOrder = detail.originatingSalesOrder || null;
@@ -2408,16 +2413,23 @@ export class PurchaseOrderComponent implements OnInit, OnDestroy {
   private buildSerialExportFileBaseName(): string {
     const activeItem = this.getActiveProductItem();
     const poNumber = this.toFileNamePart(this.editingPoNumber || `po-${this.editingPurchaseId ?? 'request'}`);
-    const productName = this.toFileNamePart(
-      activeItem ? this.getProductNameById(activeItem.productId) : 'product',
-    );
-    const capacityName = this.toFileNamePart(
-      activeItem
-        ? this.getCapacityNameByProductAndCapacity(activeItem.productId, activeItem.capacityId)
-        : 'capacity',
-    );
+    let productName = 'product';
+    let capacityName = 'capacity';
 
-    return `${poNumber}_${productName}_${capacityName}`;
+    if (activeItem) {
+      if (activeItem.productType === 'ACP') {
+        productName = String(activeItem.partsName ?? '').trim() || 'part';
+        capacityName = String(activeItem.partsBrandName ?? '').trim() || 'na';
+      } else if (activeItem.productType === 'ACM') {
+        productName = String(activeItem.materialName ?? '').trim() || 'material';
+        capacityName = String(activeItem.materialBrandName ?? '').trim() || 'na';
+      } else {
+        productName = this.getProductNameById(activeItem.productId);
+        capacityName = this.getCapacityNameByProductAndCapacity(activeItem.productId, activeItem.capacityId);
+      }
+    }
+
+    return `${poNumber}_${this.toFileNamePart(productName)}_${this.toFileNamePart(capacityName)}`;
   }
 
   private toFileNamePart(value: unknown): string {
@@ -2880,7 +2892,7 @@ export class PurchaseOrderComponent implements OnInit, OnDestroy {
     item.partsBrandName = brand.name;
     this.brandSearchByItem[productIndex] = brand.name;
     this.isBrandDropdownOpenByItem[productIndex] = false;
-    
+
     // Automatically trigger parts search for this brand
     this.onPartsSearch(productIndex, { target: { value: '' } } as any);
   }
@@ -2939,6 +2951,27 @@ export class PurchaseOrderComponent implements OnInit, OnDestroy {
       return fallbackLabel;
     }
 
+    // For ACP (Parts), use partsName directly
+    if (item.productType === 'ACP') {
+      const partsName = String(item.partsName ?? '').trim();
+      if (partsName) {
+        const brandName = String(item.partsBrandName ?? '').trim();
+        return brandName ? `${partsName} (${brandName})` : partsName;
+      }
+      return fallbackLabel;
+    }
+
+    // For ACM (Materials), use materialName directly
+    if (item.productType === 'ACM') {
+      const materialName = String(item.materialName ?? '').trim();
+      if (materialName) {
+        const brandName = String(item.materialBrandName ?? '').trim();
+        return brandName ? `${materialName} (${brandName})` : materialName;
+      }
+      return fallbackLabel;
+    }
+
+    // For ACU (Aircon Units), use catalog lookup
     const productName = String(item.productId ? this.getProductNameById(item.productId) : '').trim();
     const capacityName = String(
       item.productId && item.capacityId
@@ -3973,9 +4006,11 @@ export class PurchaseOrderComponent implements OnInit, OnDestroy {
   private applyDetailToForm(detail: PurchaseOrderDetailItem, fallbackItem: PurchaseOrderItem): void {
     this.vendorMode = detail.vendorId ? 'existing' : 'new';
     const rawPoType = String(detail.poType ?? '').trim().toUpperCase();
-    const poType = (rawPoType === 'ACP' || rawPoType === 'ACM' || rawPoType === 'ACU') 
-      ? rawPoType as 'ACU' | 'ACP' | 'ACM' 
-      : 'ACU';
+    const poType = ((): 'ACU' | 'ACP' | 'ACM' => {
+      if (rawPoType === 'ACP' || rawPoType === 'PO_TYPE_ACP') return 'ACP';
+      if (rawPoType === 'ACM' || rawPoType === 'PO_TYPE_ACM' || rawPoType === 'MATERIAL') return 'ACM';
+      return 'ACU';
+    })();
 
     const paymentDetails = detail.paymentDetails.length > 0
       ? detail.paymentDetails.map((payment) => ({

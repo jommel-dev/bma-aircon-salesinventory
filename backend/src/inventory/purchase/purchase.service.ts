@@ -239,7 +239,7 @@ export class PurchaseService {
        WHERE po.id = $1`,
       [id],
     );
-    const poType = String(poRes.rows[0]?.po_type ?? 'ACU').toUpperCase();
+    const poType = this.normalizePoType(poRes.rows[0]?.po_type);
     let itemsTable = 'tbltransaction_product_items';
     if (poType === 'ACP') itemsTable = 'tbltransaction_parts_items';
     else if (poType === 'ACM') itemsTable = 'tbltransaction_material_items';
@@ -541,6 +541,13 @@ export class PurchaseService {
     }
 
     return parsed;
+  }
+
+  private normalizePoType(value: unknown): 'ACU' | 'ACP' | 'ACM' {
+    const raw = String(value ?? '').trim().toUpperCase();
+    if (raw === 'ACP' || raw === 'PO_TYPE_ACP') return 'ACP';
+    if (raw === 'ACM' || raw === 'PO_TYPE_ACM' || raw === 'MATERIAL') return 'ACM';
+    return 'ACU';
   }
 
   private toOptionalNumber(value: unknown): number | null {
@@ -1772,7 +1779,7 @@ export class PurchaseService {
              WHERE po.id = $1`,
             [id],
           );
-          const poType = String(poRes.rows[0]?.po_type ?? 'ACU').toUpperCase();
+          const poType = this.normalizePoType(poRes.rows[0]?.po_type);
           let itemsTable = 'tbltransaction_product_items';
           if (poType === 'ACP') itemsTable = 'tbltransaction_parts_items';
           else if (poType === 'ACM') itemsTable = 'tbltransaction_material_items';
@@ -1930,7 +1937,7 @@ export class PurchaseService {
            WHERE po.id = $1`,
           [id],
         );
-        const poType = String(poTypeRes.rows[0]?.po_type ?? 'ACU').toUpperCase();
+        const poType = this.normalizePoType(poTypeRes.rows[0]?.po_type);
         let itemsTable = 'tbltransaction_product_items';
         if (poType === 'ACP') itemsTable = 'tbltransaction_parts_items';
         else if (poType === 'ACM') itemsTable = 'tbltransaction_material_items';
@@ -2370,7 +2377,7 @@ export class PurchaseService {
       );
 
       const purchase = purchaseResult.rows[0];
-      const poType = String(purchase.poType ?? 'ACU').toUpperCase();
+      const poType = this.normalizePoType(purchase.poType);
       let itemsTable = 'tbltransaction_product_items';
       if (poType === 'ACP') itemsTable = 'tbltransaction_parts_items';
       else if (poType === 'ACM') itemsTable = 'tbltransaction_material_items';
@@ -2765,7 +2772,7 @@ export class PurchaseService {
           vendorContactNumber: purchase.vendorContactNumber,
           totalAmount: this.toOptionalNumber(purchase.totalAmount) ?? 0,
           status: purchase.status,
-          poType: purchase.poType,
+          poType: this.normalizePoType(purchase.poType),
           paymentDetails: paymentResult.rows.map((payment) => ({
             method: payment.method ?? '',
             amount: this.toOptionalNumber(payment.amount) ?? 0,
@@ -3092,7 +3099,7 @@ export class PurchaseService {
              WHERE po.id = $1`,
             [id],
           );
-          const poType = String(poRes.rows[0]?.po_type ?? 'ACU').toUpperCase();
+          const poType = this.normalizePoType(poRes.rows[0]?.po_type);
           let itemsTable = 'tbltransaction_product_items';
           if (poType === 'ACP') itemsTable = 'tbltransaction_parts_items';
           else if (poType === 'ACM') itemsTable = 'tbltransaction_material_items';
@@ -3634,7 +3641,7 @@ export class PurchaseService {
           throw new Error('Purchase order not found');
         }
 
-        const poType = String(poResult.rows[0].po_type ?? 'ACU').toUpperCase();
+        const poType = this.normalizePoType(poResult.rows[0].po_type);
         let itemsTable = 'tbltransaction_product_items';
         if (poType === 'ACP') itemsTable = 'tbltransaction_parts_items';
         else if (poType === 'ACM') itemsTable = 'tbltransaction_material_items';
@@ -3898,149 +3905,369 @@ export class PurchaseService {
           ORDER BY pp.id DESC
           LIMIT 1
         ) AS "paymentDetails",
-        (
-          SELECT COALESCE(
-            json_agg(
-              json_build_object(
-                'id', tpi.id,
-                'transType', COALESCE(
-                  to_jsonb(tpi)->>'transType',
-                  to_jsonb(tpi)->>'trans_type',
-                  'purchase'
-                ),
-                'productId', COALESCE(
-                  to_jsonb(tpi)->>'productId',
-                  to_jsonb(tpi)->>'product_id'
-                ),
-                'capacityId', COALESCE(
-                  to_jsonb(tpi)->>'capacityId',
-                  to_jsonb(tpi)->>'capacity_id'
-                ),
-                'unitPrice', COALESCE(
-                  NULLIF(
-                    COALESCE(to_jsonb(tpi)->>'unitPrice', to_jsonb(tpi)->>'unit_price', ''),
-                    ''
-                  )::numeric,
-                  0
-                ),
-                'sellPrice', COALESCE(
-                  NULLIF(
-                    COALESCE(to_jsonb(tpi)->>'sellPrice', to_jsonb(tpi)->>'sell_price', ''),
-                    ''
-                  )::numeric,
-                  0
-                ),
-                'discountPrice', COALESCE(
-                  NULLIF(
-                    COALESCE(
-                      to_jsonb(tpi)->>'discountPrice',
-                      to_jsonb(tpi)->>'discount_price',
+        CASE
+          WHEN UPPER(base.po_type) IN ('ACP', 'PO_TYPE_ACP') THEN (
+            SELECT COALESCE(
+              json_agg(
+                json_build_object(
+                  'id', tpi.id,
+                  'transType', COALESCE(
+                    to_jsonb(tpi)->>'transType',
+                    to_jsonb(tpi)->>'trans_type',
+                    'purchase'
+                  ),
+                  'productId', COALESCE(
+                    to_jsonb(tpi)->>'productId',
+                    to_jsonb(tpi)->>'product_id',
+                    to_jsonb(tpi)->>'part_id'
+                  ),
+                  'capacityId', NULL,
+                  'unitPrice', COALESCE(
+                    NULLIF(
+                      COALESCE(to_jsonb(tpi)->>'unitPrice', to_jsonb(tpi)->>'unit_price', ''),
                       ''
-                    ),
-                    ''
-                  )::numeric,
-                  0
-                ),
-                'unitTypesQty', COALESCE(
-                  to_jsonb(tpi)->'unitTypesQty',
-                  to_jsonb(tpi)->'unit_types_qty',
-                  '[]'::jsonb
-                ),
-                'totalSetQty', COALESCE(
-                  CASE
-                    WHEN COALESCE(
-                      to_jsonb(tpi)->>'totalSetQty',
-                      to_jsonb(tpi)->>'total_set_qty',
+                    )::numeric,
+                    0
+                  ),
+                  'sellPrice', COALESCE(
+                    NULLIF(
+                      COALESCE(to_jsonb(tpi)->>'sellPrice', to_jsonb(tpi)->>'sell_price', ''),
                       ''
-                    ) ~ '^-?\\d+$'
-                      AND ABS(
-                        COALESCE(
+                    )::numeric,
+                    0
+                  ),
+                  'discountPrice', COALESCE(
+                    NULLIF(
+                      COALESCE(to_jsonb(tpi)->>'discountPrice', to_jsonb(tpi)->>'discount_price', ''),
+                      ''
+                    )::numeric,
+                    0
+                  ),
+                  'unitTypesQty', COALESCE(
+                    to_jsonb(tpi)->'unitTypesQty',
+                    to_jsonb(tpi)->'unit_types_qty',
+                    '[]'::jsonb
+                  ),
+                  'totalSetQty', COALESCE(
+                    CASE
+                      WHEN COALESCE(
+                        to_jsonb(tpi)->>'totalSetQty',
+                        to_jsonb(tpi)->>'total_set_qty',
+                        to_jsonb(tpi)->>'quantity',
+                        ''
+                      ) ~ '^-?\\d+$'
+                        AND ABS(COALESCE(
+                          to_jsonb(tpi)->>'totalSetQty',
+                          to_jsonb(tpi)->>'total_set_qty',
+                          to_jsonb(tpi)->>'quantity',
+                          '0'
+                        )::numeric) <= 2147483647
+                        THEN COALESCE(
+                          to_jsonb(tpi)->>'totalSetQty',
+                          to_jsonb(tpi)->>'total_set_qty',
+                          to_jsonb(tpi)->>'quantity',
+                          '0'
+                        )::int
+                      ELSE 0
+                    END,
+                    0
+                  ),
+                  'purchaseId', COALESCE(
+                    to_jsonb(tpi)->>'purchaseId',
+                    to_jsonb(tpi)->>'purchase_id',
+                    to_jsonb(tpi)->>'po_id'
+                  ),
+                  'salesId', COALESCE(
+                    to_jsonb(tpi)->>'salesId',
+                    to_jsonb(tpi)->>'sales_id'
+                  ),
+                  'status', COALESCE(to_jsonb(tpi)->>'status', null),
+                  'product', CASE
+                    WHEN pt.id IS NULL THEN NULL
+                    ELSE json_build_object(
+                      'id', pt.id,
+                      'productName', pt.parts_name,
+                      'unit', NULL,
+                      'productType', 'ACP'
+                    )
+                  END,
+                  'capacity', NULL
+                )
+                ORDER BY tpi.id DESC
+              ),
+              '[]'::json
+            )
+            FROM tbltransaction_parts_items tpi
+            LEFT JOIN tblparts pt
+              ON pt.id::text = COALESCE(
+                to_jsonb(tpi)->>'productId',
+                to_jsonb(tpi)->>'product_id',
+                to_jsonb(tpi)->>'part_id'
+              )
+            WHERE COALESCE(
+              to_jsonb(tpi)->>'purchaseId',
+              to_jsonb(tpi)->>'purchase_id',
+              to_jsonb(tpi)->>'po_id'
+            ) = base.id::text
+            AND LOWER(COALESCE(
+              to_jsonb(tpi)->>'transType',
+              to_jsonb(tpi)->>'trans_type',
+              'purchase'
+            )) = 'purchase'
+          )
+          WHEN UPPER(base.po_type) IN ('ACM', 'PO_TYPE_ACM', 'MATERIAL') THEN (
+            SELECT COALESCE(
+              json_agg(
+                json_build_object(
+                  'id', tpi.id,
+                  'transType', COALESCE(
+                    to_jsonb(tpi)->>'transType',
+                    to_jsonb(tpi)->>'trans_type',
+                    'purchase'
+                  ),
+                  'productId', COALESCE(
+                    to_jsonb(tpi)->>'productId',
+                    to_jsonb(tpi)->>'product_id',
+                    to_jsonb(tpi)->>'material_id'
+                  ),
+                  'capacityId', NULL,
+                  'unitPrice', COALESCE(
+                    NULLIF(
+                      COALESCE(to_jsonb(tpi)->>'unitPrice', to_jsonb(tpi)->>'unit_price', ''),
+                      ''
+                    )::numeric,
+                    0
+                  ),
+                  'sellPrice', COALESCE(
+                    NULLIF(
+                      COALESCE(to_jsonb(tpi)->>'sellPrice', to_jsonb(tpi)->>'sell_price', ''),
+                      ''
+                    )::numeric,
+                    0
+                  ),
+                  'discountPrice', COALESCE(
+                    NULLIF(
+                      COALESCE(to_jsonb(tpi)->>'discountPrice', to_jsonb(tpi)->>'discount_price', ''),
+                      ''
+                    )::numeric,
+                    0
+                  ),
+                  'unitTypesQty', COALESCE(
+                    to_jsonb(tpi)->'unitTypesQty',
+                    to_jsonb(tpi)->'unit_types_qty',
+                    '[]'::jsonb
+                  ),
+                  'totalSetQty', COALESCE(
+                    CASE
+                      WHEN COALESCE(
+                        to_jsonb(tpi)->>'totalSetQty',
+                        to_jsonb(tpi)->>'total_set_qty',
+                        to_jsonb(tpi)->>'quantity',
+                        ''
+                      ) ~ '^-?\\d+$'
+                        AND ABS(COALESCE(
+                          to_jsonb(tpi)->>'totalSetQty',
+                          to_jsonb(tpi)->>'total_set_qty',
+                          to_jsonb(tpi)->>'quantity',
+                          '0'
+                        )::numeric) <= 2147483647
+                        THEN COALESCE(
+                          to_jsonb(tpi)->>'totalSetQty',
+                          to_jsonb(tpi)->>'total_set_qty',
+                          to_jsonb(tpi)->>'quantity',
+                          '0'
+                        )::int
+                      ELSE 0
+                    END,
+                    0
+                  ),
+                  'purchaseId', COALESCE(
+                    to_jsonb(tpi)->>'purchaseId',
+                    to_jsonb(tpi)->>'purchase_id',
+                    to_jsonb(tpi)->>'po_id'
+                  ),
+                  'salesId', COALESCE(
+                    to_jsonb(tpi)->>'salesId',
+                    to_jsonb(tpi)->>'sales_id'
+                  ),
+                  'status', COALESCE(to_jsonb(tpi)->>'status', null),
+                  'product', CASE
+                    WHEN mt.id IS NULL THEN NULL
+                    ELSE json_build_object(
+                      'id', mt.id,
+                      'productName', mt.material_name,
+                      'unit', mt.unit,
+                      'productType', 'ACM'
+                    )
+                  END,
+                  'capacity', NULL
+                )
+                ORDER BY tpi.id DESC
+              ),
+              '[]'::json
+            )
+            FROM tbltransaction_material_items tpi
+            LEFT JOIN tblmaterials mt
+              ON mt.id::text = COALESCE(
+                to_jsonb(tpi)->>'productId',
+                to_jsonb(tpi)->>'product_id',
+                to_jsonb(tpi)->>'material_id'
+              )
+            WHERE COALESCE(
+              to_jsonb(tpi)->>'purchaseId',
+              to_jsonb(tpi)->>'purchase_id',
+              to_jsonb(tpi)->>'po_id'
+            ) = base.id::text
+            AND LOWER(COALESCE(
+              to_jsonb(tpi)->>'transType',
+              to_jsonb(tpi)->>'trans_type',
+              'purchase'
+            )) = 'purchase'
+          )
+          ELSE (
+            SELECT COALESCE(
+              json_agg(
+                json_build_object(
+                  'id', tpi.id,
+                  'transType', COALESCE(
+                    to_jsonb(tpi)->>'transType',
+                    to_jsonb(tpi)->>'trans_type',
+                    'purchase'
+                  ),
+                  'productId', COALESCE(
+                    to_jsonb(tpi)->>'productId',
+                    to_jsonb(tpi)->>'product_id'
+                  ),
+                  'capacityId', COALESCE(
+                    to_jsonb(tpi)->>'capacityId',
+                    to_jsonb(tpi)->>'capacity_id'
+                  ),
+                  'unitPrice', COALESCE(
+                    NULLIF(
+                      COALESCE(to_jsonb(tpi)->>'unitPrice', to_jsonb(tpi)->>'unit_price', ''),
+                      ''
+                    )::numeric,
+                    0
+                  ),
+                  'sellPrice', COALESCE(
+                    NULLIF(
+                      COALESCE(to_jsonb(tpi)->>'sellPrice', to_jsonb(tpi)->>'sell_price', ''),
+                      ''
+                    )::numeric,
+                    0
+                  ),
+                  'discountPrice', COALESCE(
+                    NULLIF(
+                      COALESCE(
+                        to_jsonb(tpi)->>'discountPrice',
+                        to_jsonb(tpi)->>'discount_price',
+                        ''
+                      ),
+                      ''
+                    )::numeric,
+                    0
+                  ),
+                  'unitTypesQty', COALESCE(
+                    to_jsonb(tpi)->'unitTypesQty',
+                    to_jsonb(tpi)->'unit_types_qty',
+                    '[]'::jsonb
+                  ),
+                  'totalSetQty', COALESCE(
+                    CASE
+                      WHEN COALESCE(
+                        to_jsonb(tpi)->>'totalSetQty',
+                        to_jsonb(tpi)->>'total_set_qty',
+                        ''
+                      ) ~ '^-?\\d+$'
+                        AND ABS(
+                          COALESCE(
+                            to_jsonb(tpi)->>'totalSetQty',
+                            to_jsonb(tpi)->>'total_set_qty',
+                            '0'
+                          )::numeric
+                        ) <= 2147483647
+                        THEN COALESCE(
                           to_jsonb(tpi)->>'totalSetQty',
                           to_jsonb(tpi)->>'total_set_qty',
                           '0'
-                        )::numeric
-                      ) <= 2147483647
-                      THEN COALESCE(
-                        to_jsonb(tpi)->>'totalSetQty',
-                        to_jsonb(tpi)->>'total_set_qty',
-                        '0'
-                      )::int
-                    ELSE 0
+                        )::int
+                      ELSE 0
+                    END,
+                    0
+                  ),
+                  'purchaseId', COALESCE(
+                    to_jsonb(tpi)->>'purchaseId',
+                    to_jsonb(tpi)->>'purchase_id',
+                    to_jsonb(tpi)->>'po_id'
+                  ),
+                  'salesId', COALESCE(
+                    to_jsonb(tpi)->>'salesId',
+                    to_jsonb(tpi)->>'sales_id'
+                  ),
+                  'status', COALESCE(to_jsonb(tpi)->>'status', null),
+                  'product', CASE
+                    WHEN p.id IS NULL THEN NULL
+                    ELSE json_build_object(
+                      'id', p.id,
+                      'productName', COALESCE(
+                        to_jsonb(p)->>'productName',
+                        to_jsonb(p)->>'product_name',
+                        to_jsonb(p)->>'productname'
+                      ),
+                      'unit', COALESCE(to_jsonb(p)->>'unit', null),
+                      'productType', COALESCE(
+                        to_jsonb(p)->>'productType',
+                        to_jsonb(p)->>'product_type',
+                        to_jsonb(p)->>'producttype'
+                      )
+                    )
                   END,
-                  0
-                ),
-                'purchaseId', COALESCE(
-                  to_jsonb(tpi)->>'purchaseId',
-                  to_jsonb(tpi)->>'purchase_id',
-                  to_jsonb(tpi)->>'po_id'
-                ),
-                'salesId', COALESCE(
-                  to_jsonb(tpi)->>'salesId',
-                  to_jsonb(tpi)->>'sales_id'
-                ),
-                'status', COALESCE(to_jsonb(tpi)->>'status', null),
-                'product', CASE
-                  WHEN p.id IS NULL THEN NULL
-                  ELSE json_build_object(
-                    'id', p.id,
-                    'productName', COALESCE(
-                      to_jsonb(p)->>'productName',
-                      to_jsonb(p)->>'product_name',
-                      to_jsonb(p)->>'productname'
-                    ),
-                    'unit', COALESCE(to_jsonb(p)->>'unit', null),
-                    'productType', COALESCE(
-                      to_jsonb(p)->>'productType',
-                      to_jsonb(p)->>'product_type',
-                      to_jsonb(p)->>'producttype'
+                  'capacity', CASE
+                    WHEN c.id IS NULL THEN NULL
+                    ELSE json_build_object(
+                      'id', c.id,
+                      'capacity', COALESCE(to_jsonb(c)->>'capacity', null),
+                      'indoorModel', COALESCE(
+                        to_jsonb(c)->>'indoorModel',
+                        to_jsonb(c)->>'indoor_model'
+                      ),
+                      'outdoorModel', COALESCE(
+                        to_jsonb(c)->>'outdoorModel',
+                        to_jsonb(c)->>'outdoor_model'
+                      ),
+                      'srp', COALESCE(NULLIF(to_jsonb(c)->>'srp', '')::numeric, 0),
+                      'netPrice', COALESCE(
+                        NULLIF(
+                          COALESCE(to_jsonb(c)->>'netPrice', to_jsonb(c)->>'net_price', ''),
+                          ''
+                        )::numeric,
+                        0
+                      )
                     )
-                  )
-                END,
-                'capacity', CASE
-                  WHEN c.id IS NULL THEN NULL
-                  ELSE json_build_object(
-                    'id', c.id,
-                    'capacity', COALESCE(to_jsonb(c)->>'capacity', null),
-                    'indoorModel', COALESCE(
-                      to_jsonb(c)->>'indoorModel',
-                      to_jsonb(c)->>'indoor_model'
-                    ),
-                    'outdoorModel', COALESCE(
-                      to_jsonb(c)->>'outdoorModel',
-                      to_jsonb(c)->>'outdoor_model'
-                    ),
-                    'srp', COALESCE(NULLIF(to_jsonb(c)->>'srp', '')::numeric, 0),
-                    'netPrice', COALESCE(
-                      NULLIF(
-                        COALESCE(to_jsonb(c)->>'netPrice', to_jsonb(c)->>'net_price', ''),
-                        ''
-                      )::numeric,
-                      0
-                    )
-                  )
-                END
+                  END
+                )
+                ORDER BY tpi.id DESC
+              ),
+              '[]'::json
+            )
+            FROM tbltransaction_product_items tpi
+            LEFT JOIN tblproducts p
+              ON p.id::text = COALESCE(
+                to_jsonb(tpi)->>'productId',
+                to_jsonb(tpi)->>'product_id'
               )
-              ORDER BY tpi.id DESC
-            ),
-            '[]'::json
+            LEFT JOIN tblcapacity c
+              ON c.id::text = COALESCE(
+                to_jsonb(tpi)->>'capacityId',
+                to_jsonb(tpi)->>'capacity_id'
+              )
+            WHERE COALESCE(
+              to_jsonb(tpi)->>'purchaseId',
+              to_jsonb(tpi)->>'purchase_id',
+              to_jsonb(tpi)->>'po_id'
+            ) = base.id::text
           )
-          FROM tbltransaction_product_items tpi
-          LEFT JOIN tblproducts p
-            ON p.id::text = COALESCE(
-              to_jsonb(tpi)->>'productId',
-              to_jsonb(tpi)->>'product_id'
-            )
-          LEFT JOIN tblcapacity c
-            ON c.id::text = COALESCE(
-              to_jsonb(tpi)->>'capacityId',
-              to_jsonb(tpi)->>'capacity_id'
-            )
-          WHERE COALESCE(
-            to_jsonb(tpi)->>'purchaseId',
-            to_jsonb(tpi)->>'purchase_id',
-            to_jsonb(tpi)->>'po_id'
-          ) = base.id::text
-        ) AS "productItems",
+        END AS "productItems",
         base.created_at::text AS "createdAt",
         base.serial_count::int AS "serialCount"
       FROM base
