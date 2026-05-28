@@ -20,7 +20,6 @@ export type MenuKey =
   | 'purchase_order'
   | 'inventory'
   | 'accounting'
-  | 'material_inventory'
   | 'sales_order_materials'
   | 'user_management'
   | 'settings'
@@ -64,7 +63,6 @@ export class RbacService {
     'purchase-order': 'purchase_order',
     inventory: 'inventory',
     accounting: 'accounting',
-    'material-inventory': 'material_inventory',
     'sales-order-materials': 'sales_order_materials',
     'user-management': 'user_management',
     settings: 'settings',

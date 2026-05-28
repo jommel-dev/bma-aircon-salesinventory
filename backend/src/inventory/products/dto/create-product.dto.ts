@@ -18,4 +18,6 @@ export class CreateProductDto {
     unitTypes: string[];
     unit: string;
     capacities?: CreateProductCapacityDto[];
+    productType?: string;
+    itemCode?: string;
 }

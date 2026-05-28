@@ -11,12 +11,13 @@ import { PurchaseOrderComponent } from './pages/purchase-order/purchase-order.co
 import { ScheduleTodaySalesOrderComponent } from './pages/schedule-today-sales-order/schedule-today-sales-order.component';
 import { InventoryComponent } from './pages/inventory/inventory.component';
 import { QuotationComponent } from './pages/quotation/quotation.component';
-import { MaterialInventoryComponent } from './pages/material-inventory/material-inventory.component';
 import { SalesOrderMaterialsComponent } from './pages/sales-order-materials/sales-order-materials.component';
+import { SalesOrderMaterialFormPageComponent } from './pages/sales-order-materials/sales-order-material-form/sales-order-material-form-page.component';
 import { SettingsComponent } from './pages/settings/settings.component';
 import { AccountingComponent } from './pages/accounting/accounting.component';
 import { ProjectsComponent } from './pages/projects/projects.component';
 import { PayrollComponent } from './payroll/payroll.component';
+
 
 export const routes: Routes = [
   {
@@ -95,16 +96,8 @@ export const routes: Routes = [
         },
         title: 'Inventory',
       },
-      {
-        path: 'material-inventory',
-        component: MaterialInventoryComponent,
-        canActivate: [rbacGuard],
-        data: {
-          menu: 'material_inventory',
-          permission: 'canRead',
-        },
-        title: 'Material Inventory',
-      },
+
+
       {
         path: 'accounting',
         component: AccountingComponent,
@@ -134,6 +127,26 @@ export const routes: Routes = [
           permission: 'canRead',
         },
         title: 'Sales Order Materials',
+      },
+      {
+        path: 'sales-order-materials/create',
+        component: SalesOrderMaterialFormPageComponent,
+        canActivate: [rbacGuard],
+        data: {
+          menu: 'sales_order_materials',
+          permission: 'canRead',
+        },
+        title: 'Create Material Sales Order',
+      },
+      {
+        path: 'sales-order-materials/edit/:id',
+        component: SalesOrderMaterialFormPageComponent,
+        canActivate: [rbacGuard],
+        data: {
+          menu: 'sales_order_materials',
+          permission: 'canRead',
+        },
+        title: 'Edit Material Sales Order',
       },
       {
         path: 'quotation',

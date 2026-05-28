@@ -70,9 +70,34 @@ export class BrandsService {
       };
     }
 
+    const prefixColumn = this.pickColumn(columns, ['prefix', 'brandPrefix', 'brand_prefix']);
+    const typeColumn = this.pickColumn(columns, ['type', 'brandType', 'brand_type']);
+
+    const insertColumns = [`"${nameColumn}"`];
+    const insertValues: any[] = [brandName];
+    const valuePlaceholders = ['$1'];
+
+    if (prefixColumn && createBrandDto.prefix) {
+      insertColumns.push(`"${prefixColumn}"`);
+      insertValues.push(String(createBrandDto.prefix).trim());
+      valuePlaceholders.push(`$${insertValues.length}`);
+    }
+
+    if (typeColumn && createBrandDto.type) {
+      insertColumns.push(`"${typeColumn}"`);
+      insertValues.push(String(createBrandDto.type).trim());
+      valuePlaceholders.push(`$${insertValues.length}`);
+    }
+
+    if (createBrandDto.product_type_id != null) {
+      insertColumns.push(`"product_type_id"`);
+      insertValues.push(createBrandDto.product_type_id);
+      valuePlaceholders.push(`$${insertValues.length}`);
+    }
+
     const insertResult = await this.databaseService.query<{ id: number }>(
-      `INSERT INTO tblbrands ("${nameColumn}") VALUES ($1) RETURNING id`,
-      [brandName],
+      `INSERT INTO tblbrands (${insertColumns.join(', ')}) VALUES (${valuePlaceholders.join(', ')}) RETURNING id`,
+      insertValues,
     );
 
     return {
@@ -91,6 +116,7 @@ export class BrandsService {
         id: number;
         name_value: string | null;
         type_value: string | null;
+        prefix_value: string | null;
       }>(
         `SELECT
            b.id,
@@ -103,7 +129,12 @@ export class BrandsService {
              to_jsonb(b)->>'type',
              to_jsonb(b)->>'brandType',
              to_jsonb(b)->>'brand_type'
-           ) AS type_value
+           ) AS type_value,
+           COALESCE(
+             to_jsonb(b)->>'prefix',
+             to_jsonb(b)->>'brandPrefix',
+             to_jsonb(b)->>'brand_prefix'
+           ) AS prefix_value
          FROM tblbrands b
          ORDER BY b.id DESC`,
       );
@@ -114,12 +145,72 @@ export class BrandsService {
           id: row.id,
           name: row.name_value ?? `Brand ${row.id}`,
           type: String(row.type_value ?? '').trim(),
+          prefix: String(row.prefix_value ?? '').trim(),
         })),
       };
     } catch (error) {
       return {
         success: false,
         message: error instanceof Error ? error.message : 'Failed to load brands',
+        items: [],
+      };
+    }
+  }
+
+  async getMaterialBrands() {
+    try {
+      const result = await this.databaseService.query<{
+        id: number;
+        name_value: string | null;
+        type_value: string | null;
+        prefix_value: string | null;
+        product_type_id: number | null;
+      }>(
+        `SELECT
+           b.id,
+           COALESCE(
+             to_jsonb(b)->>'name',
+             to_jsonb(b)->>'brandName',
+             to_jsonb(b)->>'brand_name'
+           ) AS name_value,
+           COALESCE(
+             to_jsonb(b)->>'type',
+             to_jsonb(b)->>'brandType',
+             to_jsonb(b)->>'brand_type'
+           ) AS type_value,
+           COALESCE(
+             to_jsonb(b)->>'prefix',
+             to_jsonb(b)->>'brandPrefix',
+             to_jsonb(b)->>'brand_prefix'
+           ) AS prefix_value,
+           b.product_type_id
+         FROM tblbrands b
+         WHERE COALESCE(
+           to_jsonb(b)->>'type',
+           to_jsonb(b)->>'brandType',
+           to_jsonb(b)->>'brand_type'
+         ) = 'MAT'
+         ORDER BY COALESCE(
+           to_jsonb(b)->>'name',
+           to_jsonb(b)->>'brandName',
+           to_jsonb(b)->>'brand_name'
+         ) ASC`,
+      );
+
+      return {
+        success: true,
+        items: result.rows.map((row) => ({
+          id: row.id,
+          name: row.name_value ?? `Brand ${row.id}`,
+          type: String(row.type_value ?? '').trim(),
+          prefix: String(row.prefix_value ?? '').trim(),
+          product_type_id: row.product_type_id ?? null,
+        })),
+      };
+    } catch (error) {
+      return {
+        success: false,
+        message: error instanceof Error ? error.message : 'Failed to load material brands',
         items: [],
       };
     }
@@ -200,12 +291,30 @@ export class BrandsService {
       };
     }
 
+    const updateColumns = [`"${nameColumn}" = $1`];
+    const updateValues: any[] = [brandName];
+    let updateIndex = 2;
+
+    const prefixColumn = this.pickColumn(columns, ['prefix', 'brandPrefix', 'brand_prefix']);
+    if (prefixColumn && updateBrandDto.prefix !== undefined) {
+      updateColumns.push(`"${prefixColumn}" = $${updateIndex}`);
+      updateValues.push(String(updateBrandDto.prefix).trim());
+      updateIndex++;
+    }
+
+    const typeColumn = this.pickColumn(columns, ['type', 'brandType', 'brand_type']);
+    if (typeColumn && updateBrandDto.type !== undefined) {
+      updateColumns.push(`"${typeColumn}" = $${updateIndex}`);
+      updateValues.push(String(updateBrandDto.type).trim());
+      updateIndex++;
+    }
+
     const updateResult = await this.databaseService.query<{ id: number }>(
       `UPDATE tblbrands
-       SET "${nameColumn}" = $1
-       WHERE id = $2
+       SET ${updateColumns.join(', ')}
+       WHERE id = $${updateIndex}
        RETURNING id`,
-      [brandName, id],
+      [...updateValues, id],
     );
 
     if ((updateResult.rowCount ?? 0) === 0) {

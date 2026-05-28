@@ -406,6 +406,16 @@ export class ProductsService {
           [unitColumn]: payload.unit,
         };
 
+        const productTypeColumn = this.pickColumn(availableColumns, ['productType', 'product_type']);
+        if (productTypeColumn && payload.productType) {
+          insertRecord[productTypeColumn] = String(payload.productType).trim();
+        }
+
+        const itemCodeColumn = this.pickColumn(availableColumns, ['itemCode', 'item_code', 'code']);
+        if (itemCodeColumn && payload.itemCode) {
+          insertRecord[itemCodeColumn] = String(payload.itemCode).trim();
+        }
+
         if (createdByColumn) {
           insertRecord[createdByColumn] = payload.created_by;
         }
@@ -507,6 +517,17 @@ export class ProductsService {
              ''
            ) AS unit,
            COALESCE(
+             to_jsonb(p)->>'productType',
+             to_jsonb(p)->>'product_type',
+             ''
+           ) AS product_type,
+           COALESCE(
+             to_jsonb(p)->>'itemCode',
+             to_jsonb(p)->>'item_code',
+             to_jsonb(p)->>'code',
+             ''
+           ) AS item_code,
+           COALESCE(
              to_jsonb(p)->>'unitTypes',
              to_jsonb(p)->>'unit_types',
              to_jsonb(p)->>'unittypes',
@@ -586,6 +607,8 @@ export class ProductsService {
           id: row.id,
           name: row.product_name ?? `Product ${row.id}`,
           brandName: row.brand_name ?? undefined,
+          productType: String(row.product_type ?? '').trim() || undefined,
+          itemCode: String(row.item_code ?? '').trim() || undefined,
           unit: (row.unit ?? '').trim() || undefined,
           unitTypes: String(row.unit_types ?? '')
             .split(',')
@@ -733,6 +756,19 @@ export class ProductsService {
             values.push(unitValue);
             updates.push(`"${unitColumn}" = $${values.length}`);
           }
+        }
+
+        const productTypeColumn = this.pickColumn(availableColumns, ['productType', 'product_type']);
+        if (productTypeColumn && typeof updateProductDto.productType === 'string') {
+          const productTypeValue = updateProductDto.productType.trim();
+          values.push(productTypeValue || null);
+          updates.push(`"${productTypeColumn}" = $${values.length}`);
+        }
+
+        const itemCodeColumn = this.pickColumn(availableColumns, ['itemCode', 'item_code', 'code']);
+        if (itemCodeColumn && typeof updateProductDto.itemCode === 'string') {
+          values.push(updateProductDto.itemCode.trim() || null);
+          updates.push(`"${itemCodeColumn}" = $${values.length}`);
         }
 
         if (unitTypesColumn && Array.isArray(updateProductDto.unitTypes)) {

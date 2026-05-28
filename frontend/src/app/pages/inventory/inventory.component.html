@@ -1,1545 +1,1306 @@
-<div>
-  <app-page-breadcrumb pageTitle="Inventory" />
-
-  <div class="rounded-xl border border-gray-200 bg-white p-5 dark:border-gray-700 dark:bg-white/2">
-    <div class="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
-      <div>
-        <h3 class="text-2xl font-semibold text-gray-800 dark:text-white/90">Inventory</h3>
-        <p class="mt-1 text-sm text-gray-500 dark:text-gray-400">Brand List Folder → Product List → Capacity List</p>
-      </div>
-
-      <div class="flex flex-wrap gap-2">
-        <button
-          type="button"
-          (click)="openCreationDrawer('all-in-one')"
-          class="inline-flex items-center rounded-lg bg-brand-500 px-4 py-2 text-sm font-medium text-white hover:bg-brand-600"
-        >
-          Create Brand/Product/Capacity
-        </button>
-        <button
-          type="button"
-          (click)="openBulkUploadModal()"
-          class="inline-flex items-center rounded-lg border border-brand-300 px-4 py-2 text-sm font-medium text-brand-700 hover:bg-brand-50 dark:border-brand-500/40 dark:text-brand-300 dark:hover:bg-brand-500/10"
-        >
-          Bulk Upload CSV
-        </button>
-      </div>
-      <!-- <button
+﻿<div>
+  <div class="flex items-center justify-between mb-4">
+    <app-page-breadcrumb pageTitle="Material Inventory" />
+    <div class="flex items-center gap-2">
+      <button
         type="button"
-        (click)="openMaterialModal()"
-        class="inline-flex items-center rounded-lg bg-green-500 px-4 py-2 text-sm font-medium text-white hover:bg-green-600 ml-2"
+        class="rounded-md border border-gray-300 bg-white px-4 py-2 text-sm font-medium text-gray-700 hover:bg-gray-50 dark:border-gray-600 dark:bg-gray-700 dark:text-gray-300 dark:hover:bg-gray-600 transition-colors shadow-sm"
+        (click)="openBulkUploadModal()"
       >
-        Create Material
-      </button> -->
-    <!-- Material Creation Modal -->
-    <!-- <div *ngIf="isMaterialModalOpen" class="fixed inset-0 z-50 flex items-center justify-center bg-black bg-opacity-30">
-      <div class="bg-white rounded-xl shadow-lg p-6 w-full max-w-md">
-        <h3 class="text-lg font-semibold mb-4">Add Material</h3>
-        <form (ngSubmit)="submitMaterial()">
-          <div class="mb-3">
-            <label class="block text-sm font-medium mb-1">Code</label>
-            <input type="text" [(ngModel)]="materialForm.code" name="code" required class="w-full border rounded px-3 py-2" />
-          </div>
-          <div class="mb-3">
-            <label class="block text-sm font-medium mb-1">Name</label>
-            <input type="text" [(ngModel)]="materialForm.name" name="name" required class="w-full border rounded px-3 py-2" />
-          </div>
-          <div class="mb-3">
-            <label class="block text-sm font-medium mb-1">Unit</label>
-            <input type="text" [(ngModel)]="materialForm.unit" name="unit" class="w-full border rounded px-3 py-2" placeholder="pcs" />
-          </div>
-          <div class="flex gap-2 mt-4">
-            <button type="submit" class="bg-green-500 text-white px-4 py-2 rounded hover:bg-green-600">Add</button>
-            <button type="button" (click)="closeMaterialModal()" class="bg-gray-300 px-4 py-2 rounded hover:bg-gray-400">Cancel</button>
-          </div>
-          <div *ngIf="materialError" class="mt-2 text-red-600 text-sm">{{ materialError }}</div>
-          <div *ngIf="materialSuccess" class="mt-2 text-green-600 text-sm">{{ materialSuccess }}</div>
-        </form>
-      </div>
-    </div> -->
+        ⬆ Bulk Upload CSV
+      </button>
+      <button
+        type="button"
+        class="rounded-md bg-brand-500 px-4 py-2 text-sm font-medium text-white hover:bg-brand-600 transition-colors shadow-sm"
+        (click)="openCreateDrawer()"
+      >
+        + Create Type/Products
+      </button>
     </div>
   </div>
 
-    @if (isLoading) {
-      <div class="py-10 text-center text-sm text-gray-500 dark:text-gray-400">Loading inventory folders...</div>
-    } @else if (errorMessage) {
-      <div class="mt-4 rounded-lg border border-error-300 bg-error-50 px-4 py-3 text-sm text-error-600 dark:border-error-500/30 dark:bg-error-500/10 dark:text-error-400">
-        {{ errorMessage }}
-      </div>
-    } @else {
-      <div class="mt-5 grid grid-cols-1 gap-4 xl:grid-cols-[340px_minmax(0,1fr)]">
-        <section class="rounded-xl border border-gray-200 p-4 dark:border-gray-800">
-          <h4 class="mb-3 text-sm font-semibold text-gray-700 dark:text-gray-200">Folder Tree</h4>
+  <div class="rounded-xl border border-gray-200 bg-white dark:border-gray-700 dark:bg-white/2">
+    <!-- Split Panel Layout: 30% tree (left) / 70% table (right) -->
+    <div class="flex h-[calc(100vh-12rem)]">
+      <!-- Left Panel: Tree View (30%) -->
+      <div class="w-[20%] border-r border-gray-200 dark:border-gray-700 overflow-y-auto p-4">
+        <h4 class="text-sm font-semibold text-gray-700 dark:text-gray-300 mb-3">Product Types &amp; Brands</h4>
 
-          <div class="mb-3">
-            <input
-              type="text"
-              [(ngModel)]="treeSearch"
-              placeholder="Search brand, product, capacity..."
-              class="h-10 w-full rounded-lg border border-gray-300 bg-transparent px-3 text-sm text-gray-800 placeholder:text-gray-400 focus:border-brand-300 focus:outline-none dark:border-gray-700 dark:text-white/90"
-            />
-          </div>
+        <!-- Loading state -->
+        <div *ngIf="isTreeLoading" class="flex items-center gap-2 text-sm text-gray-400 dark:text-gray-500">
+          <svg class="animate-spin h-4 w-4" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
+            <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
+            <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z"></path>
+          </svg>
+          <span>Loading tree...</span>
+        </div>
 
-          <div class="space-y-2">
-            @for (folder of filteredBrandFolders; track folder.name) {
-              <div class="rounded-lg border border-gray-200 p-2 dark:border-gray-700" data-brand-context="true" (contextmenu)="openBrandContextMenu($event, folder.name)">
-                <button
-                  type="button"
-                  (click)="toggleBrand(folder.name)"
-                  class="flex w-full items-center justify-between rounded-md px-2 py-1 text-left text-sm font-medium transition hover:bg-gray-50 dark:hover:bg-gray-800"
-                  [ngClass]="isBrandSelected(folder.name) ? 'text-brand-700 dark:text-brand-300' : 'text-gray-700 dark:text-gray-300'"
-                >
-                  <span (click)="selectBrand(folder.name)">📁 {{ folder.name }}</span>
-                  <span class="text-xs text-gray-500 dark:text-gray-400">{{ isBrandExpanded(folder.name) ? '▾' : '▸' }}</span>
-                </button>
+        <!-- Error state -->
+        <div *ngIf="treeError && !isTreeLoading" class="text-sm text-red-500 dark:text-red-400">
+          {{ treeError }}
+        </div>
 
-                @if (isBrandExpanded(folder.name)) {
-                  <div class="ml-4 mt-1 space-y-1 border-l border-gray-200 pl-3 dark:border-gray-700">
-                    @for (product of folder.products; track product.id) {
-                      <div>
-                        <button
-                          type="button"
-                          (click)="toggleProduct(folder.name, product.id); selectProduct(folder.name, product.id)"
-                          class="flex w-full items-center justify-between rounded-md px-2 py-1 text-left text-sm transition hover:bg-gray-50 dark:hover:bg-gray-800"
-                          [ngClass]="isProductSelected(product.id) ? 'text-brand-700 dark:text-brand-300' : 'text-gray-700 dark:text-gray-300'"
-                        >
-                          <span>📦 {{ product.name }}</span>
-                          <span class="text-xs text-gray-500 dark:text-gray-400">{{ isProductExpanded(folder.name, product.id) ? '▾' : '▸' }}</span>
-                        </button>
+        <!-- Tree nodes -->
+        <div *ngIf="!isTreeLoading && !treeError" class="space-y-1">
+          <!-- Empty state -->
+          <p *ngIf="treeNodes.length === 0" class="text-sm text-gray-400 dark:text-gray-500">
+            No product types found.
+          </p>
 
-                        @if (isProductExpanded(folder.name, product.id)) {
-                          <div class="ml-4 mt-1 space-y-1 border-l border-gray-200 pl-3 dark:border-gray-700">
-                            @for (capacity of product.capacities; track capacity.id) {
-                              <button
-                                type="button"
-                                (click)="selectCapacity(folder.name, product.id, capacity.id)"
-                                class="block w-full rounded-md px-2 py-1 text-left text-sm transition hover:bg-gray-50 dark:hover:bg-gray-800"
-                                [ngClass]="isCapacitySelected(capacity.id)
-                                  ? 'text-brand-700 dark:text-brand-300'
-                                  : 'text-gray-600 dark:text-gray-400'"
-                              >
-                                <span class="inline-flex items-center gap-1">
-                                  <span>📄</span>
-                                  <span>{{ capacity.name }}</span>
-                                  @if (getCapacityStockLabel(capacity.id)) {
-                                    <span class="text-xs text-gray-500 dark:text-gray-400">
-                                      ({{ getCapacityStockLabel(capacity.id) }})
-                                    </span>
-                                  }
-                                </span>
-                              </button>
-                            } @empty {
-                              <p class="px-2 py-1 text-xs text-gray-500 dark:text-gray-400">No capacities</p>
-                            }
-                          </div>
-                        }
-                      </div>
-                    } @empty {
-                      <p class="px-2 py-1 text-xs text-gray-500 dark:text-gray-400">No products</p>
-                    }
-                  </div>
-                }
-              </div>
-            } @empty {
-              <p class="text-sm text-gray-500 dark:text-gray-400">No brands found.</p>
-            }
-          </div>
-
-          @if (brandContextMenuVisible) {
-            <div
-              data-brand-context-menu="true"
-              class="fixed z-100010 min-w-45 rounded-lg border border-gray-200 bg-white p-1 shadow-lg dark:border-gray-700 dark:bg-gray-900"
-              [style.left.px]="brandContextMenuX"
-              [style.top.px]="brandContextMenuY"
-              (click)="$event.stopPropagation()"
+          <!-- Product Type nodes -->
+          <div *ngFor="let node of treeNodes">
+            <!-- Parent node (Product Type) -->
+            <button
+              type="button"
+              class="flex items-center gap-2 w-full px-2 py-1.5 rounded-md text-left text-sm font-medium text-gray-700 dark:text-gray-300 hover:bg-gray-100 dark:hover:bg-gray-700/50 transition-colors"
+              (click)="toggleNode(node.id)"
+              (contextmenu)="onProductTypeContextMenu($event, node)"
             >
-              <button
-                type="button"
-                class="block w-full rounded-md px-3 py-2 text-left text-sm text-gray-700 hover:bg-gray-100 dark:text-gray-200 dark:hover:bg-gray-800"
-                (click)="onBrandContextAction('add-product')"
+              <!-- Chevron icon -->
+              <svg
+                class="h-4 w-4 text-gray-400 dark:text-gray-500 transition-transform duration-200 shrink-0"
+                [class.rotate-90]="isExpanded(node.id)"
+                xmlns="http://www.w3.org/2000/svg"
+                viewBox="0 0 20 20"
+                fill="currentColor"
               >
-                Add New Product
-              </button>
-              <div class="my-1 border-t border-gray-200 dark:border-gray-700"></div>
-              <button
-                type="button"
-                class="block w-full rounded-md px-3 py-2 text-left text-sm text-gray-700 hover:bg-gray-100 dark:text-gray-200 dark:hover:bg-gray-800"
-                (click)="onBrandContextAction('edit-brand')"
+                <path fill-rule="evenodd" d="M7.21 14.77a.75.75 0 01.02-1.06L11.168 10 7.23 6.29a.75.75 0 111.04-1.08l4.5 4.25a.75.75 0 010 1.08l-4.5 4.25a.75.75 0 01-1.06-.02z" clip-rule="evenodd" />
+              </svg>
+              <!-- Folder icon -->
+              <svg
+                class="h-4 w-4 shrink-0"
+                [class.text-yellow-500]="isExpanded(node.id)"
+                [class.text-gray-400]="!isExpanded(node.id)"
+                xmlns="http://www.w3.org/2000/svg"
+                viewBox="0 0 20 20"
+                fill="currentColor"
               >
-                Edit Brand
-              </button>
+                <path d="M2 6a2 2 0 012-2h5l2 2h5a2 2 0 012 2v6a2 2 0 01-2 2H4a2 2 0 01-2-2V6z" />
+              </svg>
+              <span class="truncate">{{ node.name }}</span>
+              <span class="ml-auto text-xs text-gray-400 dark:text-gray-500">{{ node.children.length }}</span>
+            </button>
+
+            <!-- Children (Brand nodes) -->
+            <div *ngIf="isExpanded(node.id)" class="ml-6 mt-0.5 space-y-0.5">
               <button
+                *ngFor="let brand of node.children"
                 type="button"
-                class="block w-full rounded-md px-3 py-2 text-left text-sm text-error-600 hover:bg-error-50 dark:text-error-400 dark:hover:bg-error-500/10"
-                (click)="onBrandContextAction('delete-brand')"
+                class="flex items-center gap-2 w-full px-2 py-1.5 rounded-md text-left text-sm transition-colors"
+                [class.bg-blue-50]="isBrandSelected(brand.id)"
+                [class.dark:bg-blue-900/20]="isBrandSelected(brand.id)"
+                [class.text-blue-700]="isBrandSelected(brand.id)"
+                [class.dark:text-blue-300]="isBrandSelected(brand.id)"
+                [class.font-medium]="isBrandSelected(brand.id)"
+                [class.text-gray-600]="!isBrandSelected(brand.id)"
+                [class.dark:text-gray-400]="!isBrandSelected(brand.id)"
+                [class.hover:bg-gray-100]="!isBrandSelected(brand.id)"
+                [class.dark:hover:bg-gray-700/50]="!isBrandSelected(brand.id)"
+                (click)="selectBrand(brand)"
+                (contextmenu)="onBrandContextMenu($event, brand)"
               >
-                Delete Brand
+                <!-- Brand icon (tag) -->
+                <svg class="h-3.5 w-3.5 shrink-0 text-gray-400 dark:text-gray-500" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20" fill="currentColor">
+                  <path fill-rule="evenodd" d="M5.5 3A2.5 2.5 0 003 5.5v2.879a2.5 2.5 0 00.732 1.767l6.5 6.5a2.5 2.5 0 003.536 0l2.878-2.878a2.5 2.5 0 000-3.536l-6.5-6.5A2.5 2.5 0 008.38 3H5.5zM6 7a1 1 0 100-2 1 1 0 000 2z" clip-rule="evenodd" />
+                </svg>
+                <span class="truncate">{{ brand.name }}</span>
               </button>
             </div>
-          }
-        </section>
+          </div>
+        </div>
+      </div>
 
-        <section class="rounded-xl border border-gray-200 p-5 dark:border-gray-800">
-          <h4 class="text-base font-semibold text-gray-800 dark:text-white/90">{{ selectedNodeTitle }}</h4>
-          <p class="mt-1 text-sm text-gray-500 dark:text-gray-400">{{ selectedNodeDescription }}</p>
+      <!-- Right Panel: Material Table (70%) -->
+      <div class="w-[80%] overflow-auto p-4">
+        <!-- No brand selected state -->
+        <div *ngIf="selectedBrandId === null" class="flex items-center justify-center h-full">
+          <p class="text-sm text-gray-400 dark:text-gray-500">Select a brand from the tree to view materials.</p>
+        </div>
 
-          @if (selectedNodeType !== 'product' && selectedNodeType !== 'capacity') {
-            <div class="mt-4 rounded-lg border border-dashed border-gray-300 p-4 dark:border-gray-700">
-              <p class="text-sm text-gray-600 dark:text-gray-300">Use the creation drawer for adding brands, products, and capacities.</p>
-              <button
-                type="button"
-                (click)="openCreationDrawer(selectedBrandName ? 'product-capacity' : 'all-in-one')"
-                class="mt-3 inline-flex items-center rounded-lg border border-brand-300 px-3 py-2 text-sm font-medium text-brand-700 hover:bg-brand-50 dark:border-brand-500/40 dark:text-brand-300 dark:hover:bg-brand-500/10"
-              >
-                Add Product & Capacity
-              </button>
+        <!-- Brand selected: show table area -->
+        <div *ngIf="selectedBrandId !== null" class="h-full flex flex-col">
+          <!-- Table header -->
+          <div class="mb-3">
+            <h4 class="text-sm font-semibold text-gray-700 dark:text-gray-300">
+              Materials — {{ selectedBrandName }}
+            </h4>
+          </div>
+
+          <!-- Loading state -->
+          <div *ngIf="isMaterialsLoading" class="flex items-center justify-center flex-1">
+            <div class="flex items-center gap-2 text-sm text-gray-400 dark:text-gray-500">
+              <svg class="animate-spin h-4 w-4" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
+                <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
+                <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z"></path>
+              </svg>
+              <span>Loading materials...</span>
             </div>
-          }
+          </div>
 
-          @if (selectedNodeType === 'brand' && selectedBrand) {
-            <div class="mt-4 rounded-lg border border-gray-200 p-4 dark:border-gray-700">
-              <p class="text-sm text-gray-700 dark:text-gray-300">Products in this brand: {{ selectedBrand.products.length }}</p>
-            </div>
-          }
+          <!-- Error state -->
+          <div *ngIf="materialsError && !isMaterialsLoading" class="flex items-center justify-center flex-1">
+            <p class="text-sm text-red-500 dark:text-red-400">{{ materialsError }}</p>
+          </div>
 
-          @if (selectedNodeType === 'product' && selectedProduct) {
-            <div class="mt-4 space-y-4">
-              <div class="rounded-lg border border-gray-200 p-4 dark:border-gray-700">
-                <div class="flex items-start justify-between gap-3">
-                  <div>
-                    <p class="text-sm font-semibold text-gray-700 dark:text-gray-300">Product Details</p>
-                    <p class="mt-2 text-sm text-gray-700 dark:text-gray-300">Name: {{ selectedProduct.name }}</p>
-                    <p class="mt-1 text-sm text-gray-700 dark:text-gray-300">Unit: {{ selectedProduct.unit || '-' }}</p>
-                    <p class="mt-1 text-sm text-gray-700 dark:text-gray-300">Unit Types: {{ (selectedProduct.unitTypes?.length ? selectedProduct.unitTypes?.join(', ') : '-') }}</p>
-                  </div>
-                  <button
-                    type="button"
-                    (click)="editSelectedProductDetails()"
-                    [disabled]="isUpdatingProduct"
-                    class="rounded-lg border border-brand-300 px-3 py-2 text-xs font-medium text-brand-700 hover:bg-brand-50 disabled:opacity-50 dark:border-brand-500/40 dark:text-brand-300 dark:hover:bg-brand-500/10"
-                  >
-                    {{ isUpdatingProduct ? 'Saving...' : 'Edit Product' }}
-                  </button>
-                </div>
-              </div>
+          <!-- Empty state -->
+          <div *ngIf="!isMaterialsLoading && !materialsError && materials.length === 0" class="flex items-center justify-center flex-1">
+            <p class="text-sm text-gray-400 dark:text-gray-500">No materials found for this brand.</p>
+          </div>
 
-              <div class="rounded-lg border border-gray-200 p-4 dark:border-gray-700">
-                <p class="mb-3 text-sm font-semibold text-gray-700 dark:text-gray-300">Add Capacity</p>
-                <p class="text-sm text-gray-600 dark:text-gray-300">Add one or multiple capacities using the creation drawer.</p>
-                <button
-                  type="button"
-                  (click)="openCapacityOnlyDrawer()"
-                  class="mt-3 inline-flex items-center rounded-lg bg-brand-500 px-4 py-2 text-sm font-medium text-white hover:bg-brand-600"
+          <!-- Material table -->
+          <div *ngIf="!isMaterialsLoading && !materialsError && materials.length > 0" class="overflow-x-auto flex-1">
+            <table class="w-full table-auto text-xs">
+              <thead>
+                <tr class="border-b border-gray-200 dark:border-gray-800">
+                  <th class="px-2 py-2 text-left text-[11px] font-medium text-gray-700 dark:text-gray-400 whitespace-nowrap">Code</th>
+                  <th class="px-2 py-2 text-left text-[11px] font-medium text-gray-700 dark:text-gray-400">Name</th>
+                  <th class="px-2 py-2 text-left text-[11px] font-medium text-gray-700 dark:text-gray-400 whitespace-nowrap">Stock</th>
+                  <th class="px-2 py-2 text-right text-[11px] font-medium text-gray-700 dark:text-gray-400 whitespace-nowrap">Cost</th>
+                  <th class="px-2 py-2 text-right text-[11px] font-medium text-gray-700 dark:text-gray-400 whitespace-nowrap">Price</th>
+                  <th class="px-2 py-2 text-right text-[11px] font-medium text-gray-700 dark:text-gray-400 whitespace-nowrap">Margin</th>
+                  <th class="px-2 py-2 text-right text-[11px] font-medium text-gray-700 dark:text-gray-400 whitespace-nowrap">Qty</th>
+                  <th class="px-2 py-2 text-right text-[11px] font-medium text-gray-700 dark:text-gray-400 whitespace-nowrap">O.Cost</th>
+                  <th class="px-2 py-2 text-right text-[11px] font-medium text-gray-700 dark:text-gray-400 whitespace-nowrap">O.Price</th>
+                  <th class="px-2 py-2 text-right text-[11px] font-medium text-gray-700 dark:text-gray-400 whitespace-nowrap">O.Margin</th>
+                  <th class="px-2 py-2 text-center text-[11px] font-medium text-gray-700 dark:text-gray-400"></th>
+                </tr>
+              </thead>
+              <tbody>
+                <tr
+                  *ngFor="let row of materials"
+                  class="border-b border-gray-100 dark:border-gray-800 hover:bg-gray-50 dark:hover:bg-gray-800/30 transition-colors"
                 >
-                  Add Capacity
-                </button>
-              </div>
-
-              <div class="rounded-lg border border-gray-200 p-4 dark:border-gray-700">
-                <p class="mb-3 text-sm font-semibold text-gray-700 dark:text-gray-300">Available Capacities</p>
-                <div class="grid grid-cols-1 gap-3 sm:grid-cols-2 xl:grid-cols-3">
-                  @for (capacity of selectedProduct.capacities; track capacity.id) {
-                    <button
-                      type="button"
-                      (click)="selectCapacity(selectedBrandName || '', selectedProduct.id, capacity.id)"
-                      class="rounded-lg border border-gray-200 p-3 text-left transition hover:border-brand-300 hover:bg-gray-50 dark:border-gray-700 dark:hover:bg-gray-800"
-                      [ngClass]="isCapacitySelected(capacity.id) ? 'border-brand-300 bg-brand-50 dark:bg-brand-500/10' : ''"
-                    >
-                      <p class="text-base">📁</p>
-                      <p class="mt-1 text-sm font-medium text-gray-800 dark:text-white/90">{{ capacity.name }}</p>
-                      <p class="mt-1 text-xs text-gray-500 dark:text-gray-400">SRP: {{ (capacity.sellPrice ?? 0) | currency:'PHP':'symbol':'1.2-2' }}</p>
-                    </button>
-                  } @empty {
-                    <p class="text-sm text-gray-500 dark:text-gray-400">No capacities available.</p>
-                  }
-                </div>
-              </div>
-            </div>
-          }
-
-          @if (selectedNodeType === 'capacity' && selectedCapacity) {
-            <div class="mt-4 space-y-3">
-              <div class="flex items-center justify-end">
-                <button
-                  type="button"
-                  (click)="editSelectedCapacityDetails()"
-                  [disabled]="isUpdatingCapacity"
-                  class="rounded-lg border border-brand-300 px-3 py-2 text-xs font-medium text-brand-700 hover:bg-brand-50 disabled:opacity-50 dark:border-brand-500/40 dark:text-brand-300 dark:hover:bg-brand-500/10"
-                >
-                  {{ isUpdatingCapacity ? 'Saving...' : 'Edit Capacity Details' }}
-                </button>
-              </div>
-
-              <div class="grid grid-cols-1 gap-3 md:grid-cols-2">
-                <div class="rounded-lg border border-gray-200 p-4 dark:border-gray-700">
-                  <p class="text-xs uppercase tracking-wide text-gray-500 dark:text-gray-400">Capacity Name</p>
-                  <p class="mt-1 text-sm font-medium text-gray-800 dark:text-white/90">{{ selectedCapacity.name }}</p>
-                </div>
-                <div class="rounded-lg border border-gray-200 p-4 dark:border-gray-700">
-                  <p class="text-xs uppercase tracking-wide text-gray-500 dark:text-gray-400">SRP</p>
-                  <p class="mt-1 text-sm font-medium text-gray-800 dark:text-white/90">{{ (selectedCapacity.sellPrice ?? 0) | currency:'PHP':'symbol':'1.2-2' }}</p>
-                </div>
-                <div class="rounded-lg border border-gray-200 p-4 dark:border-gray-700">
-                  <p class="text-xs uppercase tracking-wide text-gray-500 dark:text-gray-400">Net Price</p>
-                  <p class="mt-1 text-sm font-medium text-gray-800 dark:text-white/90">{{ (selectedCapacity.unitPrice ?? 0) | currency:'PHP':'symbol':'1.2-2' }}</p>
-                </div>
-                <div class="rounded-lg border border-gray-200 p-4 dark:border-gray-700">
-                  <p class="text-xs uppercase tracking-wide text-gray-500 dark:text-gray-400">Cash Price</p>
-                  <p class="mt-1 text-sm font-medium text-gray-800 dark:text-white/90">{{ (selectedCapacity.cashPrice ?? 0) | currency:'PHP':'symbol':'1.2-2' }}</p>
-                </div>
-                <div class="rounded-lg border border-gray-200 p-4 dark:border-gray-700">
-                  <p class="text-xs uppercase tracking-wide text-gray-500 dark:text-gray-400">CC Price</p>
-                  <p class="mt-1 text-sm font-medium text-gray-800 dark:text-white/90">{{ (selectedCapacity.ccPrice ?? 0) | currency:'PHP':'symbol':'1.2-2' }}</p>
-                </div>
-                <div class="rounded-lg border border-gray-200 p-4 dark:border-gray-700">
-                  <p class="text-xs uppercase tracking-wide text-gray-500 dark:text-gray-400">Indoor Model</p>
-                  <p class="mt-1 text-sm font-medium text-gray-800 dark:text-white/90">{{ selectedCapacity.indoorModel || '-' }}</p>
-                </div>
-                <div class="rounded-lg border border-gray-200 p-4 dark:border-gray-700">
-                  <p class="text-xs uppercase tracking-wide text-gray-500 dark:text-gray-400">Outdoor Model</p>
-                  <p class="mt-1 text-sm font-medium text-gray-800 dark:text-white/90">{{ selectedCapacity.outdoorModel || '-' }}</p>
-                </div>
-              </div>
-
-              <div class="rounded-lg border border-gray-200 p-4 dark:border-gray-700">
-                <div class="flex flex-wrap gap-2">
-                  @for (tab of capacitySerialTabs; track tab.key) {
-                    <button
-                      type="button"
-                      (click)="setActiveCapacitySerialTab(tab.key)"
-                      class="rounded-lg border px-3 py-2 text-sm font-medium transition"
-                      [ngClass]="activeCapacitySerialTab === tab.key
-                        ? 'border-brand-300 bg-brand-50 text-brand-700 dark:bg-brand-500/10 dark:text-brand-300'
-                        : 'border-gray-200 text-gray-600 hover:bg-gray-50 dark:border-gray-700 dark:text-gray-300 dark:hover:bg-gray-800'"
-                    >
-                      {{ tab.label }} ({{ tab.count }})
-                    </button>
-                  }
-                </div>
-
-                @if (isLoadingCapacityStock) {
-                  <p class="mt-3 text-sm text-gray-500 dark:text-gray-400">Loading stock summary...</p>
-                } @else if (capacityStockError) {
-                  <p class="mt-3 text-sm text-error-600 dark:text-error-400">{{ capacityStockError }}</p>
-                } @else {
-                  <div class="mt-4 grid grid-cols-1 gap-3 md:grid-cols-2 xl:grid-cols-4">
-                    <div class="rounded-lg border border-gray-200 p-3 dark:border-gray-700">
-                      <p class="text-xs uppercase tracking-wide text-gray-500 dark:text-gray-400">Serial Count</p>
-                      <p class="mt-1 text-sm font-semibold text-gray-800 dark:text-white/90">{{ activeTabSerialCount }}</p>
-                    </div>
-                    <div class="rounded-lg border border-gray-200 p-3 dark:border-gray-700">
-                      <p class="text-xs uppercase tracking-wide text-gray-500 dark:text-gray-400">Set Count</p>
-                      <p class="mt-1 text-sm font-semibold text-gray-800 dark:text-white/90">{{ activeTabSetCount }}</p>
-                      @if (activeTabUnpairedCount > 0) {
-                        <p class="mt-1 text-xs text-warning-600 dark:text-warning-400">Unpaired Units: {{ activeTabUnpairedCount }}</p>
-                      }
-                    </div>
-                    <div class="rounded-lg border border-gray-200 p-3 dark:border-gray-700">
-                      <p class="text-xs uppercase tracking-wide text-gray-500 dark:text-gray-400">Total Selling Amount</p>
-                      <p class="mt-1 text-sm font-semibold text-gray-800 dark:text-white/90">{{ activeTabTotalSellingAmount | currency:'PHP':'symbol':'1.2-2' }}</p>
-                    </div>
-                    <div class="rounded-lg border border-gray-200 p-3 dark:border-gray-700">
-                      <p class="text-xs uppercase tracking-wide text-gray-500 dark:text-gray-400">Total Cost Amount</p>
-                      <p class="mt-1 text-sm font-semibold text-gray-800 dark:text-white/90">{{ activeTabTotalCostAmount | currency:'PHP':'symbol':'1.2-2' }}</p>
-                    </div>
-                  </div>
-
-                  @if (canViewLandCostingMargin()) {
-                    <div class="mt-3 rounded-lg border border-gray-200 p-3 dark:border-gray-700">
-                      <p class="text-xs uppercase tracking-wide text-gray-500 dark:text-gray-400">Margin Amount</p>
-                      <p class="mt-1 text-sm font-semibold text-gray-800 dark:text-white/90">{{ activeTabMarginAmount | currency:'PHP':'symbol':'1.2-2' }}</p>
-                    </div>
-                  }
-
-                  @if (canViewLandCostingReport()) {
-                    <div class="mt-3 rounded-lg border border-gray-200 p-3 dark:border-gray-700">
-                      <div class="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
-                        <div>
-                          <p class="text-xs uppercase tracking-wide text-gray-500 dark:text-gray-400">Land Costing Report</p>
-                          <p class="mt-1 text-xs text-gray-500 dark:text-gray-400">Open the detailed report in a dedicated drawer.</p>
-                        </div>
-                        <button
-                          type="button"
-                          (click)="openLandCostingDrawer()"
-                          class="rounded-md border border-brand-300 px-3 py-1.5 text-xs font-medium text-brand-700 hover:bg-brand-50 dark:border-brand-500/40 dark:text-brand-300 dark:hover:bg-brand-500/10"
-                        >
-                          Open Land Costing Report
-                        </button>
-                      </div>
-                    </div>
-                  }
-
-                  <div class="mt-3 rounded-lg border border-gray-200 p-3 dark:border-gray-700">
-                    <div class="flex items-center justify-between">
-                      <p class="text-xs uppercase tracking-wide text-gray-500 dark:text-gray-400">Serial Numbers</p>
-                      @if (canBulkInstall) {
-                        <button type="button" (click)="openCsvModal()"
-                          class="rounded-lg border border-brand-300 px-3 py-1.5 text-xs font-medium text-brand-700 transition hover:bg-brand-50 dark:border-brand-600 dark:text-brand-300 dark:hover:bg-brand-900/20">
-                          Upload CSV
-                        </button>
-                      }
-                    </div>
-                    <div class="mt-2 flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
-                      <input
-                        type="text"
-                        [(ngModel)]="serialSearch"
-                        (ngModelChange)="onSerialSearchChange()"
-                        placeholder="Smart search serial or unit type..."
-                        class="h-9 w-full rounded-lg border border-gray-300 bg-transparent px-3 text-sm text-gray-800 placeholder:text-gray-400 focus:border-brand-300 focus:outline-none dark:border-gray-700 dark:text-white/90 sm:max-w-xs"
-                      />
-                      <p class="text-xs text-gray-500 dark:text-gray-400">
-                        Showing {{ activeTabFilteredSerialCount }} of {{ activeTabSerialCount }}
-                      </p>
-                    </div>
-
-                    <div class="mt-2 flex flex-wrap gap-2">
-                      @for (option of serialUnitTypeOptions; track option.value) {
-                        <button
-                          type="button"
-                          (click)="setSelectedSerialUnitType(option.value)"
-                          class="rounded-lg border px-3 py-1.5 text-xs font-medium transition"
-                          [ngClass]="selectedSerialUnitType === option.value
-                            ? 'border-brand-300 bg-brand-50 text-brand-700 dark:bg-brand-500/10 dark:text-brand-300'
-                            : 'border-gray-200 text-gray-600 hover:bg-gray-50 dark:border-gray-700 dark:text-gray-300 dark:hover:bg-gray-800'"
-                        >
-                          {{ option.label }} ({{ option.count }})
-                        </button>
-                      }
-                    </div>
-
-                    @if (canBulkInstall && selectedSerials.size > 0) {
-                      <div class="mt-2 flex flex-wrap items-center gap-2 rounded-lg border border-brand-200 bg-brand-50 px-3 py-2 dark:border-brand-700 dark:bg-brand-900/20">
-                        <span class="text-xs font-medium text-brand-700 dark:text-brand-300">{{ selectedSerials.size }} selected</span>
-                        <button type="button" (click)="bulkMarkAsInstalled()" [disabled]="isBulkUpdating"
-                          class="rounded-lg border border-success-300 bg-success-500 px-3 py-1.5 text-xs font-medium text-white transition hover:bg-success-600 disabled:opacity-60">
-                          {{ isBulkUpdating ? 'Updating...' : 'Mark as Installed' }}
-                        </button>
-                        <button type="button" (click)="clearSerialSelection()"
-                          class="rounded-lg border border-gray-300 px-3 py-1.5 text-xs font-medium text-gray-600 transition hover:bg-gray-50 dark:border-gray-600 dark:text-gray-300">
-                          Clear
-                        </button>
-                        @if (bulkUpdateMessage) {
-                          <span class="text-xs text-success-600 dark:text-success-400">{{ bulkUpdateMessage }}</span>
-                        }
-                        @if (bulkUpdateError) {
-                          <span class="text-xs text-error-600 dark:text-error-400">{{ bulkUpdateError }}</span>
-                        }
-                      </div>
-                    }
-
-                    @if (canBulkInstall) {
-                    <div class="mt-2 flex items-center gap-2">
-                      <button type="button" (click)="selectAllVisibleSerials(paginatedActiveTabSerialList)"
-                        class="rounded border border-gray-300 px-2 py-1 text-xs text-gray-600 hover:bg-gray-50 dark:border-gray-600 dark:text-gray-300 dark:hover:bg-gray-800">
-                        {{ paginatedActiveTabSerialList.length > 0 && paginatedActiveTabSerialList.every(s => selectedSerials.has(s.serialNumber)) ? 'Deselect Page' : 'Select Page' }}
+                  <td class="px-2 py-1.5 text-xs text-gray-700 dark:text-gray-300 whitespace-nowrap">{{ row.material_code || '—' }}</td>
+                  <td class="px-2 py-1.5 text-xs text-gray-700 dark:text-gray-300">{{ row.material_name }}</td>
+                  <td class="px-2 py-1.5">
+                    <!-- Stock Notice Badge -->
+                    <span [class]="getStockBadge(row).classes">{{ getStockBadge(row).label }}</span>
+                  </td>
+                  <td class="px-2 py-1.5 text-xs text-right text-gray-700 dark:text-gray-300 whitespace-nowrap">{{ row.unit_price | number:'1.2-2' }}</td>
+                  <td class="px-2 py-1.5 text-xs text-right text-gray-700 dark:text-gray-300 whitespace-nowrap">{{ row.sell_price | number:'1.2-2' }}</td>
+                  <td class="px-2 py-1.5 text-xs text-right text-gray-700 dark:text-gray-300 whitespace-nowrap">{{ row.margin | number:'1.2-2' }}</td>
+                  <td class="px-2 py-1.5 text-xs text-right text-gray-700 dark:text-gray-300 whitespace-nowrap">{{ row.on_hand_stock }}</td>
+                  <td class="px-2 py-1.5 text-xs text-right text-gray-700 dark:text-gray-300 whitespace-nowrap">{{ row.overallCost | number:'1.2-2' }}</td>
+                  <td class="px-2 py-1.5 text-xs text-right text-gray-700 dark:text-gray-300 whitespace-nowrap">{{ row.overallPrice | number:'1.2-2' }}</td>
+                  <td class="px-2 py-1.5 text-xs text-right text-gray-700 dark:text-gray-300 whitespace-nowrap">{{ row.overallMargin | number:'1.2-2' }}</td>
+                  <!-- Actions column with three-dot menu -->
+                  <td class="px-1 py-1.5 text-center relative">
+                    <div class="action-menu-container" [class.active]="isMenuOpen(row.id)">
+                      <!-- Three-dot button -->
+                      <button
+                        type="button"
+                        class="inline-flex items-center justify-center w-6 h-6 rounded-md text-gray-500 hover:text-gray-700 hover:bg-gray-100 dark:text-gray-400 dark:hover:text-gray-200 dark:hover:bg-gray-700 transition-colors"
+                        (click)="toggleActionMenu($event, row.id)"
+                        aria-label="Row actions"
+                      >
+                        <svg class="w-4 h-4" fill="currentColor" viewBox="0 0 20 20">
+                          <circle cx="10" cy="4" r="1.5"/>
+                          <circle cx="10" cy="10" r="1.5"/>
+                          <circle cx="10" cy="16" r="1.5"/>
+                        </svg>
                       </button>
-                    </div>
-                    }
-
-                    <div class="mt-2 grid grid-cols-1 gap-2 md:grid-cols-2 xl:grid-cols-3">
-                      @for (serialEntry of paginatedActiveTabSerialList; track serialEntry.serialNumber + '::' + serialEntry.unitType) {
-                        <div class="flex cursor-pointer items-start gap-2 rounded-md border px-3 py-2 text-xs font-medium transition"
-                          [ngClass]="canBulkInstall && selectedSerials.has(serialEntry.serialNumber)
-                            ? 'border-brand-300 bg-brand-50 text-brand-700 dark:border-brand-600 dark:bg-brand-900/20 dark:text-brand-300'
-                            : 'border-gray-200 text-gray-700 hover:border-gray-300 dark:border-gray-700 dark:text-gray-300'"
-                          (click)="canBulkInstall && toggleSerialSelection(serialEntry.serialNumber)">
-                          @if (canBulkInstall) {
-                            <input type="checkbox" [checked]="selectedSerials.has(serialEntry.serialNumber)"
-                              (click)="$event.stopPropagation()" (change)="toggleSerialSelection(serialEntry.serialNumber)"
-                              class="mt-0.5 h-3.5 w-3.5 shrink-0 accent-brand-500" />
-                          }
-                          <div>
-                            <p>{{ serialEntry.serialNumber }}</p>
-                            @if (serialEntry.unitType) {
-                              <p class="mt-1 text-[11px] font-normal uppercase tracking-wide text-gray-500 dark:text-gray-400">
-                                {{ serialEntry.unitType }}
-                              </p>
-                            }
-                          </div>
-                        </div>
-                      } @empty {
-                        <p class="text-sm text-gray-500 dark:text-gray-400">
-                          {{ serialSearch ? 'No serial numbers match your search.' : 'No serial numbers in this status.' }}
-                        </p>
-                      }
-                    </div>
-
-                    <div class="mt-3 flex flex-col gap-2 border-t border-gray-200 pt-3 text-xs text-gray-600 dark:border-gray-700 dark:text-gray-300 sm:flex-row sm:items-center sm:justify-between">
-                      <p>
-                        Page {{ serialCurrentPage }} of {{ serialTotalPages }}
-                        · Showing {{ serialPageRangeStart }}-{{ serialPageRangeEnd }}
-                      </p>
-
-                      <div class="flex items-center gap-2">
-                        <button
-                          type="button"
-                          (click)="goToPreviousSerialPage()"
-                          [disabled]="serialCurrentPage <= 1"
-                          class="rounded-md border border-gray-300 px-3 py-1.5 text-xs font-medium text-gray-700 transition hover:bg-gray-50 disabled:cursor-not-allowed disabled:opacity-50 dark:border-gray-700 dark:text-gray-300 dark:hover:bg-gray-800"
-                        >
-                          Previous
-                        </button>
-                        <button
-                          type="button"
-                          (click)="goToNextSerialPage()"
-                          [disabled]="serialCurrentPage >= serialTotalPages"
-                          class="rounded-md border border-gray-300 px-3 py-1.5 text-xs font-medium text-gray-700 transition hover:bg-gray-50 disabled:cursor-not-allowed disabled:opacity-50 dark:border-gray-700 dark:text-gray-300 dark:hover:bg-gray-800"
-                        >
-                          Next
-                        </button>
+                      <!-- Dropdown menu -->
+                      <div
+                        *ngIf="isMenuOpen(row.id)"
+                        class="absolute right-4 top-full z-50 mt-1 w-40 rounded-md border border-gray-200 bg-white shadow-lg dark:border-gray-700 dark:bg-gray-800"
+                      >
+                        <ul class="py-1">
+                          <li>
+                            <button
+                              type="button"
+                              class="w-full px-4 py-2 text-left text-sm text-gray-700 hover:bg-gray-100 dark:text-gray-300 dark:hover:bg-gray-700 transition-colors"
+                              (click)="onMenuAction('edit', row)"
+                            >Edit</button>
+                          </li>
+                          <li>
+                            <button
+                              type="button"
+                              class="w-full px-4 py-2 text-left text-sm text-gray-700 hover:bg-gray-100 dark:text-gray-300 dark:hover:bg-gray-700 transition-colors"
+                              (click)="onMenuAction('delete', row)"
+                            >Delete</button>
+                          </li>
+                          <li>
+                            <button
+                              type="button"
+                              class="w-full px-4 py-2 text-left text-sm text-gray-700 hover:bg-gray-100 dark:text-gray-300 dark:hover:bg-gray-700 transition-colors"
+                              (click)="onMenuAction('adjustment', row)"
+                            >Adjustment</button>
+                          </li>
+                          <li>
+                            <button
+                              type="button"
+                              class="w-full px-4 py-2 text-left text-sm text-gray-700 hover:bg-gray-100 dark:text-gray-300 dark:hover:bg-gray-700 transition-colors"
+                              (click)="onMenuAction('history', row)"
+                            >History</button>
+                          </li>
+                        </ul>
                       </div>
                     </div>
-                  </div>
-                }
-              </div>
-            </div>
-          }
-        </section>
+                  </td>
+                </tr>
+              </tbody>
+            </table>
+          </div>
+        </div>
       </div>
-    }
-
-  @if (isLandCostingDrawerOpen && canViewLandCostingReport()) {
-    <div class="fixed inset-0 z-100010 bg-gray-900/50" (click)="closeLandCostingDrawer()"></div>
-  }
-
-  <aside
-    class="fixed right-0 top-0 z-100011 h-full w-full max-w-6xl transform overflow-y-auto border-l border-gray-200 bg-white p-6 shadow-2xl transition-transform duration-300 dark:border-gray-800 dark:bg-gray-900"
-    [ngClass]="(isLandCostingDrawerOpen && canViewLandCostingReport()) ? 'translate-x-0' : 'translate-x-full'"
-  >
-    <div class="mb-4 flex flex-wrap items-start justify-between gap-3">
-      <div>
-        <h3 class="text-lg font-semibold text-gray-800 dark:text-white/90">Land Costing Report (All Serials)</h3>
-        <p class="mt-1 text-sm text-gray-500 dark:text-gray-400">
-          {{ selectedProduct?.name || '-' }} - {{ selectedCapacity?.name || '-' }}
-        </p>
-      </div>
-      <button
-        type="button"
-        (click)="closeLandCostingDrawer()"
-        class="rounded-lg border border-gray-300 px-3 py-1.5 text-sm text-gray-700 hover:bg-gray-50 dark:border-gray-700 dark:text-gray-300 dark:hover:bg-gray-800"
-      >
-        Close
-      </button>
     </div>
+  </div>
+</div>
 
-    <div class="rounded-lg border border-gray-200 p-3 dark:border-gray-700">
-      <div class="flex flex-col gap-2 lg:flex-row lg:items-center lg:justify-between">
-        <div class="flex flex-wrap items-center gap-2">
-          <label class="text-xs text-gray-500 dark:text-gray-400" for="landCostingDateFromDrawer">Date From</label>
-          <input
-            id="landCostingDateFromDrawer"
-            type="date"
-            [(ngModel)]="landCostingDateFrom"
-            class="h-8 rounded-md border border-gray-300 bg-white px-2 text-xs text-gray-700 dark:border-gray-700 dark:bg-gray-900 dark:text-gray-300"
-          />
-          <label class="text-xs text-gray-500 dark:text-gray-400" for="landCostingDateToDrawer">Date To</label>
-          <input
-            id="landCostingDateToDrawer"
-            type="date"
-            [(ngModel)]="landCostingDateTo"
-            class="h-8 rounded-md border border-gray-300 bg-white px-2 text-xs text-gray-700 dark:border-gray-700 dark:bg-gray-900 dark:text-gray-300"
-          />
-          <button
-            type="button"
-            (click)="reloadLandCostingReport()"
-            [disabled]="isLoadingLandCostingReport"
-            class="rounded-md border border-gray-300 px-2.5 py-1.5 text-xs font-medium text-gray-700 hover:bg-gray-50 disabled:opacity-50 dark:border-gray-700 dark:text-gray-300 dark:hover:bg-gray-800"
-          >
-            {{ isLoadingLandCostingReport ? 'Loading...' : 'Apply' }}
-          </button>
-        </div>
+<!-- Delete Confirmation Dialog -->
+<div
+  *ngIf="isDeleteDialogOpen"
+  class="fixed inset-0 z-100 flex items-center justify-center"
+>
+  <!-- Backdrop -->
+  <div
+    class="absolute inset-0 bg-black/50"
+    (click)="cancelDelete()"
+  ></div>
 
-        <div class="flex flex-wrap items-center gap-2">
-          <button
-            type="button"
-            (click)="exportLandCostingAsExcel()"
-            [disabled]="landCostingGroups.length === 0 || !canExportLandCostingReport()"
-            class="rounded-md border border-brand-300 px-2.5 py-1.5 text-xs font-medium text-brand-700 hover:bg-brand-50 disabled:opacity-50 dark:border-brand-500/40 dark:text-brand-300 dark:hover:bg-brand-500/10"
-          >
-            Export Excel
-          </button>
-          <button
-            type="button"
-            (click)="exportLandCostingAsPdf()"
-            [disabled]="landCostingGroups.length === 0 || !canExportLandCostingReport()"
-            class="rounded-md border border-brand-300 px-2.5 py-1.5 text-xs font-medium text-brand-700 hover:bg-brand-50 disabled:opacity-50 dark:border-brand-500/40 dark:text-brand-300 dark:hover:bg-brand-500/10"
-          >
-            Export PDF
-          </button>
-        </div>
-      </div>
+  <!-- Dialog -->
+  <div class="relative z-10 w-full max-w-md rounded-lg border border-gray-200 bg-white p-6 shadow-xl dark:border-gray-700 dark:bg-gray-800">
+    <!-- Header -->
+    <h3 class="text-lg font-semibold text-gray-900 dark:text-gray-100">
+      Delete Material
+    </h3>
 
-      <p class="mt-2 text-xs text-gray-500 dark:text-gray-400">
-        {{ businessName || 'FWDS HVAC' }}
-        | Date Range: {{ landCostingDateFrom || '-' }} to {{ landCostingDateTo || '-' }}
-      </p>
-      <p class="mt-1 text-center text-sm font-semibold text-gray-700 dark:text-gray-200">Land Costing Report</p>
+    <!-- Body -->
+    <p class="mt-3 text-sm text-gray-600 dark:text-gray-400">
+      Are you sure you want to delete <span class="font-medium text-gray-900 dark:text-gray-100">'{{ materialToDelete?.material_name }}'</span>?
+      This action cannot be undone.
+    </p>
 
-      @if (landCostingError) {
-        <p class="mt-2 text-xs text-error-600 dark:text-error-400">{{ landCostingError }}</p>
-      }
+    <!-- Error message -->
+    <p *ngIf="deleteError" class="mt-3 text-sm text-red-600 dark:text-red-400">
+      {{ deleteError }}
+    </p>
 
-      @if (!landCostingError) {
-        <div class="mt-3 grid grid-cols-1 gap-2 md:grid-cols-4">
-          <div class="rounded-md border border-gray-200 px-3 py-2 dark:border-gray-700">
-            <p class="text-[11px] uppercase tracking-wide text-gray-500 dark:text-gray-400">Serials</p>
-            <p class="mt-1 text-sm font-semibold text-gray-800 dark:text-white/90">{{ landCostingTotals.serialCount }}</p>
-          </div>
-          <div class="rounded-md border border-gray-200 px-3 py-2 dark:border-gray-700">
-            <p class="text-[11px] uppercase tracking-wide text-gray-500 dark:text-gray-400">Total Landed Cost</p>
-            <p class="mt-1 text-sm font-semibold text-gray-800 dark:text-white/90">{{ landCostingTotals.landedCost | currency:'PHP':'symbol':'1.2-2' }}</p>
-          </div>
-          <div class="rounded-md border border-gray-200 px-3 py-2 dark:border-gray-700">
-            <p class="text-[11px] uppercase tracking-wide text-gray-500 dark:text-gray-400">Total SRP</p>
-            <p class="mt-1 text-sm font-semibold text-gray-800 dark:text-white/90">{{ landCostingTotals.srp | currency:'PHP':'symbol':'1.2-2' }}</p>
-          </div>
-          @if (canViewLandCostingMargin()) {
-            <div class="rounded-md border border-gray-200 px-3 py-2 dark:border-gray-700">
-              <p class="text-[11px] uppercase tracking-wide text-gray-500 dark:text-gray-400">Margin</p>
-              <p class="mt-1 text-sm font-semibold text-gray-800 dark:text-white/90">
-                {{ landCostingTotals.marginAmount | currency:'PHP':'symbol':'1.2-2' }}
-                ({{ landCostingTotals.marginPercent | number:'1.2-2' }}%)
-              </p>
-            </div>
-          }
-        </div>
-
-        @for (group of landCostingGroups; track group.productName + '::' + group.capacityName + '::' + group.vendorName + '::' + group.poNumber) {
-          <div class="mt-3 rounded-lg border border-gray-200 p-3 dark:border-gray-700">
-            <p class="text-xs uppercase tracking-wide text-gray-500 dark:text-gray-400">
-              Product (Capacity)
-            </p>
-            <p class="mt-1 text-sm font-semibold text-gray-800 dark:text-white/90">
-              {{ group.productName || '-' }} ({{ group.capacityName || '-' }})
-            </p>
-            <p class="mt-2 text-xs uppercase tracking-wide text-gray-500 dark:text-gray-400">Dealer's Name</p>
-            <p class="mt-1 text-sm text-gray-700 dark:text-gray-300">{{ group.vendorName || '-' }}</p>
-            <p class="mt-1 text-xs text-gray-500 dark:text-gray-400">
-              PO: {{ group.poNumber || '-' }} | Date: {{ group.poDate ? (group.poDate | date:'yyyy-MM-dd') : '-' }}
-            </p>
-
-            <div class="mt-3 overflow-x-auto rounded-lg border border-gray-200 dark:border-gray-700">
-              <table class="w-full min-w-230">
-                <thead>
-                  <tr class="border-b border-gray-200 bg-gray-50 dark:border-gray-700 dark:bg-gray-800/50">
-                    <th class="px-3 py-2 text-left text-xs font-medium text-gray-500 dark:text-gray-400">No.</th>
-                    <th class="px-3 py-2 text-left text-xs font-medium text-gray-500 dark:text-gray-400">Indoor</th>
-                    <th class="px-3 py-2 text-left text-xs font-medium text-gray-500 dark:text-gray-400">Outdoor</th>
-                    <th class="px-3 py-2 text-right text-xs font-medium text-gray-500 dark:text-gray-400">Landed Cost</th>
-                    <th class="px-3 py-2 text-right text-xs font-medium text-gray-500 dark:text-gray-400">SRP</th>
-                    @if (canViewLandCostingMargin()) {
-                      <th class="px-3 py-2 text-right text-xs font-medium text-gray-500 dark:text-gray-400">Margin</th>
-                    }
-                  </tr>
-                </thead>
-                <tbody>
-                  @for (row of group.rows; track row.indoorSerial + '::' + row.outdoorSerial; let rowIndex = $index) {
-                    <tr class="border-b border-gray-100 last:border-b-0 dark:border-gray-800/70">
-                      <td class="px-3 py-2 text-xs text-gray-700 dark:text-gray-300">{{ rowIndex + 1 }}</td>
-                      <td class="px-3 py-2 text-xs" [ngClass]="row.indoorSerial ? getSerialStatusColorClass(row) : 'text-gray-700 dark:text-gray-300'">{{ row.indoorSerial || '-' }}</td>
-                      <td class="px-3 py-2 text-xs" [ngClass]="row.outdoorSerial ? getSerialStatusColorClass(row) : 'text-gray-700 dark:text-gray-300'">{{ row.outdoorSerial || '-' }}</td>
-                      <td class="px-3 py-2 text-right text-xs text-gray-700 dark:text-gray-300">{{ row.landedCost | currency:'PHP':'symbol':'1.2-2' }}</td>
-                      <td class="px-3 py-2 text-right text-xs text-gray-700 dark:text-gray-300">{{ row.srp | currency:'PHP':'symbol':'1.2-2' }}</td>
-                      @if (canViewLandCostingMargin()) {
-                        <td class="px-3 py-2 text-right text-xs font-medium" [ngClass]="row.marginAmount >= 0 ? 'text-success-700 dark:text-success-400' : 'text-error-700 dark:text-error-400'">
-                          {{ row.marginAmount | currency:'PHP':'symbol':'1.2-2' }}
-                        </td>
-                      }
-                    </tr>
-                  } @empty {
-                    <tr>
-                      <td [attr.colspan]="canViewLandCostingMargin() ? 6 : 5" class="px-3 py-4 text-center text-xs text-gray-500 dark:text-gray-400">No rows in this group.</td>
-                    </tr>
-                  }
-                  @if (group.rows.length > 0) {
-                    <tr class="border-t border-gray-200 bg-gray-50 dark:border-gray-700 dark:bg-gray-800/50">
-                      <td colspan="6" class="px-3 py-2 text-center text-xs font-medium text-gray-500 dark:text-gray-400">
-                        In-Stock Indoor: {{ group.inStockIndoorCount }} | In-Stock Outdoor: {{ group.inStockOutdoorCount }}
-                      </td>
-                    </tr>
-                  }
-                </tbody>
-              </table>
-            </div>
-          </div>
-        } @empty {
-          <div class="mt-3 rounded-lg border border-gray-200 p-4 text-center text-xs text-gray-500 dark:border-gray-700 dark:text-gray-400">
-            {{ isLoadingLandCostingReport ? 'Loading land costing report...' : 'No serials linked to PO in this period.' }}
-          </div>
-        }
-
-        @if (canViewLandCostingMargin()) {
-          <div class="mt-3 rounded-md border border-gray-200 px-3 py-2 dark:border-gray-700">
-            <p class="text-xs uppercase tracking-wide text-gray-500 dark:text-gray-400">Overall Total of Margin</p>
-            <p class="mt-1 text-sm font-semibold text-gray-800 dark:text-white/90">{{ landCostingTotals.marginAmount | currency:'PHP':'symbol':'1.2-2' }}</p>
-          </div>
-        }
-      }
-    </div>
-  </aside>
-
-  @if (isCreationDrawerOpen) {
-    <div class="fixed inset-0 z-100000 bg-gray-900/40" (click)="closeCreationDrawer()"></div>
-  }
-
-  <aside
-    class="fixed right-0 top-0 z-100001 h-full w-full max-w-2xl transform overflow-y-auto border-l border-gray-200 bg-white p-6 shadow-2xl transition-transform duration-300 dark:border-gray-800 dark:bg-gray-900"
-    [ngClass]="isCreationDrawerOpen ? 'translate-x-0' : 'translate-x-full'"
-  >
-    <div class="mb-4 flex items-start justify-between gap-3">
-      <div>
-        <h3 class="text-lg font-semibold text-gray-800 dark:text-white/90">Create Inventory Data</h3>
-        <p class="mt-1 text-sm text-gray-500 dark:text-gray-400">Add brand, product, and capacity from one place.</p>
-      </div>
+    <!-- Actions -->
+    <div class="mt-5 flex items-center justify-end gap-3">
       <button
         type="button"
-        (click)="closeCreationDrawer()"
-        class="rounded-lg border border-gray-300 px-3 py-1.5 text-sm text-gray-700 hover:bg-gray-50 dark:border-gray-700 dark:text-gray-300 dark:hover:bg-gray-800"
-      >
-        Close
-      </button>
-    </div>
-
-    <div class="mb-4 flex flex-wrap gap-2">
-      <button
-        type="button"
-        (click)="setCreationFormMode('all-in-one')"
-        class="rounded-lg border px-3 py-1.5 text-xs font-medium transition"
-        [ngClass]="creationFormMode === 'all-in-one'
-          ? 'border-brand-300 bg-brand-50 text-brand-700 dark:bg-brand-500/10 dark:text-brand-300'
-          : 'border-gray-200 text-gray-600 hover:bg-gray-50 dark:border-gray-700 dark:text-gray-300 dark:hover:bg-gray-800'"
-      >
-        All In One
-      </button>
-      <button
-        type="button"
-        (click)="setCreationFormMode('brand-only')"
-        class="rounded-lg border px-3 py-1.5 text-xs font-medium transition"
-        [ngClass]="creationFormMode === 'brand-only'
-          ? 'border-brand-300 bg-brand-50 text-brand-700 dark:bg-brand-500/10 dark:text-brand-300'
-          : 'border-gray-200 text-gray-600 hover:bg-gray-50 dark:border-gray-700 dark:text-gray-300 dark:hover:bg-gray-800'"
-      >
-        Brand Only
-      </button>
-      <button
-        type="button"
-        (click)="setCreationFormMode('product-capacity')"
-        class="rounded-lg border px-3 py-1.5 text-xs font-medium transition"
-        [ngClass]="creationFormMode === 'product-capacity'
-          ? 'border-brand-300 bg-brand-50 text-brand-700 dark:bg-brand-500/10 dark:text-brand-300'
-          : 'border-gray-200 text-gray-600 hover:bg-gray-50 dark:border-gray-700 dark:text-gray-300 dark:hover:bg-gray-800'"
-      >
-        Product + Capacity
-      </button>
-      @if (selectedProduct) {
-        <button
-          type="button"
-          (click)="setCreationFormMode('capacity-only')"
-          class="rounded-lg border px-3 py-1.5 text-xs font-medium transition"
-          [ngClass]="creationFormMode === 'capacity-only'
-            ? 'border-brand-300 bg-brand-50 text-brand-700 dark:bg-brand-500/10 dark:text-brand-300'
-            : 'border-gray-200 text-gray-600 hover:bg-gray-50 dark:border-gray-700 dark:text-gray-300 dark:hover:bg-gray-800'"
-        >
-          Add Capacity Only
-        </button>
-      }
-    </div>
-
-    @if (creationFormMode === 'all-in-one') {
-      <div class="grid grid-cols-1 gap-3 md:grid-cols-2">
-        <label class="text-xs font-medium uppercase tracking-wide text-gray-500 dark:text-gray-400 md:col-span-2">Brand Name</label>
-        <input
-          type="text"
-          [(ngModel)]="allInOneBrandName"
-          class="h-10 rounded-lg border border-gray-300 bg-transparent px-3 text-sm text-gray-800 focus:border-brand-300 focus:outline-none dark:border-gray-700 dark:text-white/90 md:col-span-2"
-        />
-
-        <label class="inline-flex items-center gap-2 text-sm text-gray-700 dark:text-gray-300 md:col-span-2">
-          <input type="checkbox" [(ngModel)]="allInOneIncludeProduct" />
-          Include Product
-        </label>
-
-        @if (allInOneIncludeProduct) {
-          <label class="text-xs font-medium uppercase tracking-wide text-gray-500 dark:text-gray-400 md:col-span-2">Product Name</label>
-          <input
-            type="text"
-            [(ngModel)]="allInOneProductName"
-            class="h-10 rounded-lg border border-gray-300 bg-transparent px-3 text-sm text-gray-800 focus:border-brand-300 focus:outline-none dark:border-gray-700 dark:text-white/90 md:col-span-2"
-          />
-
-          <label class="text-xs font-medium uppercase tracking-wide text-gray-500 dark:text-gray-400">Unit</label>
-          <label class="text-xs font-medium uppercase tracking-wide text-gray-500 dark:text-gray-400">Unit Types</label>
-          <input
-            type="text"
-            [(ngModel)]="allInOneUnit"
-            class="h-10 rounded-lg border border-gray-300 bg-transparent px-3 text-sm text-gray-800 focus:border-brand-300 focus:outline-none dark:border-gray-700 dark:text-white/90"
-          />
-          <div class="space-y-2">
-            <div class="flex flex-wrap gap-2">
-              @for (unitType of allInOneSelectedUnitTypes; track unitType) {
-                <button
-                  type="button"
-                  (click)="toggleAllInOneUnitType(unitType)"
-                  class="inline-flex items-center gap-1 rounded-full border border-brand-300 bg-brand-50 px-3 py-1 text-xs font-medium text-brand-700 transition hover:bg-brand-100 dark:bg-brand-500/10 dark:text-brand-300"
-                >
-                  {{ unitType }}
-                  <span aria-hidden="true">x</span>
-                </button>
-              }
-            </div>
-            <div class="flex flex-wrap gap-2">
-              @for (unitType of availableUnitTypeOptions; track unitType) {
-                @if (!allInOneSelectedUnitTypes.includes(unitType)) {
-                  <button
-                    type="button"
-                    (click)="toggleAllInOneUnitType(unitType)"
-                    class="rounded-full border border-dashed border-gray-300 px-3 py-1 text-xs font-medium text-gray-600 transition hover:bg-gray-50 dark:border-gray-700 dark:text-gray-300 dark:hover:bg-gray-800"
-                  >
-                    + {{ unitType }}
-                  </button>
-                }
-              }
-            </div>
-          </div>
-
-          <label class="inline-flex items-center gap-2 text-sm text-gray-700 dark:text-gray-300 md:col-span-2">
-            <input type="checkbox" [(ngModel)]="allInOneIncludeCapacity" />
-            Include Initial Capacity
-          </label>
-
-          @if (allInOneIncludeCapacity) {
-            <label class="text-xs font-medium uppercase tracking-wide text-gray-500 dark:text-gray-400 md:col-span-2">Capacity</label>
-            <div class="space-y-2 md:col-span-2">
-              <div class="flex flex-wrap gap-2">
-                @for (capacity of allInOneSelectedCapacities; track capacity) {
-                  <button
-                    type="button"
-                    (click)="toggleAllInOneCapacity(capacity)"
-                    class="inline-flex items-center gap-1 rounded-full border border-brand-300 bg-brand-50 px-3 py-1 text-xs font-medium text-brand-700 transition hover:bg-brand-100 dark:bg-brand-500/10 dark:text-brand-300"
-                  >
-                    {{ capacity }}
-                    <span aria-hidden="true">x</span>
-                  </button>
-                }
-              </div>
-              <div class="flex flex-wrap gap-2">
-                @for (option of availableCapacityOptions; track option) {
-                  @if (!allInOneSelectedCapacities.includes(option)) {
-                    <button
-                      type="button"
-                      (click)="toggleAllInOneCapacity(option)"
-                      class="rounded-full border border-dashed border-gray-300 px-3 py-1 text-xs font-medium text-gray-600 transition hover:bg-gray-50 dark:border-gray-700 dark:text-gray-300 dark:hover:bg-gray-800"
-                    >
-                      + {{ option }}
-                    </button>
-                  }
-                }
-              </div>
-            </div>
-
-            <div class="space-y-3 md:col-span-2">
-              @for (capacity of allInOneSelectedCapacities; track capacity) {
-                <div class="rounded-lg border border-gray-200 p-3 dark:border-gray-700">
-                  <p class="text-xs font-semibold uppercase tracking-wide text-gray-500 dark:text-gray-400">{{ capacity }}</p>
-                  <div class="mt-2 grid grid-cols-1 gap-3 md:grid-cols-2">
-                    <div>
-                      <label class="text-xs font-medium uppercase tracking-wide text-gray-500 dark:text-gray-400">SRP</label>
-                      <input type="number" min="0" [(ngModel)]="allInOneCapacityDetails[capacity].srp" class="h-10 w-full rounded-lg border border-gray-300 bg-transparent px-3 text-sm text-gray-800 focus:border-brand-300 focus:outline-none dark:border-gray-700 dark:text-white/90" />
-                    </div>
-                    <div>
-                      <label class="text-xs font-medium uppercase tracking-wide text-gray-500 dark:text-gray-400">Net Price</label>
-                      <input type="number" min="0" [(ngModel)]="allInOneCapacityDetails[capacity].netPrice" class="h-10 w-full rounded-lg border border-gray-300 bg-transparent px-3 text-sm text-gray-800 focus:border-brand-300 focus:outline-none dark:border-gray-700 dark:text-white/90" />
-                    </div>
-
-                    <div>
-                      <label class="text-xs font-medium uppercase tracking-wide text-gray-500 dark:text-gray-400">Cash Price</label>
-                      <input type="number" min="0" [(ngModel)]="allInOneCapacityDetails[capacity].cashPrice" class="h-10 w-full rounded-lg border border-gray-300 bg-transparent px-3 text-sm text-gray-800 focus:border-brand-300 focus:outline-none dark:border-gray-700 dark:text-white/90" />
-                    </div>
-                    <div>
-                      <label class="text-xs font-medium uppercase tracking-wide text-gray-500 dark:text-gray-400">CC Price</label>
-                      <input type="number" min="0" [(ngModel)]="allInOneCapacityDetails[capacity].ccPrice" class="h-10 w-full rounded-lg border border-gray-300 bg-transparent px-3 text-sm text-gray-800 focus:border-brand-300 focus:outline-none dark:border-gray-700 dark:text-white/90" />
-                    </div>
-
-                    <div>
-                      <label class="text-xs font-medium uppercase tracking-wide text-gray-500 dark:text-gray-400">Unit Price</label>
-                      <input type="number" min="0" [(ngModel)]="allInOneCapacityDetails[capacity].unitPrice" class="h-10 w-full rounded-lg border border-gray-300 bg-transparent px-3 text-sm text-gray-800 focus:border-brand-300 focus:outline-none dark:border-gray-700 dark:text-white/90" />
-                    </div>
-                    <div>
-                      <label class="text-xs font-medium uppercase tracking-wide text-gray-500 dark:text-gray-400">Indoor Model</label>
-                      <input type="text" [(ngModel)]="allInOneCapacityDetails[capacity].indoorModel" class="h-10 w-full rounded-lg border border-gray-300 bg-transparent px-3 text-sm text-gray-800 focus:border-brand-300 focus:outline-none dark:border-gray-700 dark:text-white/90" />
-                    </div>
-
-                    <div>
-                      <label class="text-xs font-medium uppercase tracking-wide text-gray-500 dark:text-gray-400">Outdoor Model</label>
-                      <input type="text" [(ngModel)]="allInOneCapacityDetails[capacity].outdoorModel" class="h-10 w-full rounded-lg border border-gray-300 bg-transparent px-3 text-sm text-gray-800 focus:border-brand-300 focus:outline-none dark:border-gray-700 dark:text-white/90" />
-                    </div>
-                  </div>
-                </div>
-              }
-            </div>
-          }
-        }
-      </div>
-    }
-
-    @if (creationFormMode === 'brand-only') {
-      <div class="grid grid-cols-1 gap-3">
-        <label class="text-xs font-medium uppercase tracking-wide text-gray-500 dark:text-gray-400">Brand Name</label>
-        <input
-          type="text"
-          [(ngModel)]="createBrandName"
-          class="h-10 rounded-lg border border-gray-300 bg-transparent px-3 text-sm text-gray-800 focus:border-brand-300 focus:outline-none dark:border-gray-700 dark:text-white/90"
-        />
-      </div>
-    }
-
-    @if (creationFormMode === 'product-capacity') {
-      <div class="grid grid-cols-1 gap-3 md:grid-cols-2">
-        <label class="text-xs font-medium uppercase tracking-wide text-gray-500 dark:text-gray-400 md:col-span-2">Brand</label>
-        <select
-          [(ngModel)]="productFormBrandName"
-          class="h-10 rounded-lg border border-gray-300 bg-transparent px-3 text-sm text-gray-800 focus:border-brand-300 focus:outline-none dark:border-gray-700 dark:text-white/90 md:col-span-2"
-        >
-          <option value="" disabled>Select brand</option>
-          @for (brand of brandFolders; track brand.name) {
-            <option [value]="brand.name">{{ brand.name }}</option>
-          }
-        </select>
-
-        <label class="text-xs font-medium uppercase tracking-wide text-gray-500 dark:text-gray-400 md:col-span-2">Product Name</label>
-        <input
-          type="text"
-          [(ngModel)]="productFormProductName"
-          class="h-10 rounded-lg border border-gray-300 bg-transparent px-3 text-sm text-gray-800 focus:border-brand-300 focus:outline-none dark:border-gray-700 dark:text-white/90 md:col-span-2"
-        />
-
-        <label class="text-xs font-medium uppercase tracking-wide text-gray-500 dark:text-gray-400">Unit</label>
-        <label class="text-xs font-medium uppercase tracking-wide text-gray-500 dark:text-gray-400">Unit Types</label>
-        <input
-          type="text"
-          [(ngModel)]="productFormUnit"
-          class="h-10 rounded-lg border border-gray-300 bg-transparent px-3 text-sm text-gray-800 focus:border-brand-300 focus:outline-none dark:border-gray-700 dark:text-white/90"
-        />
-        <div class="space-y-2">
-          <div class="flex flex-wrap gap-2">
-            @for (unitType of productFormSelectedUnitTypes; track unitType) {
-              <button
-                type="button"
-                (click)="toggleProductFormUnitType(unitType)"
-                class="inline-flex items-center gap-1 rounded-full border border-brand-300 bg-brand-50 px-3 py-1 text-xs font-medium text-brand-700 transition hover:bg-brand-100 dark:bg-brand-500/10 dark:text-brand-300"
-              >
-                {{ unitType }}
-                <span aria-hidden="true">x</span>
-              </button>
-            }
-          </div>
-          <div class="flex flex-wrap gap-2">
-            @for (unitType of availableUnitTypeOptions; track unitType) {
-              @if (!productFormSelectedUnitTypes.includes(unitType)) {
-                <button
-                  type="button"
-                  (click)="toggleProductFormUnitType(unitType)"
-                  class="rounded-full border border-dashed border-gray-300 px-3 py-1 text-xs font-medium text-gray-600 transition hover:bg-gray-50 dark:border-gray-700 dark:text-gray-300 dark:hover:bg-gray-800"
-                >
-                  + {{ unitType }}
-                </button>
-              }
-            }
-          </div>
-        </div>
-
-        <label class="inline-flex items-center gap-2 text-sm text-gray-700 dark:text-gray-300 md:col-span-2">
-          <input type="checkbox" [(ngModel)]="productFormIncludeCapacity" />
-          Include Initial Capacity
-        </label>
-
-        @if (productFormIncludeCapacity) {
-          <label class="text-xs font-medium uppercase tracking-wide text-gray-500 dark:text-gray-400 md:col-span-2">Capacity</label>
-          <div class="space-y-2 md:col-span-2">
-            <div class="flex flex-wrap gap-2">
-              @for (capacity of productFormSelectedCapacities; track capacity) {
-                <button
-                  type="button"
-                  (click)="toggleProductFormCapacity(capacity)"
-                  class="inline-flex items-center gap-1 rounded-full border border-brand-300 bg-brand-50 px-3 py-1 text-xs font-medium text-brand-700 transition hover:bg-brand-100 dark:bg-brand-500/10 dark:text-brand-300"
-                >
-                  {{ capacity }}
-                  <span aria-hidden="true">x</span>
-                </button>
-              }
-            </div>
-            <div class="flex flex-wrap gap-2">
-              @for (option of availableCapacityOptions; track option) {
-                @if (!productFormSelectedCapacities.includes(option)) {
-                  <button
-                    type="button"
-                    (click)="toggleProductFormCapacity(option)"
-                    class="rounded-full border border-dashed border-gray-300 px-3 py-1 text-xs font-medium text-gray-600 transition hover:bg-gray-50 dark:border-gray-700 dark:text-gray-300 dark:hover:bg-gray-800"
-                  >
-                    + {{ option }}
-                  </button>
-                }
-              }
-            </div>
-          </div>
-
-          <div class="space-y-3 md:col-span-2">
-            @for (capacity of productFormSelectedCapacities; track capacity) {
-              <div class="rounded-lg border border-gray-200 p-3 dark:border-gray-700">
-                <p class="text-xs font-semibold uppercase tracking-wide text-gray-500 dark:text-gray-400">{{ capacity }}</p>
-                <div class="mt-2 grid grid-cols-1 gap-3 md:grid-cols-2">
-                  <div>
-                    <label class="text-xs font-medium uppercase tracking-wide text-gray-500 dark:text-gray-400">SRP</label>
-                    <input type="number" min="0" [(ngModel)]="productFormCapacityDetails[capacity].srp" class="h-10 w-full rounded-lg border border-gray-300 bg-transparent px-3 text-sm text-gray-800 focus:border-brand-300 focus:outline-none dark:border-gray-700 dark:text-white/90" />
-                  </div>
-                  <div>
-                    <label class="text-xs font-medium uppercase tracking-wide text-gray-500 dark:text-gray-400">Net Price</label>
-                    <input type="number" min="0" [(ngModel)]="productFormCapacityDetails[capacity].netPrice" class="h-10 w-full rounded-lg border border-gray-300 bg-transparent px-3 text-sm text-gray-800 focus:border-brand-300 focus:outline-none dark:border-gray-700 dark:text-white/90" />
-                  </div>
-
-                  <div>
-                    <label class="text-xs font-medium uppercase tracking-wide text-gray-500 dark:text-gray-400">Cash Price</label>
-                    <input type="number" min="0" [(ngModel)]="productFormCapacityDetails[capacity].cashPrice" class="h-10 w-full rounded-lg border border-gray-300 bg-transparent px-3 text-sm text-gray-800 focus:border-brand-300 focus:outline-none dark:border-gray-700 dark:text-white/90" />
-                  </div>
-                  <div>
-                    <label class="text-xs font-medium uppercase tracking-wide text-gray-500 dark:text-gray-400">CC Price</label>
-                    <input type="number" min="0" [(ngModel)]="productFormCapacityDetails[capacity].ccPrice" class="h-10 w-full rounded-lg border border-gray-300 bg-transparent px-3 text-sm text-gray-800 focus:border-brand-300 focus:outline-none dark:border-gray-700 dark:text-white/90" />
-                  </div>
-
-                  <div>
-                    <label class="text-xs font-medium uppercase tracking-wide text-gray-500 dark:text-gray-400">Unit Price</label>
-                    <input type="number" min="0" [(ngModel)]="productFormCapacityDetails[capacity].unitPrice" class="h-10 w-full rounded-lg border border-gray-300 bg-transparent px-3 text-sm text-gray-800 focus:border-brand-300 focus:outline-none dark:border-gray-700 dark:text-white/90" />
-                  </div>
-                  <div>
-                    <label class="text-xs font-medium uppercase tracking-wide text-gray-500 dark:text-gray-400">Indoor Model</label>
-                    <input type="text" [(ngModel)]="productFormCapacityDetails[capacity].indoorModel" class="h-10 w-full rounded-lg border border-gray-300 bg-transparent px-3 text-sm text-gray-800 focus:border-brand-300 focus:outline-none dark:border-gray-700 dark:text-white/90" />
-                  </div>
-
-                  <div>
-                    <label class="text-xs font-medium uppercase tracking-wide text-gray-500 dark:text-gray-400">Outdoor Model</label>
-                    <input type="text" [(ngModel)]="productFormCapacityDetails[capacity].outdoorModel" class="h-10 w-full rounded-lg border border-gray-300 bg-transparent px-3 text-sm text-gray-800 focus:border-brand-300 focus:outline-none dark:border-gray-700 dark:text-white/90" />
-                  </div>
-                </div>
-              </div>
-            }
-          </div>
-        }
-      </div>
-    }
-
-    @if (creationFormMode === 'capacity-only') {
-      <div class="grid grid-cols-1 gap-3 md:grid-cols-2">
-        <label class="text-xs font-medium uppercase tracking-wide text-gray-500 dark:text-gray-400 md:col-span-2">Brand</label>
-        <div class="h-10 rounded-lg border border-gray-200 bg-gray-50 px-3 text-sm font-medium text-gray-800 dark:border-gray-700 dark:bg-gray-800 dark:text-white/90 md:col-span-2 flex items-center">
-          {{ selectedBrandName || 'No brand selected' }}
-        </div>
-
-        <label class="text-xs font-medium uppercase tracking-wide text-gray-500 dark:text-gray-400 md:col-span-2">Product</label>
-        <div class="h-10 rounded-lg border border-gray-200 bg-gray-50 px-3 text-sm font-medium text-gray-800 dark:border-gray-700 dark:bg-gray-800 dark:text-white/90 md:col-span-2 flex items-center">
-          {{ selectedProduct?.name || 'No product selected' }}
-        </div>
-
-        <label class="text-xs font-medium uppercase tracking-wide text-gray-500 dark:text-gray-400 md:col-span-2">Capacities</label>
-        <div class="space-y-2 md:col-span-2">
-          <div class="flex flex-wrap gap-2">
-            @for (capacity of capacityOnlySelectedCapacities; track capacity) {
-              <button
-                type="button"
-                (click)="toggleCapacityOnly(capacity)"
-                class="inline-flex items-center gap-1 rounded-full border border-brand-300 bg-brand-50 px-3 py-1 text-xs font-medium text-brand-700 transition hover:bg-brand-100 dark:bg-brand-500/10 dark:text-brand-300"
-              >
-                {{ capacity }}
-                <span aria-hidden="true">x</span>
-              </button>
-            }
-          </div>
-          <div class="flex flex-wrap gap-2">
-            @for (option of availableCapacityOptions; track option) {
-              @if (!capacityOnlySelectedCapacities.includes(option)) {
-                <button
-                  type="button"
-                  (click)="toggleCapacityOnly(option)"
-                  class="rounded-full border border-dashed border-gray-300 px-3 py-1 text-xs font-medium text-gray-600 transition hover:bg-gray-50 dark:border-gray-700 dark:text-gray-300 dark:hover:bg-gray-800"
-                >
-                  + {{ option }}
-                </button>
-              }
-            }
-          </div>
-        </div>
-
-        <div class="space-y-3 md:col-span-2">
-          @for (capacity of capacityOnlySelectedCapacities; track capacity) {
-            <div class="rounded-lg border border-gray-200 p-3 dark:border-gray-700">
-              <p class="text-xs font-semibold uppercase tracking-wide text-gray-500 dark:text-gray-400">{{ capacity }}</p>
-              <div class="mt-2 grid grid-cols-1 gap-3 md:grid-cols-2">
-                <div>
-                  <label class="text-xs font-medium uppercase tracking-wide text-gray-500 dark:text-gray-400">SRP</label>
-                  <input type="number" min="0" [(ngModel)]="capacityOnlyDetails[capacity].srp" class="h-10 w-full rounded-lg border border-gray-300 bg-transparent px-3 text-sm text-gray-800 focus:border-brand-300 focus:outline-none dark:border-gray-700 dark:text-white/90" />
-                </div>
-                <div>
-                  <label class="text-xs font-medium uppercase tracking-wide text-gray-500 dark:text-gray-400">Net Price</label>
-                  <input type="number" min="0" [(ngModel)]="capacityOnlyDetails[capacity].netPrice" class="h-10 w-full rounded-lg border border-gray-300 bg-transparent px-3 text-sm text-gray-800 focus:border-brand-300 focus:outline-none dark:border-gray-700 dark:text-white/90" />
-                </div>
-
-                <div>
-                  <label class="text-xs font-medium uppercase tracking-wide text-gray-500 dark:text-gray-400">Cash Price</label>
-                  <input type="number" min="0" [(ngModel)]="capacityOnlyDetails[capacity].cashPrice" class="h-10 w-full rounded-lg border border-gray-300 bg-transparent px-3 text-sm text-gray-800 focus:border-brand-300 focus:outline-none dark:border-gray-700 dark:text-white/90" />
-                </div>
-                <div>
-                  <label class="text-xs font-medium uppercase tracking-wide text-gray-500 dark:text-gray-400">CC Price</label>
-                  <input type="number" min="0" [(ngModel)]="capacityOnlyDetails[capacity].ccPrice" class="h-10 w-full rounded-lg border border-gray-300 bg-transparent px-3 text-sm text-gray-800 focus:border-brand-300 focus:outline-none dark:border-gray-700 dark:text-white/90" />
-                </div>
-
-                <div>
-                  <label class="text-xs font-medium uppercase tracking-wide text-gray-500 dark:text-gray-400">Unit Price</label>
-                  <input type="number" min="0" [(ngModel)]="capacityOnlyDetails[capacity].unitPrice" class="h-10 w-full rounded-lg border border-gray-300 bg-transparent px-3 text-sm text-gray-800 focus:border-brand-300 focus:outline-none dark:border-gray-700 dark:text-white/90" />
-                </div>
-                <div>
-                  <label class="text-xs font-medium uppercase tracking-wide text-gray-500 dark:text-gray-400">Indoor Model</label>
-                  <input type="text" [(ngModel)]="capacityOnlyDetails[capacity].indoorModel" class="h-10 w-full rounded-lg border border-gray-300 bg-transparent px-3 text-sm text-gray-800 focus:border-brand-300 focus:outline-none dark:border-gray-700 dark:text-white/90" />
-                </div>
-
-                <div>
-                  <label class="text-xs font-medium uppercase tracking-wide text-gray-500 dark:text-gray-400">Outdoor Model</label>
-                  <input type="text" [(ngModel)]="capacityOnlyDetails[capacity].outdoorModel" class="h-10 w-full rounded-lg border border-gray-300 bg-transparent px-3 text-sm text-gray-800 focus:border-brand-300 focus:outline-none dark:border-gray-700 dark:text-white/90" />
-                </div>
-              </div>
-            </div>
-          }
-        </div>
-      </div>
-    }
-
-    @if (creationError) {
-      <p class="mt-3 text-xs text-error-600 dark:text-error-400">{{ creationError }}</p>
-    }
-    @if (creationSuccess) {
-      <p class="mt-3 text-xs text-success-600 dark:text-success-400">{{ creationSuccess }}</p>
-    }
-
-    <div class="mt-4 flex items-center justify-end gap-2 border-t border-gray-200 pt-4 dark:border-gray-800">
-      <button
-        type="button"
-        (click)="closeCreationDrawer()"
-        class="rounded-lg border border-gray-300 px-4 py-2 text-sm text-gray-700 dark:border-gray-700 dark:text-gray-300"
+        class="rounded-md border border-gray-300 bg-white px-4 py-2 text-sm font-medium text-gray-700 hover:bg-gray-50 dark:border-gray-600 dark:bg-gray-700 dark:text-gray-300 dark:hover:bg-gray-600 transition-colors"
+        (click)="cancelDelete()"
+        [disabled]="isDeleting"
       >
         Cancel
       </button>
       <button
         type="button"
-        (click)="submitCreationForm()"
-        [disabled]="isSubmittingCreation"
-        class="rounded-lg bg-brand-500 px-4 py-2 text-sm font-medium text-white hover:bg-brand-600 disabled:cursor-not-allowed disabled:opacity-60"
+        class="rounded-md bg-red-600 px-4 py-2 text-sm font-medium text-white hover:bg-red-700 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
+        (click)="confirmDelete()"
+        [disabled]="isDeleting"
       >
-        {{ isSubmittingCreation ? 'Saving...' : 'Submit' }}
+        <span *ngIf="!isDeleting">Delete</span>
+        <span *ngIf="isDeleting" class="flex items-center gap-2">
+          <svg class="animate-spin h-4 w-4" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
+            <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
+            <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z"></path>
+          </svg>
+          Deleting...
+        </span>
       </button>
     </div>
-  </aside>
-
-  <app-entity-edit-modal
-    [isOpen]="isEditModalOpen"
-    [title]="editModalTitle"
-    [description]="editModalDescription"
-    [fields]="editModalFields"
-    [initialValues]="editModalInitialValues"
-    [submitLabel]="editModalSubmitLabel"
-    [isSubmitting]="isEditModalSubmitting"
-    (close)="closeEditModal()"
-    (save)="onEditModalSave($event)"
-  />
+  </div>
 </div>
 
-<!-- Bulk Upload Modal -->
-@if (isBulkUploadModalOpen) {
-  <div class="fixed inset-0 z-100000 flex items-center justify-center bg-black/50 p-4">
-    <div class="flex max-h-[90vh] w-full max-w-4xl flex-col rounded-xl bg-white shadow-xl dark:bg-gray-900">
+<!-- History Modal -->
+<div
+  *ngIf="isHistoryModalOpen"
+  class="fixed inset-0 z-100 flex items-center justify-center"
+>
+  <!-- Backdrop -->
+  <div
+    class="absolute inset-0 bg-black/50"
+    (click)="closeHistoryModal()"
+  ></div>
 
-      <div class="flex items-center justify-between border-b border-gray-200 px-6 py-4 dark:border-gray-700">
-        <div>
-          <h3 class="text-base font-semibold text-gray-800 dark:text-white">Bulk Upload Inventory</h3>
-          <p class="mt-0.5 text-xs text-gray-500 dark:text-gray-400">Upload a CSV with columns: brand, product, unit, unitTypes, capacity, srp, netPrice, cashPrice, ccPrice, unitPrice, indoorModel, outdoorModel</p>
+  <!-- Modal -->
+  <div class="relative z-10 w-full max-w-4xl max-h-[85vh] rounded-lg border border-gray-200 bg-white shadow-xl dark:border-gray-700 dark:bg-gray-800 flex flex-col">
+    <!-- Header -->
+    <div class="flex items-center justify-between border-b border-gray-200 dark:border-gray-700 px-6 py-4 shrink-0">
+      <h3 class="text-lg font-semibold text-gray-900 dark:text-gray-100">
+        History — {{ historyMaterialName }}
+      </h3>
+      <button
+        type="button"
+        class="rounded-md p-1.5 text-gray-400 hover:text-gray-600 hover:bg-gray-100 dark:hover:text-gray-300 dark:hover:bg-gray-700 transition-colors"
+        (click)="closeHistoryModal()"
+        aria-label="Close history modal"
+      >
+        <svg class="h-5 w-5" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20" fill="currentColor">
+          <path d="M6.28 5.22a.75.75 0 00-1.06 1.06L8.94 10l-3.72 3.72a.75.75 0 101.06 1.06L10 11.06l3.72 3.72a.75.75 0 101.06-1.06L11.06 10l3.72-3.72a.75.75 0 00-1.06-1.06L10 8.94 6.28 5.22z" />
+        </svg>
+      </button>
+    </div>
+
+    <!-- Body (scrollable) -->
+    <div class="flex-1 overflow-y-auto px-6 py-4">
+      <!-- Loading state -->
+      <div *ngIf="isHistoryLoading" class="flex items-center justify-center py-12">
+        <div class="flex items-center gap-2 text-sm text-gray-400 dark:text-gray-500">
+          <svg class="animate-spin h-4 w-4" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
+            <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
+            <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z"></path>
+          </svg>
+          <span>Loading history...</span>
         </div>
-        <button type="button" (click)="closeBulkUploadModal()" class="text-gray-400 hover:text-gray-600 dark:hover:text-gray-200">
-          <svg class="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"/></svg>
-        </button>
       </div>
 
-      <div class="border-b border-gray-200 px-6 py-4 dark:border-gray-700">
-        <input type="file" id="bulkUploadFileInput" accept=".csv,.txt,.xlsx,.xls" class="hidden" (change)="onBulkUploadFileSelected($event)" />
-        @if (bulkUploadPreviewRows.length === 0 && !bulkUploadResults) {
-          <div class="flex flex-col items-center gap-3 rounded-lg border-2 border-dashed border-gray-300 py-8 dark:border-gray-600">
-            <svg class="h-10 w-10 text-gray-400" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M9 13h6m-3-3v6m5 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z"/></svg>
-            <p class="text-sm text-gray-500 dark:text-gray-400">Upload a CSV or Excel file with product inventory data</p>
-            <div class="flex flex-wrap items-center justify-center gap-2">
-              <button type="button" (click)="downloadBulkUploadTemplate()"
-                class="rounded-lg border border-gray-300 px-4 py-2 text-sm font-medium text-gray-700 transition hover:bg-gray-50 dark:border-gray-600 dark:text-gray-300 dark:hover:bg-gray-800">
-                Template (CSV)
-              </button>
-              <button type="button" (click)="downloadBulkUploadTemplateExcel()"
-                class="rounded-lg border border-gray-300 px-4 py-2 text-sm font-medium text-gray-700 transition hover:bg-gray-50 dark:border-gray-600 dark:text-gray-300 dark:hover:bg-gray-800">
-                Template (Excel)
-              </button>
-              <button type="button" (click)="triggerBulkUploadFileInput()" [disabled]="isBulkUploadParsing"
-                class="rounded-lg border border-brand-300 bg-brand-500 px-4 py-2 text-sm font-medium text-white hover:bg-brand-600 disabled:opacity-60">
-                {{ isBulkUploadParsing ? 'Processing...' : 'Choose File' }}
-              </button>
-            </div>
-          </div>
-        }
-
-        @if (bulkUploadError) {
-          <p class="mt-2 text-xs text-error-600 dark:text-error-400">{{ bulkUploadError }}</p>
-        }
-        @if (bulkUploadSuccess) {
-          <p class="mt-2 text-xs text-success-600 dark:text-success-400">{{ bulkUploadSuccess }}</p>
-        }
-
-        @if (bulkUploadSummary) {
-          <div class="mt-3 grid grid-cols-2 gap-3 sm:grid-cols-4">
-            <div class="rounded-lg border border-gray-200 p-3 text-center dark:border-gray-700">
-              <p class="text-2xl font-bold text-gray-800 dark:text-white">{{ bulkUploadSummary.total }}</p>
-              <p class="mt-1 text-xs text-gray-500">Total Rows</p>
-            </div>
-            <div class="rounded-lg border border-success-200 bg-success-50 p-3 text-center dark:border-success-800 dark:bg-success-900/20">
-              <p class="text-2xl font-bold text-success-600 dark:text-success-400">{{ bulkUploadSummary.created }}</p>
-              <p class="mt-1 text-xs text-gray-500">Created</p>
-            </div>
-            <div class="rounded-lg border border-warning-200 bg-warning-50 p-3 text-center dark:border-warning-800 dark:bg-warning-900/20">
-              <p class="text-2xl font-bold text-warning-600 dark:text-warning-400">{{ bulkUploadSummary.skipped }}</p>
-              <p class="mt-1 text-xs text-gray-500">Skipped</p>
-            </div>
-            <div class="rounded-lg border border-error-200 bg-error-50 p-3 text-center dark:border-error-800 dark:bg-error-900/20">
-              <p class="text-2xl font-bold text-error-600 dark:text-error-400">{{ bulkUploadSummary.failed }}</p>
-              <p class="mt-1 text-xs text-gray-500">Failed</p>
-            </div>
-          </div>
-        }
+      <!-- Error state -->
+      <div *ngIf="historyError && !isHistoryLoading" class="flex items-center justify-center py-12">
+        <p class="text-sm text-red-500 dark:text-red-400">{{ historyError }}</p>
       </div>
 
-      <div class="min-h-0 flex-1 overflow-y-auto px-6 py-3">
-        @if (bulkUploadPreviewRows.length > 0 && !bulkUploadResults) {
-          <p class="mb-2 text-xs font-medium text-gray-500 dark:text-gray-400">Preview ({{ bulkUploadPreviewRows.length }} rows)</p>
-          <div class="overflow-x-auto rounded-lg border border-gray-200 dark:border-gray-700">
-            <table class="w-full text-xs">
+      <!-- History content -->
+      <div *ngIf="!isHistoryLoading && !historyError" class="space-y-6">
+        <!-- Price History Section -->
+        <div>
+          <h4 class="text-sm font-semibold text-gray-700 dark:text-gray-300 mb-3">
+            Price History
+            <span class="ml-2 text-xs font-normal text-gray-400 dark:text-gray-500">(max 100 records)</span>
+          </h4>
+
+          <!-- Empty state -->
+          <p *ngIf="priceHistory.length === 0" class="text-sm text-gray-400 dark:text-gray-500">
+            No price history records found.
+          </p>
+
+          <!-- Price history table -->
+          <div *ngIf="priceHistory.length > 0" class="overflow-x-auto rounded-md border border-gray-200 dark:border-gray-700">
+            <table class="w-full table-auto">
               <thead>
-                <tr class="border-b border-gray-200 bg-gray-50 dark:border-gray-700 dark:bg-gray-800/50">
-                  <th class="px-2 py-2 text-left font-medium text-gray-500">#</th>
-                  <th class="px-2 py-2 text-left font-medium text-gray-500">Brand</th>
-                  <th class="px-2 py-2 text-left font-medium text-gray-500">Product</th>
-                  <th class="px-2 py-2 text-left font-medium text-gray-500">Capacity</th>
-                  <th class="px-2 py-2 text-right font-medium text-gray-500">SRP</th>
-                  <th class="px-2 py-2 text-right font-medium text-gray-500">Net Price</th>
-                  <th class="px-2 py-2 text-left font-medium text-gray-500">Indoor</th>
-                  <th class="px-2 py-2 text-left font-medium text-gray-500">Outdoor</th>
+                <tr class="bg-gray-50 dark:bg-gray-800/50">
+                  <th class="px-3 py-2 text-left text-xs font-medium text-gray-600 dark:text-gray-400">Date</th>
+                  <th class="px-3 py-2 text-right text-xs font-medium text-gray-600 dark:text-gray-400">Unit Price</th>
+                  <th class="px-3 py-2 text-right text-xs font-medium text-gray-600 dark:text-gray-400">Sell Price</th>
                 </tr>
               </thead>
               <tbody>
-                @for (row of bulkUploadPreviewRows; track $index) {
-                  <tr class="border-b border-gray-100 last:border-b-0 dark:border-gray-800">
-                    <td class="px-2 py-1.5 text-gray-500">{{ $index + 1 }}</td>
-                    <td class="px-2 py-1.5 text-gray-700 dark:text-gray-300">{{ row['brand'] || '-' }}</td>
-                    <td class="px-2 py-1.5 text-gray-700 dark:text-gray-300">{{ row['product'] || '-' }}</td>
-                    <td class="px-2 py-1.5 text-gray-700 dark:text-gray-300">{{ row['capacity'] || '-' }}</td>
-                    <td class="px-2 py-1.5 text-right text-gray-700 dark:text-gray-300">{{ row['srp'] || '0' }}</td>
-                    <td class="px-2 py-1.5 text-right text-gray-700 dark:text-gray-300">{{ row['netPrice'] || '0' }}</td>
-                    <td class="px-2 py-1.5 text-gray-700 dark:text-gray-300">{{ row['indoorModel'] || '-' }}</td>
-                    <td class="px-2 py-1.5 text-gray-700 dark:text-gray-300">{{ row['outdoorModel'] || '-' }}</td>
-                  </tr>
-                }
+                <tr
+                  *ngFor="let record of priceHistory"
+                  class="border-t border-gray-100 dark:border-gray-700/50"
+                >
+                  <td class="px-3 py-2 text-sm text-gray-700 dark:text-gray-300">{{ formatDate(record.created_at) }}</td>
+                  <td class="px-3 py-2 text-sm text-right text-gray-700 dark:text-gray-300">{{ record.unit_price | number:'1.2-2' }}</td>
+                  <td class="px-3 py-2 text-sm text-right text-gray-700 dark:text-gray-300">{{ record.sell_price | number:'1.2-2' }}</td>
+                </tr>
               </tbody>
             </table>
           </div>
-        }
-
-        @if (bulkUploadResults) {
-          <p class="mb-2 text-xs font-medium text-gray-500 dark:text-gray-400">Results</p>
-          <div class="space-y-1">
-            @for (result of bulkUploadResults; track result.row) {
-              <div class="flex items-center gap-2 rounded-md border px-3 py-1.5 text-xs"
-                [ngClass]="result.status === 'created' ? 'border-success-200 bg-success-50 dark:border-success-800 dark:bg-success-900/20'
-                  : result.status === 'skipped' ? 'border-warning-200 bg-warning-50 dark:border-warning-800 dark:bg-warning-900/20'
-                  : 'border-error-200 bg-error-50 dark:border-error-800 dark:bg-error-900/20'">
-                <span class="font-medium text-gray-500">Row {{ result.row }}</span>
-                <span class="rounded-full px-2 py-0.5 text-[10px] font-semibold uppercase"
-                  [ngClass]="result.status === 'created' ? 'bg-success-100 text-success-700 dark:bg-success-900/40 dark:text-success-300'
-                    : result.status === 'skipped' ? 'bg-warning-100 text-warning-700 dark:bg-warning-900/40 dark:text-warning-300'
-                    : 'bg-error-100 text-error-700 dark:bg-error-900/40 dark:text-error-300'">
-                  {{ result.status }}
-                </span>
-                <span class="text-gray-600 dark:text-gray-300">{{ result.message }}</span>
-              </div>
-            }
-          </div>
-        }
-      </div>
-
-      <div class="flex items-center justify-between border-t border-gray-200 px-6 py-4 dark:border-gray-700">
-        <div class="flex gap-2">
-          <button type="button" (click)="downloadBulkUploadTemplate()"
-            class="rounded-lg border border-gray-300 px-4 py-2 text-sm font-medium text-gray-700 transition hover:bg-gray-50 dark:border-gray-600 dark:text-gray-300 dark:hover:bg-gray-800">
-            Template (CSV)
-          </button>
-          <button type="button" (click)="downloadBulkUploadTemplateExcel()"
-            class="rounded-lg border border-gray-300 px-4 py-2 text-sm font-medium text-gray-700 transition hover:bg-gray-50 dark:border-gray-600 dark:text-gray-300 dark:hover:bg-gray-800">
-            Template (Excel)
-          </button>
-          @if (bulkUploadResults) {
-            <button type="button" (click)="triggerBulkUploadFileInput()"
-              class="rounded-lg border border-gray-300 px-4 py-2 text-sm font-medium text-gray-600 transition hover:bg-gray-50 dark:border-gray-600 dark:text-gray-300">
-              Upload Another
-            </button>
-          }
         </div>
-        <div class="flex gap-2">
-          <button type="button" (click)="closeBulkUploadModal()"
-            class="rounded-lg border border-gray-300 px-4 py-2 text-sm font-medium text-gray-700 transition hover:bg-gray-50 dark:border-gray-600 dark:text-gray-300">
-            Close
-          </button>
-          @if (bulkUploadPreviewRows.length > 0 && !bulkUploadResults) {
-            <button type="button" (click)="submitBulkUpload()" [disabled]="isBulkUploadSubmitting"
-              class="rounded-lg bg-brand-500 px-4 py-2 text-sm font-medium text-white hover:bg-brand-600 disabled:opacity-60">
-              {{ isBulkUploadSubmitting ? 'Uploading...' : 'Confirm Upload (' + bulkUploadPreviewRows.length + ' rows)' }}
-            </button>
-          }
+
+        <!-- Stock Movements Section -->
+        <div>
+          <h4 class="text-sm font-semibold text-gray-700 dark:text-gray-300 mb-3">
+            Stock Movements
+            <span class="ml-2 text-xs font-normal text-gray-400 dark:text-gray-500">(max 100 records)</span>
+          </h4>
+
+          <!-- Empty state -->
+          <p *ngIf="stockMovements.length === 0" class="text-sm text-gray-400 dark:text-gray-500">
+            No stock movement records found.
+          </p>
+
+          <!-- Stock movements table -->
+          <div *ngIf="stockMovements.length > 0" class="overflow-x-auto rounded-md border border-gray-200 dark:border-gray-700">
+            <table class="w-full table-auto">
+              <thead>
+                <tr class="bg-gray-50 dark:bg-gray-800/50">
+                  <th class="px-3 py-2 text-left text-xs font-medium text-gray-600 dark:text-gray-400">Date</th>
+                  <th class="px-3 py-2 text-left text-xs font-medium text-gray-600 dark:text-gray-400">Type</th>
+                  <th class="px-3 py-2 text-right text-xs font-medium text-gray-600 dark:text-gray-400">Qty</th>
+                  <th class="px-3 py-2 text-left text-xs font-medium text-gray-600 dark:text-gray-400">Source</th>
+                  <th class="px-3 py-2 text-left text-xs font-medium text-gray-600 dark:text-gray-400">Source ID</th>
+                  <th class="px-3 py-2 text-left text-xs font-medium text-gray-600 dark:text-gray-400">Line Key</th>
+                  <th class="px-3 py-2 text-left text-xs font-medium text-gray-600 dark:text-gray-400">Remarks</th>
+                </tr>
+              </thead>
+              <tbody>
+                <tr
+                  *ngFor="let movement of stockMovements"
+                  class="border-t border-gray-100 dark:border-gray-700/50"
+                  [class.bg-amber-50]="isDeficitRecord(movement)"
+                  [class.dark:bg-amber-900/10]="isDeficitRecord(movement)"
+                >
+                  <td class="px-3 py-2 text-sm text-gray-700 dark:text-gray-300">{{ formatDate(movement.created_at) }}</td>
+                  <td class="px-3 py-2 text-sm">
+                    <span
+                      class="inline-flex items-center rounded px-1.5 py-0.5 text-xs font-medium"
+                      [class.bg-green-100]="movement.movement_type === 'IN'"
+                      [class.text-green-700]="movement.movement_type === 'IN'"
+                      [class.dark:bg-green-900/30]="movement.movement_type === 'IN'"
+                      [class.dark:text-green-400]="movement.movement_type === 'IN'"
+                      [class.bg-red-100]="movement.movement_type === 'OUT'"
+                      [class.text-red-700]="movement.movement_type === 'OUT'"
+                      [class.dark:bg-red-900/30]="movement.movement_type === 'OUT'"
+                      [class.dark:text-red-400]="movement.movement_type === 'OUT'"
+                      [class.bg-blue-100]="movement.movement_type === 'ADJUST'"
+                      [class.text-blue-700]="movement.movement_type === 'ADJUST'"
+                      [class.dark:bg-blue-900/30]="movement.movement_type === 'ADJUST'"
+                      [class.dark:text-blue-400]="movement.movement_type === 'ADJUST'"
+                    >
+                      {{ movement.movement_type }}
+                    </span>
+                  </td>
+                  <td class="px-3 py-2 text-sm text-right text-gray-700 dark:text-gray-300">{{ movement.qty }}</td>
+                  <td class="px-3 py-2 text-sm text-gray-700 dark:text-gray-300">{{ movement.source_type }}</td>
+                  <td class="px-3 py-2 text-sm text-gray-700 dark:text-gray-300">{{ movement.source_id }}</td>
+                  <td class="px-3 py-2 text-sm text-gray-700 dark:text-gray-300">{{ movement.source_line_key || '—' }}</td>
+                  <td class="px-3 py-2 text-sm text-gray-700 dark:text-gray-300">
+                    <span *ngIf="!movement.remarks">—</span>
+                    <span
+                      *ngIf="movement.remarks"
+                      [class.font-medium]="isDeficitRecord(movement)"
+                      [class.text-amber-700]="isDeficitRecord(movement)"
+                      [class.dark:text-amber-400]="isDeficitRecord(movement)"
+                    >
+                      {{ movement.remarks }}
+                    </span>
+                  </td>
+                </tr>
+              </tbody>
+            </table>
+          </div>
         </div>
       </div>
     </div>
-  </div>
-}
 
-<!-- CSV Upload Modal -->
-@if (isCsvModalOpen) {
-  <div class="fixed inset-0 z-100000 flex items-center justify-center bg-black/50 p-4">
-    <div class="flex max-h-[90vh] w-full max-w-3xl flex-col rounded-xl bg-white shadow-xl dark:bg-gray-900">
-
-      <!-- Header -->
-      <div class="flex items-center justify-between border-b border-gray-200 px-6 py-4 dark:border-gray-700">
-        <div>
-          <h3 class="text-base font-semibold text-gray-800 dark:text-white">CSV Serial Number Upload</h3>
-          <p class="mt-0.5 text-xs text-gray-500 dark:text-gray-400">CSV format: serialNumber,unitType,status</p>
-        </div>
-        <button type="button" (click)="closeCsvModal()" class="text-gray-400 hover:text-gray-600 dark:hover:text-gray-200">
-          <svg class="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"/></svg>
+    <!-- Footer -->
+    <div class="border-t border-gray-200 dark:border-gray-700 px-6 py-4 shrink-0">
+      <div class="flex justify-end">
+        <button
+          type="button"
+          class="rounded-md border border-gray-300 bg-white px-4 py-2 text-sm font-medium text-gray-700 hover:bg-gray-50 dark:border-gray-600 dark:bg-gray-700 dark:text-gray-300 dark:hover:bg-gray-600 transition-colors"
+          (click)="closeHistoryModal()"
+        >
+          Close
         </button>
       </div>
-
-      <!-- Upload area -->
-      <div class="border-b border-gray-200 px-6 py-4 dark:border-gray-700">
-        <input type="file" id="csvFileInput" accept=".csv,.txt" class="hidden" (change)="onCsvFileSelected($event)" />
-        @if (!csvPreviewResult) {
-          <div class="flex flex-col items-center gap-3 rounded-lg border-2 border-dashed border-gray-300 py-8 dark:border-gray-600">
-            <svg class="h-10 w-10 text-gray-400" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M9 13h6m-3-3v6m5 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z"/></svg>
-            <p class="text-sm text-gray-500 dark:text-gray-400">Format: serialNumber,unitType,status (one per line)</p>
-            <div class="flex flex-wrap items-center justify-center gap-2">
-              <button type="button" (click)="downloadCsvTemplate()"
-                class="rounded-lg border border-gray-300 px-4 py-2 text-sm font-medium text-gray-700 transition hover:bg-gray-50 dark:border-gray-600 dark:text-gray-300 dark:hover:bg-gray-800">
-                Download Template
-              </button>
-              <button type="button" (click)="triggerCsvFileInput()" [disabled]="isCsvParsing"
-                class="rounded-lg border border-brand-300 bg-brand-500 px-4 py-2 text-sm font-medium text-white hover:bg-brand-600 disabled:opacity-60">
-                {{ isCsvParsing ? 'Processing...' : 'Choose CSV File' }}
-              </button>
-            </div>
-          </div>
-        } @else {
-          <!-- Summary cards -->
-          <div class="grid grid-cols-2 gap-3 sm:grid-cols-4">
-            <div class="cursor-pointer rounded-lg border-2 p-3 text-center transition"
-              [ngClass]="csvModalTab === 'will-install' ? 'border-success-400 bg-success-50 dark:bg-success-900/20' : 'border-gray-200 dark:border-gray-700'"
-              (click)="csvModalTab = 'will-install'">
-              <p class="text-2xl font-bold text-success-600 dark:text-success-400">{{ csvPreviewResult.summary.toInstall }}</p>
-              <p class="mt-1 text-xs text-gray-600 dark:text-gray-300">To Install</p>
-            </div>
-            <div class="cursor-pointer rounded-lg border-2 p-3 text-center transition"
-              [ngClass]="csvModalTab === 'already-installed' ? 'border-brand-400 bg-brand-50 dark:bg-brand-900/20' : 'border-gray-200 dark:border-gray-700'"
-              (click)="csvModalTab = 'already-installed'">
-              <p class="text-2xl font-bold text-brand-600 dark:text-brand-400">{{ csvPreviewResult.summary.alreadyInstalled }}</p>
-              <p class="mt-1 text-xs text-gray-600 dark:text-gray-300">Already Installed</p>
-            </div>
-            <div class="cursor-pointer rounded-lg border-2 p-3 text-center transition"
-              [ngClass]="csvModalTab === 'not-found' ? 'border-error-400 bg-error-50 dark:bg-error-900/20' : 'border-gray-200 dark:border-gray-700'"
-              (click)="csvModalTab = 'not-found'">
-              <p class="text-2xl font-bold text-error-600 dark:text-error-400">{{ csvPreviewResult.summary.notFound }}</p>
-              <p class="mt-1 text-xs text-gray-600 dark:text-gray-300">Not Found</p>
-            </div>
-            <div class="cursor-pointer rounded-lg border-2 p-3 text-center transition"
-              [ngClass]="csvModalTab === 'other' ? 'border-warning-400 bg-warning-50 dark:bg-warning-900/20' : 'border-gray-200 dark:border-gray-700'"
-              (click)="csvModalTab = 'other'">
-              <p class="text-2xl font-bold text-warning-600 dark:text-warning-400">{{ csvPreviewResult.summary.otherStatus }}</p>
-              <p class="mt-1 text-xs text-gray-600 dark:text-gray-300">Other Status</p>
-            </div>
-          </div>
-          <p class="mt-2 text-xs text-gray-500 dark:text-gray-400">Total in CSV: {{ csvPreviewResult!.summary.total }} serials</p>
-          <div class="mt-2 flex flex-wrap gap-3 text-xs">
-            <span class="rounded bg-gray-100 px-2 py-1 dark:bg-gray-800">
-              <span class="font-medium text-gray-700 dark:text-gray-200">Total Sets:</span>
-              <span class="ml-1 text-gray-600 dark:text-gray-300">{{ csvPreviewResult!.summary.totalSets }}</span>
-            </span>
-            <span class="rounded bg-gray-100 px-2 py-1 dark:bg-gray-800">
-              <span class="font-medium text-gray-700 dark:text-gray-200">Remaining Stocks:</span>
-              <span class="ml-1 text-gray-600 dark:text-gray-300">{{ csvPreviewResult!.summary.remainingStocks }}</span>
-            </span>
-            @for (entry of (csvPreviewResult!.summary.unitTypeCounts | keyvalue); track entry.key) {
-              <span class="rounded bg-brand-50 px-2 py-1 dark:bg-brand-900/20">
-                <span class="font-medium uppercase text-brand-700 dark:text-brand-300">{{ entry.key }}:</span>
-                <span class="ml-1 text-brand-600 dark:text-brand-400">{{ entry.value }}</span>
-              </span>
-            }
-          </div>
-        }
-        @if (csvConfirmError) {
-          <p class="mt-2 text-xs text-error-600 dark:text-error-400">{{ csvConfirmError }}</p>
-        }
-        @if (csvConfirmMessage) {
-          <p class="mt-2 text-xs text-success-600 dark:text-success-400">{{ csvConfirmMessage }}</p>
-        }
-      </div>
-
-      <!-- Detail list -->
-      @if (csvPreviewResult) {
-        <div class="min-h-0 flex-1 overflow-y-auto px-6 py-3">
-          @if (csvModalTab === 'will-install') {
-            <div class="mb-3 flex flex-wrap items-center gap-3">
-              <p class="text-xs font-medium text-gray-500 dark:text-gray-400">CSV status = installed but not yet in DB. Move to:</p>
-              <select [(ngModel)]="csvToInstallTargetStatus" class="rounded border border-gray-300 px-2 py-1 text-xs dark:border-gray-600 dark:bg-gray-800">
-                <option value="installed">installed</option>
-                <option value="in-stock">in-stock</option>
-                <option value="reserved">reserved</option>
-              </select>
-              <button type="button" (click)="confirmCsvInstall()" [disabled]="isCsvConfirming || csvPreviewResult!.toInstall.length === 0"
-                class="rounded-lg border border-success-300 bg-success-500 px-3 py-1.5 text-xs font-medium text-white hover:bg-success-600 disabled:opacity-60">
-                {{ isCsvConfirming ? 'Updating...' : 'Apply to ' + csvPreviewResult!.toInstall.length + ' Serials' }}
-              </button>
-            </div>
-            @if (csvPreviewResult.toInstall.length === 0) {
-              <p class="text-sm text-gray-400">None</p>
-            }
-            <div class="grid grid-cols-1 gap-1.5 sm:grid-cols-2">
-              @for (s of csvPreviewResult.toInstall; track s.serialNumber) {
-                <div class="rounded border border-success-200 bg-success-50 px-3 py-1.5 dark:border-success-800 dark:bg-success-900/20">
-                  <p class="text-xs font-medium text-success-800 dark:text-success-300">{{ s.serialNumber }}</p>
-                  <p class="text-[11px] text-gray-500">{{ s.productName }} {{ s.capacityName }}<span class="ml-1 font-medium uppercase">{{ s.unitType }}</span></p>
-                </div>
-              }
-            </div>
-          }
-          @if (csvModalTab === 'already-installed') {
-            <div class="mb-3 flex flex-wrap items-center gap-3">
-              <p class="text-xs font-medium text-gray-500 dark:text-gray-400">Already installed in DB. Revert to:</p>
-              <select [(ngModel)]="csvAlreadyInstalledTargetStatus" class="rounded border border-gray-300 px-2 py-1 text-xs dark:border-gray-600 dark:bg-gray-800">
-                <option value="in-stock">in-stock</option>
-                <option value="reserved">reserved</option>
-              </select>
-              <button type="button" (click)="revertInstalledToStock()" [disabled]="isCsvRevertingInstalled || csvPreviewResult!.alreadyInstalled.length === 0"
-                class="rounded-lg border border-warning-300 bg-warning-500 px-3 py-1.5 text-xs font-medium text-white hover:bg-warning-600 disabled:opacity-60">
-                {{ isCsvRevertingInstalled ? 'Reverting...' : 'Revert ' + csvPreviewResult!.alreadyInstalled.length + ' Serials' }}
-              </button>
-            </div>
-            @if (csvPreviewResult.alreadyInstalled.length === 0) {
-              <p class="text-sm text-gray-400">None</p>
-            }
-            <div class="grid grid-cols-1 gap-1.5 sm:grid-cols-2">
-              @for (s of csvPreviewResult.alreadyInstalled; track s.serialNumber) {
-                <div class="rounded border border-brand-200 bg-brand-50 px-3 py-1.5 dark:border-brand-800 dark:bg-brand-900/20">
-                  <p class="text-xs font-medium text-brand-800 dark:text-brand-300">{{ s.serialNumber }}</p>
-                  <p class="text-[11px] text-gray-500">{{ s.productName }} {{ s.capacityName }}<span class="ml-1 font-medium uppercase">{{ s.unitType }}</span></p>
-                </div>
-              }
-            </div>
-          }
-          @if (csvModalTab === 'not-found') {
-            <div class="mb-3 flex flex-wrap items-center gap-3">
-              <p class="text-xs font-medium text-gray-500 dark:text-gray-400">Not in DB. Insert as:</p>
-              <select [(ngModel)]="csvNotFoundTargetStatus" class="rounded border border-gray-300 px-2 py-1 text-xs dark:border-gray-600 dark:bg-gray-800">
-                <option value="in-stock">in-stock</option>
-              </select>
-              <button type="button" (click)="insertNotFoundAsInStock()" [disabled]="isCsvInsertingNotFound || notFoundInsertableSerials.length === 0 || !selectedProductId || !selectedCapacityId"
-                class="rounded-lg border border-error-300 bg-error-500 px-3 py-1.5 text-xs font-medium text-white hover:bg-error-600 disabled:opacity-60">
-                {{ isCsvInsertingNotFound ? 'Inserting...' : 'Insert ' + notFoundInsertableSerials.length + ' Eligible Serials (No PO)' }}
-              </button>
-            </div>
-            <p class="mb-2 text-[11px] text-gray-600 dark:text-gray-300">
-              Target assignment:
-              <span class="font-medium text-gray-800 dark:text-gray-100">{{ selectedProduct?.name || 'No product selected' }}</span>
-              /
-              <span class="font-medium text-gray-800 dark:text-gray-100">{{ selectedCapacity?.name || 'No capacity selected' }}</span>
-            </p>
-            <p class="mb-2 text-[11px] text-warning-600 dark:text-warning-400">Note: inserted serials will have no PO or dealer linkage.</p>
-            @if (notFoundInstalledReviewCount > 0) {
-              <p class="mb-2 text-[11px] text-warning-600 dark:text-warning-400">{{ notFoundInstalledReviewCount }} installed-status serial(s) are shown below for review only and will not be inserted.</p>
-            }
-            @if (csvPreviewResult.notFound.length === 0) {
-              <p class="text-sm text-gray-400">None</p>
-            }
-            <div class="grid grid-cols-1 gap-1.5 sm:grid-cols-2">
-              @for (s of csvPreviewResult.notFound; track s.serialNumber) {
-                <div class="rounded border px-3 py-1.5"
-                  [ngClass]="(s.csvStatus || '').toLowerCase() === 'installed'
-                    ? 'border-warning-200 bg-warning-50 dark:border-warning-800 dark:bg-warning-900/20'
-                    : 'border-error-200 bg-error-50 dark:border-error-800 dark:bg-error-900/20'">
-                  <div class="flex items-start justify-between gap-3">
-                    <div>
-                      <p class="text-xs font-medium"
-                        [ngClass]="(s.csvStatus || '').toLowerCase() === 'installed'
-                          ? 'text-warning-800 dark:text-warning-300'
-                          : 'text-error-800 dark:text-error-300'">{{ s.serialNumber }}</p>
-                      <p class="text-[11px] text-gray-500">CSV unitType: {{ s.csvUnitType || '—' }} | CSV status: {{ s.csvStatus || '—' }}</p>
-                    </div>
-                    @if ((s.csvStatus || '').toLowerCase() === 'installed') {
-                      <span class="rounded-full border border-warning-300 bg-warning-100 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-warning-700 dark:border-warning-700 dark:bg-warning-900/30 dark:text-warning-300">
-                        Review Only
-                      </span>
-                    }
-                  </div>
-                </div>
-              }
-            </div>
-          }
-          @if (csvModalTab === 'other') {
-            <p class="mb-2 text-xs font-medium text-gray-500 dark:text-gray-400">These serials have a conflicting status - no action taken. Review manually:</p>
-            @if (csvPreviewResult.otherStatus.length === 0) {
-              <p class="text-sm text-gray-400">None</p>
-            }
-            <div class="grid grid-cols-1 gap-1.5 sm:grid-cols-2">
-              @for (s of csvPreviewResult.otherStatus; track s.serialNumber) {
-                <div class="rounded border border-warning-200 bg-warning-50 px-3 py-1.5 dark:border-warning-800 dark:bg-warning-900/20">
-                  <p class="text-xs font-medium text-warning-800 dark:text-warning-300">{{ s.serialNumber }}</p>
-                  <p class="text-[11px] text-gray-500">{{ s.productName }} {{ s.capacityName }}<span class="ml-1 font-medium uppercase">{{ s.unitType }}</span></p>
-                  <p class="text-[11px] text-gray-500">CSV: {{ s.csvStatus }} | DB: {{ s.dbStatus }}</p>
-                </div>
-              }
-            </div>
-          }
-        </div>
-      }
-
-      <!-- Footer -->
-      <div class="flex items-center justify-between border-t border-gray-200 px-6 py-4 dark:border-gray-700">
-        <div class="flex gap-2">
-          <button type="button" (click)="downloadCsvTemplate()"
-            class="rounded-lg border border-gray-300 px-4 py-2 text-sm font-medium text-gray-700 transition hover:bg-gray-50 dark:border-gray-600 dark:text-gray-300 dark:hover:bg-gray-800">
-            Download Template
-          </button>
-          @if (csvPreviewResult) {
-            <button type="button" (click)="downloadCsvSummary()"
-              class="rounded-lg border border-gray-300 px-4 py-2 text-sm font-medium text-gray-700 transition hover:bg-gray-50 dark:border-gray-600 dark:text-gray-300 dark:hover:bg-gray-800">
-              Download Summary
-            </button>
-            <button type="button" (click)="triggerCsvFileInput()" [disabled]="isCsvParsing"
-              class="rounded-lg border border-gray-300 px-4 py-2 text-sm font-medium text-gray-600 transition hover:bg-gray-50 disabled:opacity-60 dark:border-gray-600 dark:text-gray-300">
-              Upload New CSV
-            </button>
-          }
-        </div>
-        <div class="flex gap-2">
-          <button type="button" (click)="closeCsvModal()"
-            class="rounded-lg border border-gray-300 px-4 py-2 text-sm font-medium text-gray-700 transition hover:bg-gray-50 dark:border-gray-600 dark:text-gray-300">
-            Close
-          </button>
-        </div>
-      </div>
-
     </div>
   </div>
-}
+</div>
+
+<!-- Edit Material Modal -->
+<div
+  *ngIf="isEditModalOpen"
+  class="fixed inset-0 z-100 flex items-center justify-center"
+>
+  <!-- Backdrop -->
+  <div
+    class="absolute inset-0 bg-black/50"
+    (click)="closeEditForm()"
+  ></div>
+
+  <!-- Modal -->
+  <div class="relative z-10 w-full max-w-lg max-h-[90vh] overflow-y-auto rounded-lg border border-gray-200 bg-white p-6 shadow-xl dark:border-gray-700 dark:bg-gray-800">
+    <!-- Header -->
+    <h3 class="text-lg font-semibold text-gray-900 dark:text-gray-100">
+      Edit Material
+    </h3>
+
+    <!-- Form -->
+    <form (ngSubmit)="submitEditForm()" class="mt-4 space-y-4">
+      <!-- Material Name -->
+      <div>
+        <label for="edit-material-name" class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">
+          Material Name
+        </label>
+        <input
+          id="edit-material-name"
+          type="text"
+          [(ngModel)]="editForm.material_name"
+          name="material_name"
+          required
+          class="w-full rounded-md border border-gray-300 bg-white px-3 py-2 text-sm text-gray-900 placeholder-gray-400 focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500 dark:border-gray-600 dark:bg-gray-700 dark:text-gray-100 dark:placeholder-gray-500"
+          placeholder="Enter material name"
+        />
+      </div>
+
+      <!-- Material Code -->
+      <div>
+        <label for="edit-material-code" class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">
+          Material Code
+        </label>
+        <input
+          id="edit-material-code"
+          type="text"
+          [(ngModel)]="editForm.material_code"
+          name="material_code"
+          class="w-full rounded-md border border-gray-300 bg-white px-3 py-2 text-sm text-gray-900 placeholder-gray-400 focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500 dark:border-gray-600 dark:bg-gray-700 dark:text-gray-100 dark:placeholder-gray-500"
+          placeholder="Enter material code"
+        />
+      </div>
+
+      <!-- Description -->
+      <div>
+        <label for="edit-description" class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">
+          Description
+        </label>
+        <textarea
+          id="edit-description"
+          [(ngModel)]="editForm.description"
+          name="description"
+          rows="3"
+          class="w-full rounded-md border border-gray-300 bg-white px-3 py-2 text-sm text-gray-900 placeholder-gray-400 focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500 dark:border-gray-600 dark:bg-gray-700 dark:text-gray-100 dark:placeholder-gray-500"
+          placeholder="Enter description"
+        ></textarea>
+      </div>
+
+      <!-- Unit -->
+      <div>
+        <label for="edit-unit" class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">
+          Unit
+        </label>
+        <input
+          id="edit-unit"
+          type="text"
+          [(ngModel)]="editForm.unit"
+          name="unit"
+          required
+          class="w-full rounded-md border border-gray-300 bg-white px-3 py-2 text-sm text-gray-900 placeholder-gray-400 focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500 dark:border-gray-600 dark:bg-gray-700 dark:text-gray-100 dark:placeholder-gray-500"
+          placeholder="e.g. pcs, kg, m"
+        />
+      </div>
+
+      <!-- Unit Price & Sell Price (side by side) -->
+      <div class="grid grid-cols-2 gap-4">
+        <div>
+          <label for="edit-unit-price" class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">
+            Unit Price
+          </label>
+          <input
+            id="edit-unit-price"
+            type="number"
+            [(ngModel)]="editForm.unit_price"
+            name="unit_price"
+            required
+            min="0"
+            step="0.01"
+            class="w-full rounded-md border border-gray-300 bg-white px-3 py-2 text-sm text-gray-900 placeholder-gray-400 focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500 dark:border-gray-600 dark:bg-gray-700 dark:text-gray-100 dark:placeholder-gray-500"
+            placeholder="0.00"
+          />
+        </div>
+        <div>
+          <label for="edit-sell-price" class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">
+            Sell Price
+          </label>
+          <input
+            id="edit-sell-price"
+            type="number"
+            [(ngModel)]="editForm.sell_price"
+            name="sell_price"
+            required
+            min="0"
+            step="0.01"
+            class="w-full rounded-md border border-gray-300 bg-white px-3 py-2 text-sm text-gray-900 placeholder-gray-400 focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500 dark:border-gray-600 dark:bg-gray-700 dark:text-gray-100 dark:placeholder-gray-500"
+            placeholder="0.00"
+          />
+        </div>
+      </div>
+
+      <!-- On Hand Stock & Reorder Level (side by side) -->
+      <div class="grid grid-cols-2 gap-4">
+        <div>
+          <label for="edit-on-hand-stock" class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">
+            On Hand Stock
+          </label>
+          <input
+            id="edit-on-hand-stock"
+            type="number"
+            [(ngModel)]="editForm.on_hand_stock"
+            name="on_hand_stock"
+            required
+            min="0"
+            step="1"
+            class="w-full rounded-md border border-gray-300 bg-white px-3 py-2 text-sm text-gray-900 placeholder-gray-400 focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500 dark:border-gray-600 dark:bg-gray-700 dark:text-gray-100 dark:placeholder-gray-500"
+            placeholder="0"
+          />
+        </div>
+        <div>
+          <label for="edit-reorder-level" class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">
+            Reorder Level
+          </label>
+          <input
+            id="edit-reorder-level"
+            type="number"
+            [(ngModel)]="editForm.reorder_level"
+            name="reorder_level"
+            required
+            min="0"
+            step="1"
+            class="w-full rounded-md border border-gray-300 bg-white px-3 py-2 text-sm text-gray-900 placeholder-gray-400 focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500 dark:border-gray-600 dark:bg-gray-700 dark:text-gray-100 dark:placeholder-gray-500"
+            placeholder="0"
+          />
+        </div>
+      </div>
+
+      <!-- Error message -->
+      <p *ngIf="editError" class="text-sm text-red-600 dark:text-red-400">
+        {{ editError }}
+      </p>
+
+      <!-- Actions -->
+      <div class="flex items-center justify-end gap-3 pt-2">
+        <button
+          type="button"
+          class="rounded-md border border-gray-300 bg-white px-4 py-2 text-sm font-medium text-gray-700 hover:bg-gray-50 dark:border-gray-600 dark:bg-gray-700 dark:text-gray-300 dark:hover:bg-gray-600 transition-colors"
+          (click)="closeEditForm()"
+          [disabled]="isEditSaving"
+        >
+          Cancel
+        </button>
+        <button
+          type="submit"
+          class="rounded-md bg-blue-600 px-4 py-2 text-sm font-medium text-white hover:bg-blue-700 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
+          [disabled]="isEditSaving"
+        >
+          <span *ngIf="!isEditSaving">Save Changes</span>
+          <span *ngIf="isEditSaving" class="flex items-center gap-2">
+            <svg class="animate-spin h-4 w-4" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
+              <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
+              <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z"></path>
+            </svg>
+            Saving...
+          </span>
+        </button>
+      </div>
+    </form>
+  </div>
+</div>
+
+<!-- Stock Adjustment Modal -->
+<div
+  *ngIf="isAdjustmentModalOpen"
+  class="fixed inset-0 z-100 flex items-center justify-center"
+>
+  <!-- Backdrop -->
+  <div
+    class="absolute inset-0 bg-black/50"
+    (click)="closeAdjustmentForm()"
+  ></div>
+
+  <!-- Modal -->
+  <div class="relative z-10 w-full max-w-md rounded-lg border border-gray-200 bg-white p-6 shadow-xl dark:border-gray-700 dark:bg-gray-800">
+    <!-- Header -->
+    <h3 class="text-lg font-semibold text-gray-900 dark:text-gray-100">
+      Stock Adjustment
+    </h3>
+    <p class="mt-1 text-sm text-gray-500 dark:text-gray-400">
+      {{ adjustmentMaterial?.material_name }}
+    </p>
+
+    <!-- Form -->
+    <form (ngSubmit)="submitAdjustmentForm()" class="mt-5 space-y-4">
+      <!-- Direction -->
+      <div>
+        <label class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">
+          Direction
+        </label>
+        <div class="flex items-center gap-4">
+          <label class="flex items-center gap-2 cursor-pointer">
+            <input
+              type="radio"
+              name="direction"
+              value="increase"
+              [(ngModel)]="adjustmentForm.direction"
+              class="h-4 w-4 text-blue-600 border-gray-300 focus:ring-blue-500 dark:border-gray-600 dark:bg-gray-700"
+            />
+            <span class="text-sm text-gray-700 dark:text-gray-300">Increase</span>
+          </label>
+          <label class="flex items-center gap-2 cursor-pointer">
+            <input
+              type="radio"
+              name="direction"
+              value="decrease"
+              [(ngModel)]="adjustmentForm.direction"
+              class="h-4 w-4 text-blue-600 border-gray-300 focus:ring-blue-500 dark:border-gray-600 dark:bg-gray-700"
+            />
+            <span class="text-sm text-gray-700 dark:text-gray-300">Decrease</span>
+          </label>
+        </div>
+      </div>
+
+      <!-- Quantity -->
+      <div>
+        <label for="adjust-quantity" class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">
+          Quantity
+        </label>
+        <input
+          id="adjust-quantity"
+          type="number"
+          [(ngModel)]="adjustmentForm.quantity"
+          name="quantity"
+          required
+          min="1"
+          max="999999"
+          step="1"
+          class="w-full rounded-md border border-gray-300 bg-white px-3 py-2 text-sm text-gray-900 placeholder-gray-400 focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500 dark:border-gray-600 dark:bg-gray-700 dark:text-gray-100 dark:placeholder-gray-500"
+          placeholder="Enter quantity (1 - 999,999)"
+        />
+        <p class="mt-1 text-xs text-gray-400 dark:text-gray-500">
+          Current stock: {{ adjustmentMaterial?.on_hand_stock ?? 0 }}
+        </p>
+      </div>
+
+      <!-- Remarks -->
+      <div>
+        <label for="adjust-remarks" class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">
+          Remarks <span class="font-normal text-gray-400">(optional)</span>
+        </label>
+        <textarea
+          id="adjust-remarks"
+          [(ngModel)]="adjustmentForm.remarks"
+          name="remarks"
+          rows="3"
+          maxlength="500"
+          class="w-full rounded-md border border-gray-300 bg-white px-3 py-2 text-sm text-gray-900 placeholder-gray-400 focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500 dark:border-gray-600 dark:bg-gray-700 dark:text-gray-100 dark:placeholder-gray-500"
+          placeholder="Enter remarks (optional)"
+        ></textarea>
+        <p class="mt-1 text-xs text-right"
+          [class.text-gray-400]="remarksCharCount <= 450"
+          [class.text-amber-500]="remarksCharCount > 450 && remarksCharCount <= 500"
+          [class.text-red-500]="remarksCharCount > 500"
+        >
+          {{ remarksCharCount }} / 500
+        </p>
+      </div>
+
+      <!-- Error message -->
+      <p *ngIf="adjustmentError" class="text-sm text-red-600 dark:text-red-400">
+        {{ adjustmentError }}
+      </p>
+
+      <!-- Actions -->
+      <div class="flex items-center justify-end gap-3 pt-2">
+        <button
+          type="button"
+          class="rounded-md border border-gray-300 bg-white px-4 py-2 text-sm font-medium text-gray-700 hover:bg-gray-50 dark:border-gray-600 dark:bg-gray-700 dark:text-gray-300 dark:hover:bg-gray-600 transition-colors"
+          (click)="closeAdjustmentForm()"
+          [disabled]="isAdjustmentSaving"
+        >
+          Cancel
+        </button>
+        <button
+          type="submit"
+          class="rounded-md bg-blue-600 px-4 py-2 text-sm font-medium text-white hover:bg-blue-700 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
+          [disabled]="isAdjustmentSaving"
+        >
+          <span *ngIf="!isAdjustmentSaving">Submit Adjustment</span>
+          <span *ngIf="isAdjustmentSaving" class="flex items-center gap-2">
+            <svg class="animate-spin h-4 w-4" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
+              <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
+              <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z"></path>
+            </svg>
+            Submitting...
+          </span>
+        </button>
+      </div>
+    </form>
+  </div>
+</div>
+
+<!-- Context Menu -->
+<div
+  *ngIf="isContextMenuOpen"
+  id="tree-context-menu"
+  class="fixed z-200 min-w-[160px] rounded-md border border-gray-200 bg-white shadow-lg dark:border-gray-700 dark:bg-gray-800 py-1"
+  [style.left.px]="contextMenuX"
+  [style.top.px]="contextMenuY"
+>
+  <!-- Product Type context menu -->
+  <button
+    *ngIf="contextMenuType === 'product-type'"
+    type="button"
+    class="w-full px-4 py-2 text-left text-sm text-gray-700 hover:bg-gray-100 dark:text-gray-300 dark:hover:bg-gray-700 transition-colors"
+    (click)="contextMenuAddBrand()"
+  >
+    + Add Brand
+  </button>
+
+  <!-- Brand context menu -->
+  <button
+    *ngIf="contextMenuType === 'brand'"
+    type="button"
+    class="w-full px-4 py-2 text-left text-sm text-gray-700 hover:bg-gray-100 dark:text-gray-300 dark:hover:bg-gray-700 transition-colors"
+    (click)="contextMenuAddMaterial()"
+  >
+    + Add Material
+  </button>
+</div>
+
+
+
+<!-- All-in-One Create Drawer -->
+<div
+  *ngIf="isCreateDrawerOpen"
+  class="fixed inset-0 z-[100011]"
+>
+  <!-- Backdrop -->
+  <div
+    class="absolute inset-0 bg-black/50"
+    (click)="closeCreateDrawer()"
+  ></div>
+
+  <!-- Drawer (slides in from right) -->
+  <div class="absolute right-0 top-0 h-full w-[720px] max-w-full bg-white dark:bg-gray-800 shadow-2xl border-l border-gray-200 dark:border-gray-700 flex flex-col">
+    <!-- Header -->
+    <div class="flex items-center justify-between border-b border-gray-200 dark:border-gray-700 px-6 py-4 shrink-0">
+      <h3 class="text-lg font-semibold text-gray-900 dark:text-gray-100">
+        Create Type/Products
+      </h3>
+      <button
+        type="button"
+        class="rounded-md p-1.5 text-gray-400 hover:text-gray-600 hover:bg-gray-100 dark:hover:text-gray-300 dark:hover:bg-gray-700 transition-colors"
+        (click)="closeCreateDrawer()"
+        aria-label="Close drawer"
+      >
+        <svg class="h-5 w-5" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20" fill="currentColor">
+          <path d="M6.28 5.22a.75.75 0 00-1.06 1.06L8.94 10l-3.72 3.72a.75.75 0 101.06 1.06L10 11.06l3.72 3.72a.75.75 0 101.06-1.06L11.06 10l3.72-3.72a.75.75 0 00-1.06-1.06L10 8.94 6.28 5.22z" />
+        </svg>
+      </button>
+    </div>
+
+    <!-- Body (scrollable) -->
+    <div class="flex-1 overflow-y-auto px-6 py-5 space-y-5">
+      <!-- Success message -->
+      <p *ngIf="createSuccess" class="text-sm text-green-600 dark:text-green-400 bg-green-50 dark:bg-green-900/20 rounded-md px-3 py-2">
+        {{ createSuccess }}
+      </p>
+
+      <!-- Error message -->
+      <p *ngIf="createError" class="text-sm text-red-600 dark:text-red-400 bg-red-50 dark:bg-red-900/20 rounded-md px-3 py-2">
+        {{ createError }}
+      </p>
+
+      <!-- Section 1: Product Type (smart search) -->
+      <div class="rounded-lg border border-gray-200 dark:border-gray-700 p-4">
+        <h4 class="text-sm font-semibold text-gray-700 dark:text-gray-300 mb-3">1. Product Type</h4>
+        <div class="flex items-start gap-3">
+          <!-- Product Type smart search -->
+          <div class="flex-1 relative">
+            <label class="block text-xs font-medium text-gray-600 dark:text-gray-400 mb-1">
+              Type Name <span class="text-red-500">*</span>
+            </label>
+            <div class="relative">
+              <input
+                type="text"
+                [(ngModel)]="productTypeSearch"
+                name="productTypeSearch"
+                (input)="onProductTypeSearchInput()"
+                (focus)="onProductTypeFocus()"
+                (blur)="onProductTypeBlur()"
+                class="w-full rounded-md border border-gray-300 bg-white px-3 py-1.5 text-sm text-gray-900 placeholder-gray-400 focus:border-brand-500 focus:outline-none focus:ring-1 focus:ring-brand-500 dark:border-gray-600 dark:bg-gray-700 dark:text-gray-100 dark:placeholder-gray-500"
+                placeholder="Search or type new..."
+                autocomplete="off"
+              />
+              <!-- (new) badge -->
+              <span
+                *ngIf="isProductTypeNew"
+                class="absolute right-2 top-1/2 -translate-y-1/2 text-[10px] font-medium text-amber-600 dark:text-amber-400 bg-amber-50 dark:bg-amber-900/30 rounded px-1.5 py-0.5"
+              >(new)</span>
+            </div>
+            <!-- Dropdown suggestions -->
+            <div
+              *ngIf="isProductTypeDropdownOpen && productTypeSuggestions.length > 0"
+              class="absolute z-50 mt-1 w-full max-h-40 overflow-y-auto rounded-md border border-gray-200 bg-white shadow-lg dark:border-gray-700 dark:bg-gray-800"
+            >
+              <button
+                *ngFor="let pt of productTypeSuggestions"
+                type="button"
+                class="w-full px-3 py-1.5 text-left text-sm text-gray-700 hover:bg-gray-100 dark:text-gray-300 dark:hover:bg-gray-700 transition-colors"
+                (mousedown)="selectProductTypeSuggestion(pt)"
+              >
+                {{ pt.name }}
+                <span class="ml-1 text-xs text-gray-400">({{ pt.prefix }})</span>
+              </button>
+            </div>
+          </div>
+          <!-- Prefix field -->
+          <div class="w-24">
+            <label class="block text-xs font-medium text-gray-600 dark:text-gray-400 mb-1">Prefix</label>
+            <input
+              type="text"
+              [(ngModel)]="productTypePrefix"
+              name="productTypePrefix"
+              class="w-full rounded-md border border-gray-300 bg-white px-3 py-1.5 text-sm text-gray-900 placeholder-gray-400 focus:border-brand-500 focus:outline-none focus:ring-1 focus:ring-brand-500 dark:border-gray-600 dark:bg-gray-700 dark:text-gray-100 dark:placeholder-gray-500"
+              placeholder="e.g. ELC"
+              [readonly]="!isProductTypeNew"
+              [class.bg-gray-50]="!isProductTypeNew"
+              [class.dark:bg-gray-800]="!isProductTypeNew"
+              [class.cursor-default]="!isProductTypeNew"
+            />
+          </div>
+        </div>
+      </div>
+
+      <!-- Section 2: Materials (Brand per row) -->
+      <div class="rounded-lg border border-gray-200 dark:border-gray-700 p-4 overflow-hidden">
+        <div class="flex items-center justify-between mb-3">
+          <h4 class="text-sm font-semibold text-gray-700 dark:text-gray-300">2. Materials</h4>
+          <button
+            type="button"
+            class="rounded-md bg-gray-100 px-3 py-1 text-xs font-medium text-gray-700 hover:bg-gray-200 dark:bg-gray-700 dark:text-gray-300 dark:hover:bg-gray-600 transition-colors"
+            (click)="addMaterialRow()"
+          >
+            + Add Row
+          </button>
+        </div>
+
+        <!-- Column headers -->
+        <div class="grid grid-cols-[1.5fr_1.5fr_1fr_0.7fr_0.8fr_0.8fr_0.7fr_0.7fr_24px] gap-1 mb-2">
+          <span class="text-[11px] font-medium text-gray-500 dark:text-gray-400">Brand *</span>
+          <span class="text-[11px] font-medium text-gray-500 dark:text-gray-400">Name *</span>
+          <span class="text-[11px] font-medium text-gray-500 dark:text-gray-400">Code</span>
+          <span class="text-[11px] font-medium text-gray-500 dark:text-gray-400">Unit</span>
+          <span class="text-[11px] font-medium text-gray-500 dark:text-gray-400">Cost</span>
+          <span class="text-[11px] font-medium text-gray-500 dark:text-gray-400">Sell</span>
+          <span class="text-[11px] font-medium text-gray-500 dark:text-gray-400">Stock</span>
+          <span class="text-[11px] font-medium text-gray-500 dark:text-gray-400">Reorder</span>
+          <span></span>
+        </div>
+
+        <!-- Material rows -->
+        <div class="space-y-2">
+          <div
+            *ngFor="let row of materialRows; let i = index; trackBy: trackByIndex"
+            class="grid grid-cols-[1.5fr_1.5fr_1fr_0.7fr_0.8fr_0.8fr_0.7fr_0.7fr_24px] gap-1 items-center"
+          >
+            <!-- Brand (smart search per row) -->
+            <div class="relative min-w-0">
+              <input
+                type="text"
+                [(ngModel)]="row.brand_name"
+                [name]="'mat_brand_' + i"
+                (input)="onBrandSearchInput(row)"
+                (focus)="onBrandFocus(row)"
+                (blur)="onBrandBlur(row)"
+                class="w-full min-w-0 rounded border border-gray-300 bg-white px-1.5 py-1 text-xs text-gray-900 placeholder-gray-400 focus:border-brand-500 focus:outline-none focus:ring-1 focus:ring-brand-500 dark:border-gray-600 dark:bg-gray-700 dark:text-gray-100 dark:placeholder-gray-500"
+                placeholder="Brand"
+                autocomplete="off"
+              />
+              <!-- (new) badge for brand -->
+              <span
+                *ngIf="isRowBrandNew(row)"
+                class="absolute right-1 top-1/2 -translate-y-1/2 text-[9px] font-medium text-amber-600 dark:text-amber-400 bg-amber-50 dark:bg-amber-900/30 rounded px-1 py-0.5 leading-none"
+              >new</span>
+              <!-- Brand dropdown -->
+              <div
+                *ngIf="row.isBrandDropdownOpen && row.brandSuggestions.length > 0"
+                class="absolute z-50 mt-1 left-0 w-48 max-h-32 overflow-y-auto rounded-md border border-gray-200 bg-white shadow-lg dark:border-gray-700 dark:bg-gray-800"
+              >
+                <button
+                  *ngFor="let b of row.brandSuggestions"
+                  type="button"
+                  class="w-full px-2 py-1 text-left text-xs text-gray-700 hover:bg-gray-100 dark:text-gray-300 dark:hover:bg-gray-700 transition-colors"
+                  (mousedown)="selectBrandSuggestion(row, b)"
+                >
+                  {{ b.brandName }}
+                  <span *ngIf="b.prefix" class="ml-1 text-gray-400">({{ b.prefix }})</span>
+                </button>
+              </div>
+            </div>
+            <!-- Name -->
+            <input
+              type="text"
+              [(ngModel)]="row.material_name"
+              [name]="'mat_name_' + i"
+              class="min-w-0 rounded border border-gray-300 bg-white px-1.5 py-1 text-xs text-gray-900 placeholder-gray-400 focus:border-brand-500 focus:outline-none focus:ring-1 focus:ring-brand-500 dark:border-gray-600 dark:bg-gray-700 dark:text-gray-100 dark:placeholder-gray-500"
+              placeholder="Material name"
+            />
+            <!-- Code (readonly) -->
+            <input
+              type="text"
+              [(ngModel)]="row.material_code"
+              [name]="'mat_code_' + i"
+              readonly
+              class="min-w-0 rounded border border-gray-200 bg-gray-50 px-1.5 py-1 text-xs text-gray-600 placeholder-gray-400 dark:border-gray-600 dark:bg-gray-800 dark:text-gray-400 dark:placeholder-gray-500 cursor-default"
+              placeholder="Auto"
+            />
+            <!-- Unit -->
+            <input
+              type="text"
+              [(ngModel)]="row.unit"
+              [name]="'mat_unit_' + i"
+              class="min-w-0 rounded border border-gray-300 bg-white px-1.5 py-1 text-xs text-gray-900 placeholder-gray-400 focus:border-brand-500 focus:outline-none focus:ring-1 focus:ring-brand-500 dark:border-gray-600 dark:bg-gray-700 dark:text-gray-100 dark:placeholder-gray-500"
+              placeholder="pcs"
+            />
+            <!-- Cost -->
+            <input
+              type="number"
+              [(ngModel)]="row.unit_price"
+              [name]="'mat_cost_' + i"
+              min="0"
+              step="0.01"
+              class="min-w-0 rounded border border-gray-300 bg-white px-1.5 py-1 text-xs text-gray-900 placeholder-gray-400 focus:border-brand-500 focus:outline-none focus:ring-1 focus:ring-brand-500 dark:border-gray-600 dark:bg-gray-700 dark:text-gray-100 dark:placeholder-gray-500"
+              placeholder="0"
+            />
+            <!-- Sell -->
+            <input
+              type="number"
+              [(ngModel)]="row.sell_price"
+              [name]="'mat_sell_' + i"
+              min="0"
+              step="0.01"
+              class="min-w-0 rounded border border-gray-300 bg-white px-1.5 py-1 text-xs text-gray-900 placeholder-gray-400 focus:border-brand-500 focus:outline-none focus:ring-1 focus:ring-brand-500 dark:border-gray-600 dark:bg-gray-700 dark:text-gray-100 dark:placeholder-gray-500"
+              placeholder="0"
+            />
+            <!-- Stock -->
+            <input
+              type="number"
+              [(ngModel)]="row.on_hand_stock"
+              [name]="'mat_stock_' + i"
+              min="0"
+              step="1"
+              class="min-w-0 rounded border border-gray-300 bg-white px-1.5 py-1 text-xs text-gray-900 placeholder-gray-400 focus:border-brand-500 focus:outline-none focus:ring-1 focus:ring-brand-500 dark:border-gray-600 dark:bg-gray-700 dark:text-gray-100 dark:placeholder-gray-500"
+              placeholder="0"
+            />
+            <!-- Reorder -->
+            <input
+              type="number"
+              [(ngModel)]="row.reorder_level"
+              [name]="'mat_reorder_' + i"
+              min="0"
+              step="1"
+              class="min-w-0 rounded border border-gray-300 bg-white px-1.5 py-1 text-xs text-gray-900 placeholder-gray-400 focus:border-brand-500 focus:outline-none focus:ring-1 focus:ring-brand-500 dark:border-gray-600 dark:bg-gray-700 dark:text-gray-100 dark:placeholder-gray-500"
+              placeholder="0"
+            />
+            <!-- Remove button -->
+            <button
+              type="button"
+              class="rounded p-1 text-gray-400 hover:text-red-500 hover:bg-red-50 dark:hover:bg-red-900/20 transition-colors disabled:opacity-30 disabled:cursor-not-allowed"
+              (click)="removeMaterialRow(i)"
+              [disabled]="materialRows.length <= 1"
+              aria-label="Remove row"
+            >
+              <svg class="h-4 w-4" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20" fill="currentColor">
+                <path d="M6.28 5.22a.75.75 0 00-1.06 1.06L8.94 10l-3.72 3.72a.75.75 0 101.06 1.06L10 11.06l3.72 3.72a.75.75 0 101.06-1.06L11.06 10l3.72-3.72a.75.75 0 00-1.06-1.06L10 8.94 6.28 5.22z" />
+              </svg>
+            </button>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Footer -->
+    <div class="border-t border-gray-200 dark:border-gray-700 px-6 py-4 shrink-0">
+      <div class="flex items-center justify-end gap-3">
+        <button
+          type="button"
+          class="rounded-md border border-gray-300 bg-white px-4 py-2 text-sm font-medium text-gray-700 hover:bg-gray-50 dark:border-gray-600 dark:bg-gray-700 dark:text-gray-300 dark:hover:bg-gray-600 transition-colors"
+          (click)="closeCreateDrawer()"
+          [disabled]="isCreateSaving"
+        >
+          Cancel
+        </button>
+        <button
+          type="button"
+          class="rounded-md bg-brand-500 px-4 py-2 text-sm font-medium text-white hover:bg-brand-600 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
+          (click)="submitAllInOne()"
+          [disabled]="isCreateSaving"
+        >
+          <span *ngIf="!isCreateSaving">Create All</span>
+          <span *ngIf="isCreateSaving" class="flex items-center gap-2">
+            <svg class="animate-spin h-4 w-4" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
+              <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
+              <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z"></path>
+            </svg>
+            Creating...
+          </span>
+        </button>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- Bulk Upload Modal -->
+<div
+  *ngIf="isBulkUploadModalOpen"
+  class="fixed inset-0 z-[100011] flex items-center justify-center"
+>
+  <!-- Backdrop -->
+  <div
+    class="absolute inset-0 bg-black/50"
+    (click)="closeBulkUploadModal()"
+  ></div>
+
+  <!-- Modal -->
+  <div class="relative z-10 w-full max-w-4xl max-h-[85vh] rounded-lg border border-gray-200 bg-white shadow-xl dark:border-gray-700 dark:bg-gray-800 flex flex-col">
+    <!-- Header -->
+    <div class="flex items-center justify-between border-b border-gray-200 dark:border-gray-700 px-6 py-4 shrink-0">
+      <h3 class="text-lg font-semibold text-gray-900 dark:text-gray-100">
+        Bulk Upload Materials
+      </h3>
+      <button
+        type="button"
+        class="rounded-md p-1.5 text-gray-400 hover:text-gray-600 hover:bg-gray-100 dark:hover:text-gray-300 dark:hover:bg-gray-700 transition-colors"
+        (click)="closeBulkUploadModal()"
+        aria-label="Close bulk upload modal"
+      >
+        <svg class="h-5 w-5" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20" fill="currentColor">
+          <path d="M6.28 5.22a.75.75 0 00-1.06 1.06L8.94 10l-3.72 3.72a.75.75 0 101.06 1.06L10 11.06l3.72 3.72a.75.75 0 101.06-1.06L11.06 10l3.72-3.72a.75.75 0 00-1.06-1.06L10 8.94 6.28 5.22z" />
+        </svg>
+      </button>
+    </div>
+
+    <!-- Body (scrollable) -->
+    <div class="flex-1 overflow-y-auto px-6 py-4">
+      <!-- Upload Section -->
+      <div class="space-y-4">
+        <!-- Instructions -->
+        <div class="rounded-md bg-blue-50 dark:bg-blue-900/20 p-3">
+          <p class="text-sm text-blue-700 dark:text-blue-300">
+            Upload a CSV or Excel file to bulk-import materials. The file must have a header row with the following columns:
+            <span class="font-medium">product_type, brand, material_name</span> (required),
+            <span class="text-blue-600 dark:text-blue-400">material_code, unit, unit_price, sell_price, on_hand_stock, reorder_level</span> (optional).
+          </p>
+        </div>
+
+        <!-- File Input & Template Download -->
+        <div class="flex items-center gap-3">
+          <label
+            class="flex-1 flex items-center justify-center gap-2 rounded-md border-2 border-dashed border-gray-300 dark:border-gray-600 px-4 py-3 cursor-pointer hover:border-brand-400 hover:bg-gray-50 dark:hover:bg-gray-700/30 transition-colors"
+          >
+            <svg class="h-5 w-5 text-gray-400" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20" fill="currentColor">
+              <path fill-rule="evenodd" d="M3 17a1 1 0 011-1h12a1 1 0 110 2H4a1 1 0 01-1-1zM6.293 6.707a1 1 0 010-1.414l3-3a1 1 0 011.414 0l3 3a1 1 0 01-1.414 1.414L11 5.414V13a1 1 0 11-2 0V5.414L7.707 6.707a1 1 0 01-1.414 0z" clip-rule="evenodd" />
+            </svg>
+            <span class="text-sm text-gray-600 dark:text-gray-400">
+              <span *ngIf="!bulkUploadFileName">Choose CSV or Excel file...</span>
+              <span *ngIf="bulkUploadFileName" class="font-medium text-gray-800 dark:text-gray-200">{{ bulkUploadFileName }}</span>
+            </span>
+            <input
+              type="file"
+              accept=".csv,.xlsx,.xls"
+              class="hidden"
+              (change)="onBulkFileSelected($event)"
+            />
+          </label>
+          <button
+            type="button"
+            class="rounded-md border border-gray-300 bg-white px-3 py-2 text-sm font-medium text-gray-700 hover:bg-gray-50 dark:border-gray-600 dark:bg-gray-700 dark:text-gray-300 dark:hover:bg-gray-600 transition-colors whitespace-nowrap"
+            (click)="downloadBulkTemplate()"
+          >
+            ⬇ Download Template
+          </button>
+        </div>
+
+        <!-- Error message -->
+        <p *ngIf="bulkUploadError" class="text-sm text-red-600 dark:text-red-400 bg-red-50 dark:bg-red-900/20 rounded-md px-3 py-2">
+          {{ bulkUploadError }}
+        </p>
+
+        <!-- Results Summary -->
+        <div *ngIf="bulkUploadResults" class="rounded-md border border-gray-200 dark:border-gray-700 p-4 space-y-3">
+          <h4 class="text-sm font-semibold text-gray-700 dark:text-gray-300">Upload Results</h4>
+          <div class="flex items-center gap-4 text-sm">
+            <span class="text-gray-600 dark:text-gray-400">Total: <span class="font-medium">{{ bulkUploadResults.summary.total }}</span></span>
+            <span class="text-green-600 dark:text-green-400">Created: <span class="font-medium">{{ bulkUploadResults.summary.created }}</span></span>
+            <span class="text-amber-600 dark:text-amber-400">Skipped: <span class="font-medium">{{ bulkUploadResults.summary.skipped }}</span></span>
+            <span class="text-red-600 dark:text-red-400">Failed: <span class="font-medium">{{ bulkUploadResults.summary.failed }}</span></span>
+          </div>
+          <!-- Per-row results (show only non-created) -->
+          <div *ngIf="bulkUploadResults.results.length > 0" class="max-h-40 overflow-y-auto">
+            <table class="w-full table-auto text-xs">
+              <thead>
+                <tr class="border-b border-gray-200 dark:border-gray-700">
+                  <th class="px-2 py-1 text-left text-gray-600 dark:text-gray-400">Row</th>
+                  <th class="px-2 py-1 text-left text-gray-600 dark:text-gray-400">Status</th>
+                  <th class="px-2 py-1 text-left text-gray-600 dark:text-gray-400">Message</th>
+                </tr>
+              </thead>
+              <tbody>
+                <tr *ngFor="let r of bulkUploadResults.results" class="border-b border-gray-100 dark:border-gray-800">
+                  <td class="px-2 py-1 text-gray-700 dark:text-gray-300">{{ r.row }}</td>
+                  <td class="px-2 py-1">
+                    <span
+                      class="inline-flex items-center rounded px-1.5 py-0.5 text-xs font-medium"
+                      [class.bg-green-100]="r.status === 'created'"
+                      [class.text-green-700]="r.status === 'created'"
+                      [class.bg-amber-100]="r.status === 'skipped'"
+                      [class.text-amber-700]="r.status === 'skipped'"
+                      [class.bg-red-100]="r.status === 'failed'"
+                      [class.text-red-700]="r.status === 'failed'"
+                    >{{ r.status }}</span>
+                  </td>
+                  <td class="px-2 py-1 text-gray-600 dark:text-gray-400">{{ r.message }}</td>
+                </tr>
+              </tbody>
+            </table>
+          </div>
+        </div>
+
+        <!-- Preview Table -->
+        <div *ngIf="bulkUploadRows.length > 0 && !bulkUploadResults" class="space-y-2">
+          <h4 class="text-sm font-semibold text-gray-700 dark:text-gray-300">
+            Preview ({{ bulkUploadRows.length }} rows)
+          </h4>
+          <div class="overflow-x-auto max-h-64 rounded-md border border-gray-200 dark:border-gray-700">
+            <table class="w-full table-auto text-xs">
+              <thead class="sticky top-0 bg-gray-50 dark:bg-gray-800">
+                <tr class="border-b border-gray-200 dark:border-gray-700">
+                  <th class="px-2 py-1.5 text-left text-gray-600 dark:text-gray-400">#</th>
+                  <th class="px-2 py-1.5 text-left text-gray-600 dark:text-gray-400">Product Type</th>
+                  <th class="px-2 py-1.5 text-left text-gray-600 dark:text-gray-400">Brand</th>
+                  <th class="px-2 py-1.5 text-left text-gray-600 dark:text-gray-400">Material Name</th>
+                  <th class="px-2 py-1.5 text-left text-gray-600 dark:text-gray-400">Code</th>
+                  <th class="px-2 py-1.5 text-left text-gray-600 dark:text-gray-400">Unit</th>
+                  <th class="px-2 py-1.5 text-right text-gray-600 dark:text-gray-400">Cost</th>
+                  <th class="px-2 py-1.5 text-right text-gray-600 dark:text-gray-400">Sell</th>
+                  <th class="px-2 py-1.5 text-right text-gray-600 dark:text-gray-400">Stock</th>
+                  <th class="px-2 py-1.5 text-right text-gray-600 dark:text-gray-400">Reorder</th>
+                </tr>
+              </thead>
+              <tbody>
+                <tr *ngFor="let row of bulkUploadRows; let i = index" class="border-b border-gray-100 dark:border-gray-800">
+                  <td class="px-2 py-1 text-gray-500">{{ i + 1 }}</td>
+                  <td class="px-2 py-1 text-gray-700 dark:text-gray-300">{{ row.product_type || '—' }}</td>
+                  <td class="px-2 py-1 text-gray-700 dark:text-gray-300">
+                    {{ row.brand || '—' }}
+                    <span *ngIf="row._brandInferred" class="ml-1 text-[10px] text-amber-600 dark:text-amber-400 bg-amber-50 dark:bg-amber-900/30 rounded px-1">(auto)</span>
+                  </td>
+                  <td class="px-2 py-1 text-gray-700 dark:text-gray-300 font-medium">{{ row.material_name }}</td>
+                  <td class="px-2 py-1 text-gray-700 dark:text-gray-300">{{ row.material_code || '—' }}</td>
+                  <td class="px-2 py-1 text-gray-700 dark:text-gray-300">{{ row.unit || 'pcs' }}</td>
+                  <td class="px-2 py-1 text-right text-gray-700 dark:text-gray-300">{{ row.unit_price || 0 }}</td>
+                  <td class="px-2 py-1 text-right text-gray-700 dark:text-gray-300">{{ row.sell_price || 0 }}</td>
+                  <td class="px-2 py-1 text-right text-gray-700 dark:text-gray-300">{{ row.on_hand_stock || 0 }}</td>
+                  <td class="px-2 py-1 text-right text-gray-700 dark:text-gray-300">{{ row.reorder_level || 0 }}</td>
+                </tr>
+              </tbody>
+            </table>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Footer -->
+    <div class="border-t border-gray-200 dark:border-gray-700 px-6 py-4 shrink-0">
+      <div class="flex items-center justify-end gap-3">
+        <button
+          type="button"
+          class="rounded-md border border-gray-300 bg-white px-4 py-2 text-sm font-medium text-gray-700 hover:bg-gray-50 dark:border-gray-600 dark:bg-gray-700 dark:text-gray-300 dark:hover:bg-gray-600 transition-colors"
+          (click)="closeBulkUploadModal()"
+          [disabled]="isBulkUploading"
+        >
+          Close
+        </button>
+        <button
+          type="button"
+          class="rounded-md bg-brand-500 px-4 py-2 text-sm font-medium text-white hover:bg-brand-600 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
+          (click)="submitBulkUpload()"
+          [disabled]="isBulkUploading || bulkUploadRows.length === 0 || !!bulkUploadResults"
+        >
+          <span *ngIf="!isBulkUploading">Upload {{ bulkUploadRows.length }} Row(s)</span>
+          <span *ngIf="isBulkUploading" class="flex items-center gap-2">
+            <svg class="animate-spin h-4 w-4" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
+              <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
+              <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z"></path>
+            </svg>
+            Uploading...
+          </span>
+        </button>
+      </div>
+    </div>
+  </div>
+</div>

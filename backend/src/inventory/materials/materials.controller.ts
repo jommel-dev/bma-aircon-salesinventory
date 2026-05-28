@@ -29,22 +29,51 @@ import {
   ParseIntPipe,
   UseGuards,
   Request,
+  BadRequestException,
 } from '@nestjs/common';
 import { MaterialsService } from './materials.service';
 import { CreateMaterialDto } from './dto/create-material.dto';
 import { UpdateMaterialDto } from './dto/update-material.dto';
+import { StockAdjustmentDto } from './dto/stock-adjustment.dto';
+import { JwtAuthGuard } from '../../auth/jwt-auth.guard';
 
 /**
  * @Controller decorator defines the base route
  * All endpoints in this controller will be prefixed with /inventory/materials
  */
 @Controller('inventory/materials')
+@UseGuards(JwtAuthGuard)
 export class MaterialsController {
   /**
    * Constructor - Inject MaterialsService
    * The service contains all business logic
    */
   constructor(private readonly materialsService: MaterialsService) {}
+
+  /**
+   * =====================================================
+   * BULK UPLOAD MATERIALS
+   * =====================================================
+   * POST /inventory/materials/bulk-upload
+   *
+   * Accepts an array of rows parsed from CSV/Excel on the frontend.
+   * For each row:
+   *   - Finds or creates the product type (by name)
+   *   - Finds or creates the brand (by name, under that product type, type='MAT')
+   *   - Creates the material (skips if material_name already exists for that brand)
+   *
+   * Request Body:
+   * { rows: Array<{ product_type, brand, material_name, material_code, unit, unit_price, sell_price, on_hand_stock, reorder_level }> }
+   *
+   * Response:
+   * { success: true, summary: { total, created, skipped, failed }, results: [{ row, status, message }] }
+   * =====================================================
+   */
+  @Post('bulk-upload')
+  async bulkUpload(@Body() body: { rows: any[] }, @Request() req: any) {
+    const userId = req.user?.id || 1;
+    return this.materialsService.bulkUpload(body.rows, userId);
+  }
 
   /**
    * =====================================================
@@ -86,15 +115,99 @@ export class MaterialsController {
    * - search (optional): Search by material name
    * - brandId (optional): Filter by brand ID
    * 
-   * Response: Array of material objects
+   * Response: MaterialListResponse with success flag and items array
    * =====================================================
    */
   @Get()
   async findAll(
     @Query('search') search?: string,
-    @Query('brandId', new ParseIntPipe({ optional: true })) brandId?: number,
+    @Query('brandId') brandIdRaw?: string,
   ) {
-    return this.materialsService.findAll(search, brandId);
+    const brandId = brandIdRaw ? parseInt(brandIdRaw, 10) : undefined;
+    const materials = await this.materialsService.findAll(search, isNaN(brandId as any) ? undefined : brandId);
+
+    return {
+      success: true,
+      items: materials.map((m) => ({
+        id: m.id,
+        material_code: m.material_code ?? null,
+        material_name: m.material_name,
+        unit: m.unit,
+        unit_price: Number(m.unit_price),
+        sell_price: Number(m.sell_price),
+        on_hand_stock: Number(m.on_hand_stock),
+        reorder_level: Number(m.reorder_level),
+        brand_id: m.brand_id ?? null,
+        brand_name: m.brand_name ?? null,
+      })),
+    };
+  }
+
+  /**
+   * =====================================================
+   * SEARCH MATERIALS (Smart Search)
+   * =====================================================
+   * GET /inventory/materials/search?q=copper&limit=20
+   * 
+   * Query Parameters:
+   * - q (required): Search term (min 1 character)
+   * - limit (optional): Max results, capped at 50, default 50
+   * 
+   * Searches by material_name, material_code, product_type (brand type), or brand_name.
+   * Returns MaterialSearchResult[] with fields: id, material_name, material_code,
+   * product_type, brand_name, unit, unit_price, sell_price
+   * =====================================================
+   */
+  @Get('search')
+  async searchMaterials(
+    @Query('q') q?: string,
+    @Query('limit') limit?: string,
+  ) {
+    if (!q || q.trim().length < 1) {
+      throw new BadRequestException('Query parameter "q" is required and must be at least 1 character');
+    }
+
+    const parsedLimit = limit ? parseInt(limit, 10) : 50;
+    const cappedLimit = isNaN(parsedLimit) ? 50 : Math.min(Math.max(parsedLimit, 1), 50);
+
+    return this.materialsService.searchMaterials(q.trim(), cappedLimit);
+  }
+
+  /**
+   * =====================================================
+   * GET MATERIAL TREE
+   * =====================================================
+   * GET /inventory/materials/tree
+   * 
+   * Returns hierarchical tree structure for the left panel:
+   * Product Types as parent nodes with MAT-type Brands as children.
+   * Brands without a product_type_id appear under "Uncategorized".
+   * 
+   * Response Example:
+   * {
+   *   "success": true,
+   *   "tree": [
+   *     {
+   *       "id": 1,
+   *       "name": "Breaker",
+   *       "type": "product-type",
+   *       "children": [
+   *         { "id": 5, "name": "Schneider", "type": "brand", "prefix": "SCH" }
+   *       ]
+   *     },
+   *     {
+   *       "id": null,
+   *       "name": "Uncategorized",
+   *       "type": "product-type",
+   *       "children": [...]
+   *     }
+   *   ]
+   * }
+   * =====================================================
+   */
+  @Get('tree')
+  async getTree() {
+    return this.materialsService.getTree();
   }
 
   /**
@@ -118,6 +231,13 @@ export class MaterialsController {
     return this.materialsService.getMaterialBrands();
   }
 
+  @Get('next-code')
+  async getNextMaterialCode(
+    @Query('brandId', new ParseIntPipe()) brandId: number,
+  ) {
+    return this.materialsService.getNextMaterialCode(brandId);
+  }
+
   /**
    * =====================================================
    * GET LOW STOCK MATERIALS
@@ -133,6 +253,35 @@ export class MaterialsController {
   @Get('low-stock')
   async getLowStockMaterials() {
     return this.materialsService.getLowStockMaterials();
+  }
+
+  /**
+   * =====================================================
+   * GET MATERIAL HISTORY
+   * =====================================================
+   * GET /inventory/materials/:id/history
+   * 
+   * Path Parameter:
+   * - id: Material ID (number)
+   * 
+   * Returns price history and stock movements for the material,
+   * each ordered by created_at DESC and limited to 100 records.
+   * 
+   * Response Example:
+   * {
+   *   "success": true,
+   *   "priceHistory": [
+   *     { "id": 1, "unit_price": 100, "sell_price": 150, "created_by": 1, "created_at": "..." }
+   *   ],
+   *   "stockMovements": [
+   *     { "id": 1, "movement_type": "ADJUST", "qty": 10, "source_type": "MANUAL", ... }
+   *   ]
+   * }
+   * =====================================================
+   */
+  @Get(':id/history')
+  async getHistory(@Param('id', ParseIntPipe) id: number) {
+    return this.materialsService.getHistory(id);
   }
 
   /**
@@ -180,6 +329,48 @@ export class MaterialsController {
   ) {
     const userId = req.user?.id || 1;
     return this.materialsService.update(id, updateMaterialDto, userId);
+  }
+
+  /**
+   * =====================================================
+   * ADJUST STOCK
+   * =====================================================
+   * POST /inventory/materials/:id/adjust
+   *
+   * Path Parameter:
+   * - id: Material ID (number)
+   *
+   * Request Body Example:
+   * {
+   *   "direction": "increase",
+   *   "quantity": 50,
+   *   "remarks": "Received from supplier"
+   * }
+   *
+   * Validates:
+   * - direction must be 'increase' or 'decrease'
+   * - quantity must be between 1 and 999999
+   * - remarks must not exceed 500 characters
+   * - decrease must not reduce on_hand_stock below zero
+   *
+   * Records a Stock_Movement with movement_type = 'ADJUST'
+   * Response: { success, message, material }
+   * =====================================================
+   */
+  @Post(':id/adjust')
+  async adjustStock(
+    @Param('id', ParseIntPipe) id: number,
+    @Body() stockAdjustmentDto: StockAdjustmentDto,
+    @Request() req: any,
+  ) {
+    const userId = req.user?.id || 1;
+
+    // Validate direction
+    if (!stockAdjustmentDto.direction || !['increase', 'decrease'].includes(stockAdjustmentDto.direction)) {
+      throw new BadRequestException('Direction must be "increase" or "decrease"');
+    }
+
+    return this.materialsService.adjustStock(id, stockAdjustmentDto, userId);
   }
 
   /**

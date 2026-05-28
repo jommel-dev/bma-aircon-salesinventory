@@ -550,6 +550,53 @@ export class PurchaseService {
     return 'ACU';
   }
 
+  /**
+   * Validates ACM product items before processing.
+   * - Material name is required
+   * - Quantity must be between 1 and 999999
+   */
+  private validateAcmProductItems(
+    productItems: Array<Record<string, unknown>>,
+  ): void {
+    for (const [index, item] of productItems.entries()) {
+      const transType = String(item.transType ?? item.trans_type ?? 'purchase').trim().toLowerCase();
+      if (transType !== 'purchase') {
+        continue;
+      }
+
+      const materialId = this.toOptionalNumber(item.materialId ?? item.productId);
+      const materialName = String(item.materialName ?? '').trim();
+
+      // Material name is required when no materialId is provided
+      if (!materialId && !materialName) {
+        throw new BadRequestException(
+          `productItems[${index}]: Material name is required for ACM items`,
+        );
+      }
+
+      // Quantity validation: must be between 1 and 999999
+      const quantity = this.toOptionalNumber(item.totalSetQty ?? item.quantity);
+      const unitTypesQty = Array.isArray(item.unitTypesQty) ? item.unitTypesQty : [];
+      const qtyFromList = unitTypesQty.reduce((sum: number, current: any) => {
+        const parsedQty = this.toOptionalNumber(current.qty ?? current.value) ?? 0;
+        return sum + (parsedQty > 0 ? parsedQty : 0);
+      }, 0);
+      const effectiveQty = qtyFromList > 0 ? qtyFromList : (quantity ?? 0);
+
+      if (effectiveQty < 1 || effectiveQty > 999999) {
+        throw new BadRequestException(
+          `productItems[${index}]: Quantity is required and must be between 1 and 999,999`,
+        );
+      }
+
+      if (!Number.isInteger(effectiveQty)) {
+        throw new BadRequestException(
+          `productItems[${index}]: Quantity must be a whole number between 1 and 999,999`,
+        );
+      }
+    }
+  }
+
   private toOptionalNumber(value: unknown): number | null {
     if (value === null || value === undefined || value === '') {
       return null;
@@ -1125,6 +1172,12 @@ export class PurchaseService {
 
     if (productItems.length === 0) {
       return { success: false, message: 'At least one product item is required' };
+    }
+
+    // Validate ACM-specific fields before processing
+    const poType = String(createPurchaseDto.poType ?? 'ACU').trim().toUpperCase();
+    if (poType === 'ACM') {
+      this.validateAcmProductItems(productItems as unknown as Array<Record<string, unknown>>);
     }
 
     try {
@@ -2203,7 +2256,7 @@ export class PurchaseService {
         }
         const poType = this.normalizePoType(poTypeResult.rows[0]?.po_type);
 
-        // For ACM (Materials), skip serial validation and just complete
+        // For ACM (Materials), skip serial validation, complete, and record stock movements
         if (poType === 'ACM') {
           const purchaseColumns = await this.getTableColumns(client, 'tblpurchase_orders');
           const statusColumn = this.pickColumn(purchaseColumns, ['status']);
@@ -2215,6 +2268,52 @@ export class PurchaseService {
             `UPDATE tblpurchase_orders SET "${statusColumn}" = $1 WHERE id = $2`,
             ['completed', id],
           );
+
+          // Record inbound stock movements for each ACM line item
+          const materialItemColumns = await this.getTableColumns(client, 'tbltransaction_material_items');
+          const materialIdCol = this.pickColumn(materialItemColumns, ['material_id', 'productId', 'product_id']);
+          const quantityCol = this.pickColumn(materialItemColumns, ['quantity', 'totalSetQty', 'total_set_qty']);
+          const purchaseIdCol = this.pickColumn(materialItemColumns, ['purchase_id', 'purchaseId']);
+          const transTypeCol = this.pickColumn(materialItemColumns, ['trans_type', 'transType']);
+
+          if (materialIdCol && quantityCol && purchaseIdCol) {
+            const materialItemsResult = await client.query<{ material_id: string; quantity: string; item_id: string }>(
+              `SELECT "${materialIdCol}" AS material_id, "${quantityCol}" AS quantity, id AS item_id
+               FROM tbltransaction_material_items
+               WHERE "${purchaseIdCol}" = $1
+               ${transTypeCol ? `AND LOWER(COALESCE("${transTypeCol}", 'purchase')) = 'purchase'` : ''}`,
+              [id],
+            );
+
+            for (const row of materialItemsResult.rows) {
+              const materialId = this.toOptionalNumber(row.material_id);
+              const qty = this.toOptionalNumber(row.quantity) ?? 0;
+
+              if (materialId && qty > 0) {
+                // Update on_hand_stock in tblmaterials
+                await client.query(
+                  `UPDATE tblmaterials SET on_hand_stock = COALESCE(on_hand_stock, 0) + $1, updated_at = NOW() WHERE id = $2`,
+                  [qty, materialId],
+                );
+
+                // Record stock movement (type IN) via MaterialStockService
+                await this.materialStockService.recordMovement(
+                  {
+                    materialId,
+                    movementType: 'IN',
+                    qty,
+                    sourceType: 'PO',
+                    sourceId: id,
+                    sourceLineKey: `po-${id}-item-${row.item_id}`,
+                    statusSnapshot: 'completed',
+                    remarks: `Inbound from ACM purchase order #${id}`,
+                    createdBy: userId,
+                  },
+                  { client },
+                );
+              }
+            }
+          }
 
           return { purchaseId: id, status: 'completed' };
         }
@@ -2998,6 +3097,12 @@ export class PurchaseService {
         const productItems = Array.isArray(payload.productItems)
           ? payload.productItems
           : [];
+
+        // Validate ACM-specific fields during update
+        const updatePoType = String(payload.poType ?? 'ACU').trim().toUpperCase();
+        if (updatePoType === 'ACM' && productItems.length > 0) {
+          this.validateAcmProductItems(productItems as unknown as Array<Record<string, unknown>>);
+        }
 
         let computedTotalAmount = 0;
         for (const item of productItems) {

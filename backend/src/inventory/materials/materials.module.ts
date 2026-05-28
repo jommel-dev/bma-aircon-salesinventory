@@ -17,6 +17,7 @@ import { Module } from '@nestjs/common';
 import { MaterialsService } from './materials.service';
 import { MaterialsController } from './materials.controller';
 import { DatabaseModule } from '../../database/database.module';
+import { JwtAuthGuard } from '../../auth/jwt-auth.guard';
 
 @Module({
   /**
@@ -35,7 +36,7 @@ import { DatabaseModule } from '../../database/database.module';
    * providers: Services that can be injected
    * MaterialsService contains business logic
    */
-  providers: [MaterialsService],
+  providers: [MaterialsService, JwtAuthGuard],
   
   /**
    * exports: Services that other modules can use

@@ -6,6 +6,7 @@ import { LoginModule } from './auth/login/login.module';
 import { DatabaseModule } from './database/database.module';
 import { BrandsModule } from './inventory/brands/brands.module';
 import { ProductsModule } from './inventory/products/products.module';
+import { ProductTypesModule } from './inventory/product-types/product-types.module';
 import { CapacityModule } from './inventory/capacity/capacity.module';
 import { MaterialItemsModule } from './inventory/material-items/material-items.module';
 import { UsersModule } from './usermanage/users/users.module';
@@ -33,6 +34,7 @@ import { PayrollModule } from './payroll/payroll.module';
     LoginModule,
     BrandsModule,
     ProductsModule,
+    ProductTypesModule,
     CapacityModule,
     MaterialItemsModule,
     MaterialsModule, // NEW: Material Inventory Module

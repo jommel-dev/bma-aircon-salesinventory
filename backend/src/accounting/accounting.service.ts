@@ -1093,7 +1093,7 @@ export class AccountingService {
     const dateTo = this.normalizeDateOrNull(filters.dateTo);
 
     const whereClause = `
-      WHERE LOWER(COALESCE(so.status, '')) IN ('remitted', 'completed')
+      WHERE LOWER(COALESCE(so.status, '')) IN ('remitted', 'completed', 'complete')
         AND COALESCE(so."scheduleDate", so.created_at::text) IS NOT NULL
         AND ($1::date IS NULL OR COALESCE(so."scheduleDate", so.created_at::text)::date >= $1::date)
         AND ($2::date IS NULL OR COALESCE(so."scheduleDate", so.created_at::text)::date <= $2::date)
@@ -1173,7 +1173,7 @@ export class AccountingService {
     const dateTo = this.normalizeDateOrNull(filters.dateTo);
 
     const whereClause = `
-      WHERE LOWER(COALESCE(so.status, '')) IN ('remitted', 'completed')
+      WHERE LOWER(COALESCE(so.status, '')) IN ('remitted', 'completed', 'complete')
         AND COALESCE(so."scheduleDate", so.created_at::text) IS NOT NULL
         AND ($1::date IS NULL OR COALESCE(so."scheduleDate", so.created_at::text)::date >= $1::date)
         AND ($2::date IS NULL OR COALESCE(so."scheduleDate", so.created_at::text)::date <= $2::date)
@@ -1939,7 +1939,7 @@ export class AccountingService {
     // Aggregate weekly sales from remitted/completed sales orders
     // Week start is Monday (ISO week), using date_trunc('week', date)
     const baseWhere = `
-      WHERE LOWER(COALESCE(so.status, '')) IN ('remitted', 'completed')
+      WHERE LOWER(COALESCE(so.status, '')) IN ('remitted', 'completed', 'complete')
         AND COALESCE(so."scheduleDate", so.created_at::text) IS NOT NULL
         AND ($1::date IS NULL OR COALESCE(so."scheduleDate", so.created_at::text)::date >= $1::date)
         AND ($2::date IS NULL OR COALESCE(so."scheduleDate", so.created_at::text)::date <= $2::date)

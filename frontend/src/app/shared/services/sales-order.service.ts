@@ -454,6 +454,8 @@ export interface ProductOption {
   name: string;
   brandName?: string;
   brandType?: string;
+  productType?: string;
+  itemCode?: string;
   unit?: string;
   unitTypes?: string[];
   capacities: ProductCapacityOption[];

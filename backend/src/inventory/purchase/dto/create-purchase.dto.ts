@@ -39,6 +39,22 @@ export class CreatePurchaseProductItemDto {
 	totalSetQty?: number;
 	purchaseId?: number | null;
 	salesId?: number | null;
+
+	// ACM (Aircon Materials) specific fields
+	materialId?: string | number;
+	materialName?: string;
+	materialCode?: string;
+	materialUnit?: string;
+	materialBrandId?: string | number;
+	materialBrandName?: string;
+
+	// ACP (Aircon Parts) specific fields
+	partId?: string | number;
+	partsName?: string;
+	partsCode?: string;
+	partsModel?: string;
+	partsBrandId?: string | number;
+	partsBrandName?: string;
 }
 
 export class CreatePurchaseDto {

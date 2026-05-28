@@ -1,544 +1,1143 @@
+import { Component, OnInit, HostListener, ElementRef } from '@angular/core';
 import { CommonModule } from '@angular/common';
-import { Component, HostListener, OnInit } from '@angular/core';
 import { FormsModule } from '@angular/forms';
 import { PageBreadcrumbComponent } from '../../shared/components/common/page-breadcrumb/page-breadcrumb.component';
 import {
-  EntityEditFieldConfig,
-  EntityEditModalComponent,
-} from '../../shared/components/common/entity-edit-modal/entity-edit-modal.component';
-import {
-  ProductCapacityOption,
-  ProductOption,
-  SalesOrderService,
-} from '../../shared/services/sales-order.service';
-import { RbacService } from '../../shared/services/rbac.service';
-import { BusinessSettingsService } from '../../shared/services/business-settings.service';
-import { apiClient } from '../../shared/services/api-client';
-import axios from 'axios';
+  MaterialInventoryService,
+  Material,
+  ProductTypeNode,
+  BrandNode,
+  PriceHistoryRecord,
+  StockMovementRecord,
+  StockAdjustmentDto,
+} from '../../shared/services/material-inventory.service';
+import { computeMaterialRow, ComputedMaterialRow } from './material-computations.util';
+import { getStockStatus, getStockBadgeConfig, StockStatus, StockBadgeConfig } from './stock-status.util';
 
-interface BrandFolder {
-  id: number | null;
-  name: string;
-  products: ProductOption[];
-}
-
-interface BrandOption {
-  id: number;
-  name: string;
-  type?: string;
-}
-
-interface ApiMutationResponse {
-  success: boolean;
-  message?: string;
-}
-
-type InventoryNodeType = 'brand' | 'product' | 'capacity';
-type CapacitySerialTab = 'in-stock' | 'reserved' | 'installed';
-type CreationFormMode = 'all-in-one' | 'brand-only' | 'product-capacity' | 'capacity-only';
-type InventoryEditModalMode = 'product' | 'capacity';
-
-interface SerialEntry {
-  serialNumber: string;
-  unitType: string;
-}
-
-interface UnitTypeOption {
-  value: string;
-  label: string;
-  count: number;
-}
-
-interface CapacityDraft {
-  srp: number | null;
-  cashPrice: number | null;
-  ccPrice: number | null;
-  unitPrice: number | null;
-  netPrice: number | null;
-  indoorModel: string;
-  outdoorModel: string;
-}
-
-interface CapacityStockSummary {
-  branchId?: number | null;
-  productId: number;
-  capacityId: number;
+/** A single material row in the all-in-one creation form */
+interface AllInOneMaterialRow {
+  material_name: string;
+  material_code: string;
   unit: string;
-  unitTypes: string[];
-  unitTypeCount: number;
-  counts: {
-    inStock: number;
-    reserved: number;
-    installed: number;
-  };
-  serials: {
-    inStock: SerialEntry[];
-    reserved: SerialEntry[];
-    installed: SerialEntry[];
-  };
-}
-
-interface LandCostingReportItemRow {
-  indoorSerial: string;
-  outdoorSerial: string;
-  landedCost: number;
-  srp: number;
-  marginAmount: number;
-  serialStatus: string;
-  isDefective: boolean;
-  isReturned: boolean;
-}
-
-interface LandCostingReportGroup {
-  productName: string;
-  capacityName: string;
-  vendorName: string;
-  poNumber: string;
-  poDate: string | null;
-  rows: LandCostingReportItemRow[];
-  inStockCount: number;
-  inStockIndoorCount: number;
-  inStockOutdoorCount: number;
+  unit_price: number;
+  sell_price: number;
+  on_hand_stock: number;
+  reorder_level: number;
+  brand_name: string;
+  brandSuggestions: { id: number; brandName: string; prefix: string; product_type_id?: number | null }[];
+  isBrandDropdownOpen: boolean;
 }
 
 @Component({
   selector: 'app-inventory',
-  imports: [CommonModule, FormsModule, PageBreadcrumbComponent, EntityEditModalComponent],
+  standalone: true,
+  imports: [CommonModule, FormsModule, PageBreadcrumbComponent],
   templateUrl: './inventory.component.html',
 })
 export class InventoryComponent implements OnInit {
-  private readonly landCostingPermissionPrefix = 'inventory.land-costing.';
-  private readonly landCostingViewPermissionKeys = ['inventory.land-costing.view'];
-  private readonly landCostingMarginPermissionKeys = ['inventory.land-costing.margin.view'];
-  private readonly landCostingExportPermissionKeys = ['inventory.land-costing.export'];
+  /** Tree data from the backend */
+  treeNodes: ProductTypeNode[] = [];
 
-  readonly availableCapacityOptions = [
-    '0.5 HP',
-    '0.6 HP',
-    '0.8 HP',
-    '1.0 HP',
-    '1.5 HP',
-    '2.0 HP',
-    '2.5 HP',
-    '3.0 HP',
-    '3.5 HP',
-    '4.0 HP',
-    '5.0 HP',
-    '6.0 HP',
-    '3 TR',
-    '4 TR',
-    '5 TR',
-    '6 TR',
-  ];
+  /** Set of expanded product type node IDs (null = "Uncategorized") */
+  expandedNodes = new Set<number | null>();
 
-  readonly availableUnitTypeOptions = ['Indoor', 'Outdoor', 'Window', 'Panel'];
+  /** Currently selected brand node */
+  selectedBrandId: number | null = null;
 
-  isLoading = false;
-  errorMessage = '';
-  businessName = '';
+  /** Name of the currently selected brand */
+  selectedBrandName = '';
 
-  brandFolders: BrandFolder[] = [];
-  treeSearch = '';
-  selectedBrandName: string | null = null;
-  selectedProductId: number | null = null;
-  selectedCapacityId: number | null = null;
+  /** Loading state for the tree */
+  isTreeLoading = false;
 
-  newCapacityName = '';
-  newCapacitySrp: number | null = null;
-  newCapacityCashPrice: number | null = null;
-  newCapacityCcPrice: number | null = null;
-  newCapacityUnitPrice: number | null = null;
-  newCapacityNetPrice: number | null = null;
-  newCapacityIndoorModel = '';
-  newCapacityOutdoorModel = '';
-  isAddingCapacity = false;
-  isUpdatingProduct = false;
-  isUpdatingCapacity = false;
-  addCapacityError = '';
-  addCapacitySuccess = '';
+  /** Error message for tree loading */
+  treeError = '';
 
-  isLoadingCapacityStock = false;
-  capacityStockError = '';
-  isLoadingLandCostingReport = false;
-  landCostingError = '';
-  landCostingDateFrom = '';
-  landCostingDateTo = '';
-  landCostingGroups: LandCostingReportGroup[] = [];
-  landCostingTotals = {
-    serialCount: 0,
-    landedCost: 0,
-    srp: 0,
-    marginAmount: 0,
-    marginPercent: 0,
-  };
-  activeCapacitySerialTab: CapacitySerialTab = 'in-stock';
-  serialSearch = '';
-  selectedSerialUnitType = 'all';
-  serialPageSize = 24;
-  serialCurrentPage = 1;
-  capacityStockSummary: CapacityStockSummary | null = null;
+  /** Materials for the selected brand (with computed columns) */
+  materials: ComputedMaterialRow[] = [];
 
-  // Bulk serial selection
-  selectedSerials = new Set<string>();
-  isBulkUpdating = false;
-  bulkUpdateMessage = '';
-  bulkUpdateError = '';
+  /** Loading state for materials table */
+  isMaterialsLoading = false;
 
-  // CSV upload modal
-  isCsvModalOpen = false;
-  isCsvParsing = false;
-  isCsvConfirming = false;
-  csvModalTab: 'will-install' | 'already-installed' | 'not-found' | 'other' = 'will-install';
-  csvPreviewResult: {
-    summary: {
-      total: number; toInstall: number; alreadyInstalled: number; notFound: number; otherStatus: number;
-      totalSets: number; unitTypeCounts: Record<string, number>; remainingStocks: number;
-    };
-    toInstall: Array<{ serialNumber: string; csvStatus: string; csvUnitType: string; unitType: string; productName: string; capacityName: string }>;
-    alreadyInstalled: Array<{ serialNumber: string; unitType: string; productName: string; capacityName: string }>;
-    notFound: Array<{ serialNumber: string; csvStatus: string; csvUnitType: string }>;
-    otherStatus: Array<{ serialNumber: string; csvStatus: string; dbStatus: string; unitType: string; productName: string; capacityName: string }>;
-  } | null = null;
-  csvConfirmMessage = '';
-  csvConfirmError = '';
+  /** Error message for materials loading */
+  materialsError = '';
 
-  // Per-tab target status selections
-  csvToInstallTargetStatus = 'installed';
-  csvAlreadyInstalledTargetStatus = 'in-stock';
-  csvNotFoundTargetStatus = 'in-stock';
-  csvNotFoundInsert = false;  // whether to insert not-found serials
-  isCsvRevertingInstalled = false;
-  isCsvInsertingNotFound = false;
+  /** ID of the material whose action menu is currently open (null = no menu open) */
+  activeMenuId: number | null = null;
 
-  // Cached stock counts for capacities to display in the folder tree
-  isLoadingCapacityCounts = false;
-  capacityCountsError = '';
-  capacityStockCounts: Record<
-    number,
-    {
-      inStock: number;
-      reserved: number;
-      installed: number;
-      total: number;
-      unit: string;
-      unitTypeCount: number;
-    }
-  > = {};
+  // --- Edit Form State ---
 
-  expandedBrands = new Set<string>();
-  expandedProducts = new Set<string>();
-
-  brandContextMenuVisible = false;
-  brandContextMenuX = 0;
-  brandContextMenuY = 0;
-  brandContextMenuBrandName: string | null = null;
-  isCreationDrawerOpen = false;
-  isLandCostingDrawerOpen = false;
+  /** Whether the edit modal is visible */
   isEditModalOpen = false;
-  editModalMode: InventoryEditModalMode | null = null;
-  editModalTitle = '';
-  editModalDescription = '';
-  editModalSubmitLabel = 'Save Changes';
-  editModalFields: EntityEditFieldConfig[] = [];
-  editModalInitialValues: Record<string, unknown> = {};
-  isEditModalSubmitting = false;
 
-  creationFormMode: CreationFormMode = 'all-in-one';
-  isSubmittingCreation = false;
-  creationError = '';
-  creationSuccess = '';
+  /** Whether the edit form is currently submitting */
+  isEditSaving = false;
 
-  createBrandName = '';
+  /** Error message from the edit form submission */
+  editError = '';
 
-  allInOneBrandName = '';
-  allInOneIncludeProduct = true;
-  allInOneProductName = '';
-  allInOneUnit = 'SET';
-  allInOneSelectedUnitTypes: string[] = ['Indoor', 'Outdoor'];
-  allInOneIncludeCapacity = true;
-  allInOneSelectedCapacities: string[] = ['1.0 HP'];
-  allInOneCapacityDetails: Record<string, CapacityDraft> = {
-    '1.0 HP': this.createEmptyCapacityDraft(),
+  /** The form model for editing a material */
+  editForm: {
+    id: number;
+    material_name: string;
+    material_code: string;
+    description: string;
+    unit: string;
+    unit_price: number;
+    sell_price: number;
+    on_hand_stock: number;
+    reorder_level: number;
+  } = {
+    id: 0,
+    material_name: '',
+    material_code: '',
+    description: '',
+    unit: '',
+    unit_price: 0,
+    sell_price: 0,
+    on_hand_stock: 0,
+    reorder_level: 0,
   };
 
-  productFormBrandName = '';
-  productFormProductName = '';
-  productFormUnit = 'SET';
-  productFormSelectedUnitTypes: string[] = ['Indoor', 'Outdoor'];
-  productFormIncludeCapacity = true;
-  productFormSelectedCapacities: string[] = ['1.0 HP'];
-  productFormCapacityDetails: Record<string, CapacityDraft> = {
-    '1.0 HP': this.createEmptyCapacityDraft(),
+  // --- Delete Confirmation Dialog ---
+
+  /** Whether the delete confirmation dialog is visible */
+  isDeleteDialogOpen = false;
+
+  /** The material currently targeted for deletion */
+  materialToDelete: ComputedMaterialRow | null = null;
+
+  /** Whether a delete operation is in progress */
+  isDeleting = false;
+
+  /** Error message from a failed delete operation */
+  deleteError = '';
+
+  // --- History Modal State ---
+
+  /** Whether the history modal is visible */
+  isHistoryModalOpen = false;
+
+  /** Whether history data is currently loading */
+  isHistoryLoading = false;
+
+  /** Error message from history loading */
+  historyError = '';
+
+  /** The material whose history is being viewed */
+  historyMaterialName = '';
+
+  /** Price history records (ordered by created_at DESC, max 100) */
+  priceHistory: PriceHistoryRecord[] = [];
+
+  /** Stock movement records (ordered by created_at DESC, max 100) */
+  stockMovements: StockMovementRecord[] = [];
+
+  // --- Adjustment Form State ---
+
+  /** Whether the adjustment modal is visible */
+  isAdjustmentModalOpen = false;
+
+  /** Whether the adjustment form is currently submitting */
+  isAdjustmentSaving = false;
+
+  /** Error message from the adjustment form submission */
+  adjustmentError = '';
+
+  /** The material currently being adjusted */
+  adjustmentMaterial: ComputedMaterialRow | null = null;
+
+  /** The form model for stock adjustment */
+  adjustmentForm: StockAdjustmentDto = {
+    direction: 'increase',
+    quantity: 1,
+    remarks: '',
   };
 
-  capacityOnlySelectedCapacities: string[] = ['1.0 HP'];
-  capacityOnlyDetails: Record<string, CapacityDraft> = {
-    '1.0 HP': this.createEmptyCapacityDraft(),
-  };
+  // --- All-in-One Create Drawer State ---
+
+  /** Whether the all-in-one create drawer is visible */
+  isCreateDrawerOpen = false;
+
+  /** Whether the create form is currently submitting */
+  isCreateSaving = false;
+
+  /** Error message from the create form submission */
+  createError = '';
+
+  /** Success message from the create form submission */
+  createSuccess = '';
+
+  /** Product types list for dropdowns */
+  productTypes: { id: number; name: string; prefix: string }[] = [];
+
+  /** Material brands list for dropdowns */
+  materialBrands: { id: number; brandName: string; prefix: string; product_type_id?: number | null }[] = [];
+
+  /** All-in-one: Product Type smart search text */
+  productTypeSearch = '';
+
+  /** All-in-one: Product Type prefix (for new types) */
+  productTypePrefix = '';
+
+  /** All-in-one: Filtered product type suggestions */
+  productTypeSuggestions: { id: number; name: string; prefix: string }[] = [];
+
+  /** All-in-one: Whether the product type dropdown is open */
+  isProductTypeDropdownOpen = false;
+
+  /** All-in-one: Material rows to create */
+  materialRows: AllInOneMaterialRow[] = [];
+
+  // --- Context Menu State ---
+
+  /** Whether the context menu is visible */
+  isContextMenuOpen = false;
+
+  /** Position of the context menu */
+  contextMenuX = 0;
+  contextMenuY = 0;
+
+  /** Type of context menu: 'product-type' or 'brand' */
+  contextMenuType: 'product-type' | 'brand' = 'product-type';
+
+  /** The node that was right-clicked */
+  contextMenuNodeId: number | null = null;
+  contextMenuNodeName = '';
+
+  // --- Bulk Upload State ---
+
+  /** Whether the bulk upload modal is visible */
+  isBulkUploadModalOpen = false;
+
+  /** Whether the bulk upload is currently submitting */
+  isBulkUploading = false;
+
+  /** Error message from bulk upload */
+  bulkUploadError = '';
+
+  /** Parsed rows from the uploaded file */
+  bulkUploadRows: any[] = [];
+
+  /** File name of the uploaded file */
+  bulkUploadFileName = '';
+
+  /** Upload results after submission */
+  bulkUploadResults: { success: boolean; summary: { total: number; created: number; skipped: number; failed: number }; results: any[] } | null = null;
 
   constructor(
-    private readonly salesOrderService: SalesOrderService,
-    private readonly rbacService: RbacService,
-    private readonly businessSettingsService: BusinessSettingsService,
+    private readonly materialInventoryService: MaterialInventoryService,
+    private readonly elementRef: ElementRef
   ) {}
 
-  // Bulk upload state
-  isBulkUploadModalOpen = false;
-  isBulkUploadParsing = false;
-  isBulkUploadSubmitting = false;
-  bulkUploadError = '';
-  bulkUploadSuccess = '';
-  bulkUploadPreviewRows: Array<Record<string, string>> = [];
-  bulkUploadResults: Array<{ row: number; status: string; message: string }> | null = null;
-  bulkUploadSummary: { created: number; skipped: number; failed: number; total: number } | null = null;
-
-  readonly bulkUploadColumns = [
-    'brand', 'product', 'unit', 'unitTypes', 'capacity',
-    'srp', 'netPrice', 'cashPrice', 'ccPrice', 'unitPrice',
-    'indoorModel', 'outdoorModel',
-  ];
-
-  openBulkUploadModal(): void {
-    this.isBulkUploadModalOpen = true;
-    this.bulkUploadError = '';
-    this.bulkUploadSuccess = '';
-    this.bulkUploadPreviewRows = [];
-    this.bulkUploadResults = null;
-    this.bulkUploadSummary = null;
+  ngOnInit(): void {
+    void this.loadTree();
   }
 
+  /**
+   * Fetch the tree data from the backend API
+   */
+  async loadTree(): Promise<void> {
+    this.isTreeLoading = true;
+    this.treeError = '';
+    try {
+      this.treeNodes = await this.materialInventoryService.getTree();
+    } catch {
+      this.treeError = 'Failed to load tree data.';
+      this.treeNodes = [];
+    } finally {
+      this.isTreeLoading = false;
+    }
+  }
+
+  /**
+   * Toggle expand/collapse state of a product type node
+   */
+  toggleNode(nodeId: number | null): void {
+    if (this.expandedNodes.has(nodeId)) {
+      this.expandedNodes.delete(nodeId);
+    } else {
+      this.expandedNodes.add(nodeId);
+    }
+  }
+
+  /**
+   * Check if a product type node is expanded
+   */
+  isExpanded(nodeId: number | null): boolean {
+    return this.expandedNodes.has(nodeId);
+  }
+
+  /**
+   * Handle brand node click - select the brand and load materials
+   */
+  selectBrand(brand: BrandNode): void {
+    this.selectedBrandId = brand.id;
+    this.selectedBrandName = brand.name;
+    void this.loadMaterials(brand.id);
+  }
+
+  /**
+   * Check if a brand is currently selected
+   */
+  isBrandSelected(brandId: number): boolean {
+    return this.selectedBrandId === brandId;
+  }
+
+  /**
+   * Fetch materials for the selected brand and compute derived columns
+   */
+  async loadMaterials(brandId: number): Promise<void> {
+    this.isMaterialsLoading = true;
+    this.materialsError = '';
+    this.materials = [];
+    try {
+      const rawMaterials: Material[] = await this.materialInventoryService.getMaterials(undefined, brandId);
+      this.materials = rawMaterials.map(computeMaterialRow);
+    } catch {
+      this.materialsError = 'Failed to load materials.';
+      this.materials = [];
+    } finally {
+      this.isMaterialsLoading = false;
+    }
+  }
+
+  /**
+   * Get the stock badge configuration for a material row.
+   * Returns the label and Tailwind CSS classes for the badge.
+   */
+  getStockBadge(row: ComputedMaterialRow): StockBadgeConfig {
+    const status = getStockStatus(row.on_hand_stock, row.reorder_level);
+    return getStockBadgeConfig(status);
+  }
+
+  // --- Action Menu ---
+
+  /**
+   * Listen for clicks on the document to close the action menu
+   * when clicking outside of it.
+   */
+  @HostListener('document:click', ['$event'])
+  onDocumentClick(event: MouseEvent): void {
+    if (this.activeMenuId === null) return;
+    const target = event.target as HTMLElement;
+    // Check if the click is inside the action menu or its trigger button
+    const menuContainer = this.elementRef.nativeElement.querySelector('.action-menu-container.active');
+    if (menuContainer && !menuContainer.contains(target)) {
+      this.activeMenuId = null;
+    }
+  }
+
+  /**
+   * Toggle the action menu for a specific material row.
+   * Only one menu can be open at a time.
+   */
+  toggleActionMenu(event: MouseEvent, materialId: number): void {
+    event.stopPropagation();
+    this.activeMenuId = this.activeMenuId === materialId ? null : materialId;
+  }
+
+  /**
+   * Check if the action menu is open for a given material.
+   */
+  isMenuOpen(materialId: number): boolean {
+    return this.activeMenuId === materialId;
+  }
+
+  /**
+   * Handle action menu item click.
+   */
+  onMenuAction(action: 'edit' | 'delete' | 'adjustment' | 'history', material: ComputedMaterialRow): void {
+    this.activeMenuId = null;
+
+    switch (action) {
+      case 'edit':
+        this.openEditForm(material);
+        break;
+      case 'delete':
+        this.openDeleteDialog(material);
+        break;
+      case 'history':
+        this.openHistoryModal(material);
+        break;
+      case 'adjustment':
+        this.openAdjustmentForm(material);
+        break;
+      default:
+        console.log(`Action: ${action}`, material);
+        break;
+    }
+  }
+
+  // --- Edit Form Methods ---
+
+  /**
+   * Open the edit modal pre-populated with the material's current values.
+   */
+  openEditForm(material: ComputedMaterialRow): void {
+    this.editForm = {
+      id: material.id,
+      material_name: material.material_name,
+      material_code: material.material_code ?? '',
+      description: (material as any).description ?? '',
+      unit: material.unit,
+      unit_price: material.unit_price,
+      sell_price: material.sell_price,
+      on_hand_stock: material.on_hand_stock,
+      reorder_level: material.reorder_level,
+    };
+    this.editError = '';
+    this.isEditSaving = false;
+    this.isEditModalOpen = true;
+  }
+
+  /**
+   * Close the edit modal without saving.
+   */
+  closeEditForm(): void {
+    this.isEditModalOpen = false;
+    this.editError = '';
+  }
+
+  /**
+   * Submit the edit form to update the material via the API.
+   */
+  async submitEditForm(): Promise<void> {
+    this.isEditSaving = true;
+    this.editError = '';
+
+    try {
+      const { id, ...data } = this.editForm;
+      await this.materialInventoryService.updateMaterial(id, data);
+      this.isEditModalOpen = false;
+
+      // Refresh table data
+      if (this.selectedBrandId !== null) {
+        await this.loadMaterials(this.selectedBrandId);
+      }
+    } catch (err: any) {
+      this.editError =
+        err?.response?.data?.message ||
+        err?.message ||
+        'Failed to update material.';
+    } finally {
+      this.isEditSaving = false;
+    }
+  }
+
+  // --- Delete Dialog Methods ---
+
+  /**
+   * Open the delete confirmation dialog for a material.
+   */
+  openDeleteDialog(material: ComputedMaterialRow): void {
+    this.materialToDelete = material;
+    this.deleteError = '';
+    this.isDeleteDialogOpen = true;
+  }
+
+  /**
+   * Close the delete confirmation dialog without performing any action.
+   */
+  cancelDelete(): void {
+    this.isDeleteDialogOpen = false;
+    this.materialToDelete = null;
+    this.deleteError = '';
+  }
+
+  /**
+   * Confirm and perform the soft delete of the selected material.
+   */
+  async confirmDelete(): Promise<void> {
+    if (!this.materialToDelete) return;
+
+    this.isDeleting = true;
+    this.deleteError = '';
+
+    try {
+      await this.materialInventoryService.deleteMaterial(this.materialToDelete.id);
+      this.isDeleteDialogOpen = false;
+      this.materialToDelete = null;
+
+      // Refresh table data
+      if (this.selectedBrandId !== null) {
+        await this.loadMaterials(this.selectedBrandId);
+      }
+    } catch (error: any) {
+      this.deleteError = error?.response?.data?.message || error?.message || 'Failed to delete material.';
+    } finally {
+      this.isDeleting = false;
+    }
+  }
+
+  // --- History Modal Methods ---
+
+  /**
+   * Open the history modal and fetch history data for the given material.
+   */
+  openHistoryModal(material: ComputedMaterialRow): void {
+    this.historyMaterialName = material.material_name;
+    this.priceHistory = [];
+    this.stockMovements = [];
+    this.historyError = '';
+    this.isHistoryModalOpen = true;
+    void this.loadHistory(material.id);
+  }
+
+  /**
+   * Fetch history data (price history + stock movements) for a material.
+   */
+  async loadHistory(materialId: number): Promise<void> {
+    this.isHistoryLoading = true;
+    this.historyError = '';
+
+    try {
+      const response = await this.materialInventoryService.getHistory(materialId);
+      this.priceHistory = response.priceHistory ?? [];
+      this.stockMovements = response.stockMovements ?? [];
+    } catch (err: any) {
+      this.historyError =
+        err?.response?.data?.message ||
+        err?.message ||
+        'Failed to load history.';
+    } finally {
+      this.isHistoryLoading = false;
+    }
+  }
+
+  /**
+   * Close the history modal.
+   */
+  closeHistoryModal(): void {
+    this.isHistoryModalOpen = false;
+    this.priceHistory = [];
+    this.stockMovements = [];
+    this.historyError = '';
+  }
+
+  /**
+   * Check if a stock movement is a deficit record (OUT from SO).
+   */
+  isDeficitRecord(movement: StockMovementRecord): boolean {
+    return movement.movement_type === 'OUT' && movement.source_type === 'SO';
+  }
+
+  /**
+   * Format a date string for display.
+   */
+  formatDate(dateStr: string): string {
+    if (!dateStr) return '—';
+    const date = new Date(dateStr);
+    return date.toLocaleDateString('en-US', {
+      year: 'numeric',
+      month: 'short',
+      day: 'numeric',
+      hour: '2-digit',
+      minute: '2-digit',
+    });
+  }
+
+  // --- Adjustment Form Methods ---
+
+  /**
+   * Open the adjustment modal for a material.
+   */
+  openAdjustmentForm(material: ComputedMaterialRow): void {
+    this.adjustmentMaterial = material;
+    this.adjustmentForm = {
+      direction: 'increase',
+      quantity: 1,
+      remarks: '',
+    };
+    this.adjustmentError = '';
+    this.isAdjustmentSaving = false;
+    this.isAdjustmentModalOpen = true;
+  }
+
+  /**
+   * Close the adjustment modal without saving.
+   */
+  closeAdjustmentForm(): void {
+    this.isAdjustmentModalOpen = false;
+    this.adjustmentMaterial = null;
+    this.adjustmentError = '';
+  }
+
+  /**
+   * Get the current character count for the remarks field.
+   */
+  get remarksCharCount(): number {
+    return (this.adjustmentForm.remarks ?? '').length;
+  }
+
+  /**
+   * Submit the stock adjustment form.
+   */
+  async submitAdjustmentForm(): Promise<void> {
+    if (!this.adjustmentMaterial) return;
+
+    // Client-side validation
+    const qty = this.adjustmentForm.quantity;
+    if (!qty || qty < 1 || qty > 999999) {
+      this.adjustmentError = 'Quantity must be between 1 and 999,999.';
+      return;
+    }
+
+    const remarks = this.adjustmentForm.remarks ?? '';
+    if (remarks.length > 500) {
+      this.adjustmentError = 'Remarks must not exceed 500 characters.';
+      return;
+    }
+
+    this.isAdjustmentSaving = true;
+    this.adjustmentError = '';
+
+    try {
+      const dto: StockAdjustmentDto = {
+        direction: this.adjustmentForm.direction,
+        quantity: Number(qty),
+        remarks: remarks || undefined,
+      };
+
+      await this.materialInventoryService.adjustStock(this.adjustmentMaterial.id, dto);
+      this.isAdjustmentModalOpen = false;
+      this.adjustmentMaterial = null;
+
+      // Refresh table data
+      if (this.selectedBrandId !== null) {
+        await this.loadMaterials(this.selectedBrandId);
+      }
+    } catch (err: any) {
+      this.adjustmentError =
+        err?.response?.data?.message ||
+        err?.message ||
+        'Failed to adjust stock.';
+    } finally {
+      this.isAdjustmentSaving = false;
+    }
+  }
+
+  // --- All-in-One Create Drawer Methods ---
+
+  /**
+   * Open the all-in-one create drawer.
+   */
+  openCreateDrawer(): void {
+    this.createError = '';
+    this.createSuccess = '';
+    this.isCreateSaving = false;
+    this.productTypeSearch = '';
+    this.productTypePrefix = '';
+    this.productTypeSuggestions = [];
+    this.isProductTypeDropdownOpen = false;
+    this.materialRows = [this.createEmptyMaterialRow()];
+    this.isCreateDrawerOpen = true;
+    void this.loadDropdownData();
+  }
+
+  /**
+   * Close the all-in-one create drawer.
+   */
+  closeCreateDrawer(): void {
+    this.isCreateDrawerOpen = false;
+    this.createError = '';
+    this.createSuccess = '';
+  }
+
+  /**
+   * Load product types and material brands for dropdowns.
+   */
+  async loadDropdownData(): Promise<void> {
+    try {
+      const [productTypes, brands] = await Promise.all([
+        this.materialInventoryService.getProductTypes(),
+        this.materialInventoryService.getMaterialBrands(),
+      ]);
+      this.productTypes = productTypes;
+      this.materialBrands = brands;
+    } catch {
+      // Silently fail - dropdowns will be empty
+    }
+  }
+
+  /**
+   * Create an empty material row.
+   */
+  createEmptyMaterialRow(): AllInOneMaterialRow {
+    return {
+      material_name: '',
+      material_code: '',
+      unit: 'pcs',
+      unit_price: 0,
+      sell_price: 0,
+      on_hand_stock: 0,
+      reorder_level: 0,
+      brand_name: '',
+      brandSuggestions: [],
+      isBrandDropdownOpen: false,
+    };
+  }
+
+  /**
+   * Add a new material row to the list.
+   */
+  addMaterialRow(): void {
+    const newRow = this.createEmptyMaterialRow();
+
+    // Auto-assign code using product type prefix
+    const prefix = this.productTypePrefix.trim();
+    if (prefix) {
+      const seq = this.getNextSequenceForPrefix(prefix);
+      newRow.material_code = `${prefix}${String(seq).padStart(5, '0')}`;
+    }
+
+    this.materialRows.push(newRow);
+  }
+
+  /**
+   * Remove a material row by index (only if more than 1 row).
+   */
+  removeMaterialRow(index: number): void {
+    if (this.materialRows.length > 1) {
+      this.materialRows.splice(index, 1);
+    }
+  }
+
+  /**
+   * TrackBy function for ngFor on material rows.
+   */
+  trackByIndex(index: number): number {
+    return index;
+  }
+
+  /**
+   * Handle product type search input — filter suggestions.
+   */
+  onProductTypeSearchInput(): void {
+    const search = this.productTypeSearch.trim().toLowerCase();
+    if (!search) {
+      this.productTypeSuggestions = this.productTypes;
+    } else {
+      this.productTypeSuggestions = this.productTypes.filter(pt =>
+        pt.name.toLowerCase().includes(search)
+      );
+    }
+    this.isProductTypeDropdownOpen = true;
+  }
+
+  /**
+   * Handle product type input focus — show all suggestions.
+   */
+  onProductTypeFocus(): void {
+    this.productTypeSuggestions = this.productTypes;
+    this.isProductTypeDropdownOpen = true;
+  }
+
+  /**
+   * Select a product type suggestion.
+   */
+  selectProductTypeSuggestion(pt: { id: number; name: string; prefix: string }): void {
+    this.productTypeSearch = pt.name;
+    this.productTypePrefix = pt.prefix || '';
+    this.isProductTypeDropdownOpen = false;
+    // Auto-generate codes for all rows using this prefix
+    this.regenerateAllCodes();
+  }
+
+  /**
+   * Close product type dropdown (with delay for click to register).
+   */
+  onProductTypeBlur(): void {
+    setTimeout(() => {
+      this.isProductTypeDropdownOpen = false;
+    }, 200);
+  }
+
+  /**
+   * Check if the product type search text matches an existing product type.
+   */
+  get isProductTypeNew(): boolean {
+    if (!this.productTypeSearch.trim()) return false;
+    return !this.productTypes.some(
+      pt => pt.name.toLowerCase() === this.productTypeSearch.trim().toLowerCase()
+    );
+  }
+
+  /**
+   * Handle brand search input for a specific row — filter suggestions.
+   */
+  onBrandSearchInput(row: AllInOneMaterialRow): void {
+    const search = row.brand_name.trim().toLowerCase();
+    if (!search) {
+      row.brandSuggestions = this.materialBrands;
+    } else {
+      row.brandSuggestions = this.materialBrands.filter(b =>
+        b.brandName.toLowerCase().includes(search)
+      );
+    }
+    row.isBrandDropdownOpen = true;
+  }
+
+  /**
+   * Handle brand input focus for a specific row — show all suggestions.
+   */
+  onBrandFocus(row: AllInOneMaterialRow): void {
+    row.brandSuggestions = this.materialBrands;
+    row.isBrandDropdownOpen = true;
+  }
+
+  /**
+   * Select a brand suggestion for a specific row.
+   */
+  selectBrandSuggestion(row: AllInOneMaterialRow, brand: { id: number; brandName: string; prefix: string }): void {
+    row.brand_name = brand.brandName;
+    row.isBrandDropdownOpen = false;
+    // Auto-generate code for this row based on brand prefix
+    void this.generateCodeForRow(row, brand.id);
+  }
+
+  /**
+   * Close brand dropdown for a specific row (with delay for click to register).
+   */
+  onBrandBlur(row: AllInOneMaterialRow): void {
+    setTimeout(() => {
+      row.isBrandDropdownOpen = false;
+    }, 200);
+  }
+
+  /**
+   * Check if a row's brand text matches an existing brand.
+   */
+  isRowBrandNew(row: AllInOneMaterialRow): boolean {
+    if (!row.brand_name.trim()) return false;
+    return !this.materialBrands.some(
+      b => b.brandName.toLowerCase() === row.brand_name.trim().toLowerCase()
+    );
+  }
+
+  /**
+   * Generate material code for a single row based on the Product Type prefix.
+   */
+  async generateCodeForRow(row: AllInOneMaterialRow, _brandId: number): Promise<void> {
+    // Use product type prefix for code generation
+    let prefix = this.productTypePrefix.trim();
+    if (!prefix) {
+      prefix = this.productTypeSearch.trim().substring(0, 3).toUpperCase();
+    }
+    if (!prefix) {
+      row.material_code = '';
+      return;
+    }
+    // Find the next sequence number for this prefix
+    const seq = this.getNextSequenceForPrefix(prefix);
+    row.material_code = `${prefix}${String(seq).padStart(5, '0')}`;
+  }
+
+  /**
+   * Get the next sequence number for a given prefix by checking existing material rows.
+   */
+  private getNextSequenceForPrefix(prefix: string): number {
+    let maxSeq = 0;
+    for (const row of this.materialRows) {
+      if (row.material_code.startsWith(prefix)) {
+        const numPart = row.material_code.substring(prefix.length);
+        const seq = parseInt(numPart, 10);
+        if (!isNaN(seq) && seq > maxSeq) {
+          maxSeq = seq;
+        }
+      }
+    }
+    return maxSeq + 1;
+  }
+
+  /**
+   * Regenerate codes for all material rows using the current product type prefix.
+   */
+  private regenerateAllCodes(): void {
+    const prefix = this.productTypePrefix.trim();
+    if (!prefix) {
+      for (const row of this.materialRows) {
+        row.material_code = '';
+      }
+      return;
+    }
+    for (let i = 0; i < this.materialRows.length; i++) {
+      this.materialRows[i].material_code = `${prefix}${String(i + 1).padStart(5, '0')}`;
+    }
+  }
+
+  /**
+   * Generate material codes for all rows (used when brand is the same for all).
+   * Now handled per-row via selectBrandSuggestion.
+   */
+  async generateMaterialCodes(): Promise<void> {
+    // No-op: codes are now generated per-row when a brand is selected
+  }
+
+  /**
+   * Submit the all-in-one form: resolve product type, then for each row resolve brand and create material.
+   */
+  async submitAllInOne(): Promise<void> {
+    this.createError = '';
+    this.createSuccess = '';
+
+    // Validate product type
+    if (!this.productTypeSearch.trim()) {
+      this.createError = 'Product type name is required.';
+      return;
+    }
+
+    // Validate materials — at least one row with a name and brand
+    const validRows = this.materialRows.filter(r => r.material_name.trim());
+    if (validRows.length === 0) {
+      this.createError = 'At least one material with a name is required.';
+      return;
+    }
+
+    // Validate that each valid row has a brand
+    for (let i = 0; i < validRows.length; i++) {
+      if (!validRows[i].brand_name.trim()) {
+        this.createError = `Row ${i + 1}: Brand is required.`;
+        return;
+      }
+    }
+
+    this.isCreateSaving = true;
+
+    try {
+      // Step 1: Resolve product type ID
+      let productTypeId: number | null = null;
+      const existingType = this.productTypes.find(
+        pt => pt.name.toLowerCase() === this.productTypeSearch.trim().toLowerCase()
+      );
+
+      if (existingType) {
+        productTypeId = existingType.id;
+      } else {
+        // Create new product type
+        await this.materialInventoryService.createProductType(
+          this.productTypeSearch.trim(),
+          this.productTypePrefix.trim() || undefined
+        );
+        // Reload product types to get the new ID
+        const updatedTypes = await this.materialInventoryService.getProductTypes();
+        const created = updatedTypes.find(pt => pt.name.toLowerCase() === this.productTypeSearch.trim().toLowerCase());
+        productTypeId = created?.id ?? null;
+      }
+
+      // Step 2: For each material row, resolve brand and create material
+      for (const row of validRows) {
+        // Resolve brand
+        let brandId: number | null = null;
+        const existingBrand = this.materialBrands.find(
+          b => b.brandName.toLowerCase() === row.brand_name.trim().toLowerCase()
+        );
+
+        if (existingBrand) {
+          brandId = existingBrand.id;
+        } else {
+          // Create new brand
+          const createdBrandId = await this.materialInventoryService.createBrand(
+            row.brand_name.trim(),
+            undefined,
+            productTypeId
+          );
+          brandId = createdBrandId;
+
+          // Fallback: if the response didn't include the ID, try to find it
+          if (!brandId) {
+            const updatedBrands = await this.materialInventoryService.getMaterialBrands();
+            const found = updatedBrands.find(b => b.brandName.toLowerCase() === row.brand_name.trim().toLowerCase());
+            brandId = found?.id ?? null;
+          }
+
+          // Add to local list so subsequent rows with same brand name don't re-create
+          if (brandId) {
+            this.materialBrands.push({
+              id: brandId,
+              brandName: row.brand_name.trim(),
+              prefix: '',
+              product_type_id: productTypeId,
+            });
+          }
+        }
+
+        if (!brandId) {
+          this.createError = `Failed to resolve brand for "${row.brand_name}".`;
+          return;
+        }
+
+        // If no code was auto-generated, generate using Product Type prefix
+        if (!row.material_code.trim()) {
+          // Use the product type prefix for code generation
+          let prefix = this.productTypePrefix.trim();
+          if (!prefix && productTypeId) {
+            const pt = this.productTypes.find(p => p.id === productTypeId);
+            prefix = pt?.prefix ?? '';
+          }
+          if (!prefix) {
+            // Fallback: use first 3 chars of product type name
+            prefix = this.productTypeSearch.trim().substring(0, 3).toUpperCase();
+          }
+          if (prefix) {
+            // Count how many materials already have this prefix in the DB
+            // For simplicity, use the row index + existing count
+            const rowIndex = validRows.indexOf(row);
+            const baseSeq = this.getNextSequenceForPrefix(prefix);
+            row.material_code = `${prefix}${String(baseSeq + rowIndex).padStart(5, '0')}`;
+          }
+        }
+
+        // Create the material
+        await this.materialInventoryService.createMaterial({
+          material_name: row.material_name.trim(),
+          material_code: row.material_code.trim() || null,
+          unit: row.unit.trim() || 'pcs',
+          unit_price: Number(row.unit_price) || 0,
+          sell_price: Number(row.sell_price) || 0,
+          on_hand_stock: Number(row.on_hand_stock) || 0,
+          reorder_level: Number(row.reorder_level) || 0,
+          brand_id: brandId,
+        });
+      }
+
+      this.createSuccess = `Successfully created ${validRows.length} material(s).`;
+
+      // Refresh tree and table
+      await this.loadTree();
+      if (this.selectedBrandId !== null) {
+        await this.loadMaterials(this.selectedBrandId);
+      }
+
+      // Close drawer after short delay to show success
+      setTimeout(() => {
+        this.isCreateDrawerOpen = false;
+        this.createSuccess = '';
+      }, 1500);
+    } catch (err: any) {
+      this.createError =
+        err?.response?.data?.message ||
+        err?.message ||
+        'Failed to create items.';
+    } finally {
+      this.isCreateSaving = false;
+    }
+  }
+
+  // --- Bulk Upload Methods ---
+
+  /**
+   * Open the bulk upload modal.
+   */
+  openBulkUploadModal(): void {
+    this.bulkUploadError = '';
+    this.bulkUploadRows = [];
+    this.bulkUploadFileName = '';
+    this.bulkUploadResults = null;
+    this.isBulkUploading = false;
+    this.isBulkUploadModalOpen = true;
+    void this.loadDropdownData(); // Ensure brands are loaded for inference
+  }
+
+  /**
+   * Close the bulk upload modal.
+   */
   closeBulkUploadModal(): void {
     this.isBulkUploadModalOpen = false;
-    this.bulkUploadPreviewRows = [];
+    this.bulkUploadError = '';
+    this.bulkUploadRows = [];
+    this.bulkUploadFileName = '';
     this.bulkUploadResults = null;
-    this.bulkUploadSummary = null;
   }
 
-  downloadBulkUploadTemplate(): void {
-    const header = this.bulkUploadColumns.join(',');
-    const sampleRows = [
-      'Daikin,Wall Mounted Inverter,SET,"Indoor,Outdoor",1.0 HP,35000,28000,33000,36000,28000,FTKF25A,RKF25A',
-      'Daikin,Wall Mounted Inverter,SET,"Indoor,Outdoor",1.5 HP,42000,34000,40000,43000,34000,FTKF35B,RKF35B',
-    ];
-    const csv = [header, ...sampleRows].join('\n');
+  /**
+   * Download a CSV template file.
+   */
+  downloadBulkTemplate(): void {
+    const headers = 'product_type,brand,material_name,material_code,unit,unit_price,sell_price,on_hand_stock,reorder_level';
+    const sampleRow = 'Electrical,Schneider,Circuit Breaker 20A,SCH00001,pcs,150,200,50,10';
+    const csv = `${headers}\n${sampleRow}\n`;
     const blob = new Blob([csv], { type: 'text/csv' });
     const url = URL.createObjectURL(blob);
     const a = document.createElement('a');
     a.href = url;
-    a.download = 'inventory-bulk-upload-template.csv';
+    a.download = 'bulk_upload_template.csv';
     a.click();
     URL.revokeObjectURL(url);
   }
 
-  async downloadBulkUploadTemplateExcel(): Promise<void> {
-    const excelJs = await import('exceljs');
-    const workbook = new excelJs.Workbook();
-    const ws = workbook.addWorksheet('Inventory Upload');
+  /**
+   * Handle file selection for bulk upload.
+   */
+  async onBulkFileSelected(event: Event): Promise<void> {
+    const input = event.target as HTMLInputElement;
+    if (!input.files || input.files.length === 0) return;
 
-    ws.addRow(this.bulkUploadColumns);
-    const headerRow = ws.getRow(1);
-    headerRow.font = { bold: true };
-    headerRow.eachCell((cell) => {
-      cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFE2E8F0' } };
-      cell.border = { bottom: { style: 'thin' } };
-    });
-
-    ws.addRow(['Daikin', 'Wall Mounted Inverter', 'SET', 'Indoor,Outdoor', '1.0 HP', 35000, 28000, 33000, 36000, 28000, 'FTKF25A', 'RKF25A']);
-    ws.addRow(['Daikin', 'Wall Mounted Inverter', 'SET', 'Indoor,Outdoor', '1.5 HP', 42000, 34000, 40000, 43000, 34000, 'FTKF35B', 'RKF35B']);
-    ws.addRow(['Carrier', 'Cassette Type', 'SET', 'Indoor,Outdoor', '3 TR', 95000, 78000, 90000, 97000, 78000, 'CT3-IN', 'CT3-OUT']);
-
-    ws.columns = [
-      { width: 14 }, { width: 24 }, { width: 8 }, { width: 18 }, { width: 10 },
-      { width: 12 }, { width: 12 }, { width: 12 }, { width: 12 }, { width: 12 },
-      { width: 16 }, { width: 16 },
-    ];
-
-    const buffer = await workbook.xlsx.writeBuffer();
-    const blob = new Blob([buffer], {
-      type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
-    });
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement('a');
-    a.href = url;
-    a.download = 'inventory-bulk-upload-template.xlsx';
-    a.click();
-    URL.revokeObjectURL(url);
-  }
-
-  triggerBulkUploadFileInput(): void {
-    const input = document.getElementById('bulkUploadFileInput') as HTMLInputElement | null;
-    input?.click();
-  }
-
-  async onBulkUploadFileSelected(event: Event): Promise<void> {
-    const file = (event.target as HTMLInputElement).files?.[0];
-    if (!file) return;
-
-    this.isBulkUploadParsing = true;
+    const file = input.files[0];
+    this.bulkUploadFileName = file.name;
     this.bulkUploadError = '';
-    this.bulkUploadSuccess = '';
-    this.bulkUploadPreviewRows = [];
+    this.bulkUploadRows = [];
     this.bulkUploadResults = null;
-    this.bulkUploadSummary = null;
+
+    const ext = file.name.split('.').pop()?.toLowerCase();
 
     try {
-      const isExcel = file.name.endsWith('.xlsx') || file.name.endsWith('.xls');
-      let parsed: Array<Record<string, string>>;
-
-      if (isExcel) {
-        parsed = await this.parseExcelFile(file);
+      if (ext === 'csv') {
+        await this.parseCsvFile(file);
+      } else if (ext === 'xlsx' || ext === 'xls') {
+        await this.parseExcelFile(file);
       } else {
-        const text = await file.text();
-        parsed = this.parseCsvText(text);
+        this.bulkUploadError = 'Unsupported file type. Please upload a .csv, .xlsx, or .xls file.';
       }
-
-      if (parsed.length === 0) {
-        this.bulkUploadError = 'No valid rows found in the file.';
-        return;
-      }
-      if (parsed.length > 500) {
-        this.bulkUploadError = 'Maximum 500 rows allowed per upload.';
-        return;
-      }
-      this.bulkUploadPreviewRows = parsed;
-    } catch {
-      this.bulkUploadError = 'Failed to read or parse the file.';
-    } finally {
-      this.isBulkUploadParsing = false;
-      (event.target as HTMLInputElement).value = '';
+    } catch (err: any) {
+      this.bulkUploadError = err?.message || 'Failed to parse file.';
     }
+
+    // Reset input so the same file can be re-selected
+    input.value = '';
   }
 
-  private async parseExcelFile(file: File): Promise<Array<Record<string, string>>> {
-    const excelJs = await import('exceljs');
-    const workbook = new excelJs.Workbook();
-    const buffer = await file.arrayBuffer();
-    await workbook.xlsx.load(buffer);
-
-    const worksheet = workbook.worksheets[0];
-    if (!worksheet || worksheet.rowCount < 2) return [];
-
-    const headers: string[] = [];
-    worksheet.getRow(1).eachCell((cell, colNumber) => {
-      headers[colNumber - 1] = String(cell.value ?? '').trim();
-    });
-
-    const columnMap = new Map<number, string>();
-    for (let i = 0; i < headers.length; i++) {
-      const h = headers[i].toLowerCase().replace(/[\s_-]/g, '');
-      if (h.includes('brand')) columnMap.set(i, 'brand');
-      else if (h.includes('product')) columnMap.set(i, 'product');
-      else if (h === 'unit') columnMap.set(i, 'unit');
-      else if (h.includes('unittype')) columnMap.set(i, 'unitTypes');
-      else if (h.includes('capacity')) columnMap.set(i, 'capacity');
-      else if (h === 'srp') columnMap.set(i, 'srp');
-      else if (h.includes('netprice')) columnMap.set(i, 'netPrice');
-      else if (h.includes('cashprice')) columnMap.set(i, 'cashPrice');
-      else if (h.includes('ccprice')) columnMap.set(i, 'ccPrice');
-      else if (h.includes('unitprice')) columnMap.set(i, 'unitPrice');
-      else if (h.includes('indoor')) columnMap.set(i, 'indoorModel');
-      else if (h.includes('outdoor')) columnMap.set(i, 'outdoorModel');
-      else columnMap.set(i, headers[i]);
+  /**
+   * Parse a CSV file into rows.
+   */
+  private async parseCsvFile(file: File): Promise<void> {
+    const text = await file.text();
+    const lines = text.split(/\r?\n/).filter(line => line.trim());
+    if (lines.length < 2) {
+      this.bulkUploadError = 'CSV file must have a header row and at least one data row.';
+      return;
     }
 
-    const rows: Array<Record<string, string>> = [];
-    for (let rowIdx = 2; rowIdx <= worksheet.rowCount; rowIdx++) {
-      const row = worksheet.getRow(rowIdx);
-      const record: Record<string, string> = {};
-      let hasData = false;
+    const headers = this.parseCsvLine(lines[0]).map(h => h.trim().toLowerCase());
+    const expectedHeaders = ['product_type', 'brand', 'material_name', 'material_code', 'unit', 'unit_price', 'sell_price', 'on_hand_stock', 'reorder_level'];
 
-      for (const [colIndex, colName] of columnMap.entries()) {
-        const cellValue = row.getCell(colIndex + 1).value;
-        const strValue = cellValue != null ? String(cellValue).trim() : '';
-        record[colName] = strValue;
-        if (strValue) hasData = true;
-      }
-
-      if (hasData && (record['brand'] || record['product'] || record['capacity'])) {
-        rows.push(record);
-      }
+    // Validate that at least material_name exists
+    if (!headers.includes('material_name')) {
+      this.bulkUploadError = 'CSV must contain a "material_name" column.';
+      return;
     }
 
-    return rows;
-  }
-
-  async submitBulkUpload(): Promise<void> {
-    if (this.bulkUploadPreviewRows.length === 0 || this.isBulkUploadSubmitting) return;
-
-    this.isBulkUploadSubmitting = true;
-    this.bulkUploadError = '';
-    this.bulkUploadSuccess = '';
-
-    try {
-      const response = await apiClient.post<{
-        success: boolean;
-        message?: string;
-        summary?: { created: number; skipped: number; failed: number; total: number };
-        results?: Array<{ row: number; status: string; message: string }>;
-      }>('/products/bulk-upload', { rows: this.bulkUploadPreviewRows });
-
-      if (!response.data.success) {
-        this.bulkUploadError = response.data.message ?? 'Bulk upload failed';
-        return;
-      }
-
-      this.bulkUploadSuccess = response.data.message ?? 'Bulk upload complete';
-      this.bulkUploadSummary = response.data.summary ?? null;
-      this.bulkUploadResults = response.data.results ?? null;
-      await this.loadInventoryFolders();
-    } catch (error: unknown) {
-      if (axios.isAxiosError(error)) {
-        this.bulkUploadError =
-          (error.response?.data as { message?: string } | undefined)?.message ?? 'Bulk upload failed';
-      } else {
-        this.bulkUploadError = 'Bulk upload failed';
-      }
-    } finally {
-      this.isBulkUploadSubmitting = false;
-    }
-  }
-
-  private parseCsvText(text: string): Array<Record<string, string>> {
-    const lines = text.split(/\r?\n/).map((l) => l.trim()).filter((l) => l.length > 0);
-    if (lines.length < 2) return [];
-
-    const headerLine = lines[0];
-    const headers = this.parseCsvLine(headerLine).map((h) => h.trim());
-
-    // Map headers to expected column names
-    const columnMap = new Map<number, string>();
-    for (let i = 0; i < headers.length; i++) {
-      const h = headers[i].toLowerCase().replace(/[\s_-]/g, '');
-      if (h.includes('brand')) columnMap.set(i, 'brand');
-      else if (h.includes('product')) columnMap.set(i, 'product');
-      else if (h === 'unit') columnMap.set(i, 'unit');
-      else if (h.includes('unittype')) columnMap.set(i, 'unitTypes');
-      else if (h.includes('capacity')) columnMap.set(i, 'capacity');
-      else if (h === 'srp') columnMap.set(i, 'srp');
-      else if (h.includes('netprice')) columnMap.set(i, 'netPrice');
-      else if (h.includes('cashprice')) columnMap.set(i, 'cashPrice');
-      else if (h.includes('ccprice')) columnMap.set(i, 'ccPrice');
-      else if (h.includes('unitprice')) columnMap.set(i, 'unitPrice');
-      else if (h.includes('indoor')) columnMap.set(i, 'indoorModel');
-      else if (h.includes('outdoor')) columnMap.set(i, 'outdoorModel');
-      else columnMap.set(i, headers[i]);
-    }
-
-    const rows: Array<Record<string, string>> = [];
+    const rows: any[] = [];
     for (let i = 1; i < lines.length; i++) {
       const values = this.parseCsvLine(lines[i]);
-      const record: Record<string, string> = {};
-      for (const [colIndex, colName] of columnMap.entries()) {
-        record[colName] = (values[colIndex] ?? '').trim();
+      const row: any = {};
+      for (let j = 0; j < headers.length; j++) {
+        const key = expectedHeaders.includes(headers[j]) ? headers[j] : headers[j];
+        row[key] = values[j]?.trim() ?? '';
       }
-      if (record['brand'] || record['product'] || record['capacity']) {
-        rows.push(record);
+      // Only add rows that have at least a material_name
+      if (row.material_name?.trim()) {
+        rows.push(row);
       }
     }
 
-    return rows;
+    this.bulkUploadRows = rows;
+    this.inferBrandsFromMaterialNames();
   }
 
+  /**
+   * Parse a single CSV line handling quoted fields.
+   */
   private parseCsvLine(line: string): string[] {
     const result: string[] = [];
     let current = '';
@@ -564,2529 +1163,216 @@ export class InventoryComponent implements OnInit {
     return result;
   }
 
-  // Material creation modal state
-  isMaterialModalOpen = false;
-  materialForm = { code: '', name: '', unit: '' };
-  materialError = '';
-  materialSuccess = '';
-  openMaterialModal(): void {
-    this.isMaterialModalOpen = true;
-    this.materialForm = { code: '', name: '', unit: '' };
-    this.materialError = '';
-    this.materialSuccess = '';
-  }
+  /**
+   * Parse an Excel file (.xlsx/.xls) into rows using exceljs.
+   */
+  private async parseExcelFile(file: File): Promise<void> {
+    const ExcelJS = await import('exceljs');
+    const workbook = new ExcelJS.Workbook();
+    const arrayBuffer = await file.arrayBuffer();
+    await workbook.xlsx.load(arrayBuffer);
 
-  closeMaterialModal(): void {
-    this.isMaterialModalOpen = false;
-  }
+    const worksheet = workbook.worksheets[0];
+    if (!worksheet || worksheet.rowCount < 2) {
+      this.bulkUploadError = 'Excel file must have a header row and at least one data row.';
+      return;
+    }
 
-  async submitMaterial(): Promise<void> {
-    this.materialError = '';
-    this.materialSuccess = '';
-    try {
-      const response = await axios.post('/material-items', {
-        code: this.materialForm.code,
-        name: this.materialForm.name,
-        unit: this.materialForm.unit || 'pcs',
+    // Get headers from first row
+    const headerRow = worksheet.getRow(1);
+    const headers: string[] = [];
+    headerRow.eachCell({ includeEmpty: true }, (cell, colNumber) => {
+      headers[colNumber - 1] = (cell.value?.toString() ?? '').trim().toLowerCase();
+    });
+
+    if (!headers.includes('material_name')) {
+      this.bulkUploadError = 'Excel file must contain a "material_name" column.';
+      return;
+    }
+
+    const rows: any[] = [];
+    for (let i = 2; i <= worksheet.rowCount; i++) {
+      const row = worksheet.getRow(i);
+      const rowObj: any = {};
+      let hasData = false;
+
+      row.eachCell({ includeEmpty: true }, (cell, colNumber) => {
+        const key = headers[colNumber - 1];
+        if (key) {
+          const val = cell.value?.toString()?.trim() ?? '';
+          rowObj[key] = val;
+          if (val) hasData = true;
+        }
       });
-      if (response.data) {
-        this.materialSuccess = 'Material added successfully!';
-        this.closeMaterialModal();
-        // Optionally reload inventory or show new material
+
+      if (hasData && rowObj.material_name?.trim()) {
+        rows.push(rowObj);
+      }
+    }
+
+    this.bulkUploadRows = rows;
+    this.inferBrandsFromMaterialNames();
+  }
+
+  /**
+   * Infer brands from material names for rows that have no brand specified.
+   * Matches words or consecutive word combinations in the material name against existing brands (case-insensitive).
+   * Prefers longer matches (e.g. "MIDEA PRO" over "MIDEA").
+   * If no match, uses the product type name or "General" as fallback.
+   */
+  private inferBrandsFromMaterialNames(): void {
+    const brandNames = this.materialBrands.map(b => b.brandName);
+
+    for (const row of this.bulkUploadRows) {
+      if (row.brand && row.brand.trim()) continue; // Already has a brand
+
+      const materialName = (row.material_name ?? '').toString().trim();
+      if (!materialName) continue;
+
+      // Split material name into words
+      const words = materialName.split(/\s+/);
+      let matched = '';
+
+      // Try multi-word combinations first (longest match wins)
+      // Check from longest possible combination down to single words
+      for (let len = Math.min(words.length, 4); len >= 1; len--) {
+        if (matched) break;
+        for (let start = 0; start <= words.length - len; start++) {
+          const phrase = words.slice(start, start + len).join(' ');
+          const found = brandNames.find(b => b.toLowerCase() === phrase.toLowerCase());
+          if (found) {
+            matched = found;
+            break;
+          }
+        }
+      }
+
+      if (matched) {
+        row.brand = matched;
+        row._brandInferred = true;
       } else {
-        this.materialError = 'Failed to add material.';
+        // Fallback: use "Uncategorized <product_type>" when brand can't be inferred
+        const ptName = row.product_type?.trim() || 'General';
+        row.brand = `Uncategorized ${ptName}`;
+        row._brandInferred = true;
+      }
+    }
+  }
+
+  /**
+   * Submit the parsed bulk upload rows to the backend.
+   */
+  async submitBulkUpload(): Promise<void> {
+    if (this.bulkUploadRows.length === 0) {
+      this.bulkUploadError = 'No rows to upload.';
+      return;
+    }
+
+    this.isBulkUploading = true;
+    this.bulkUploadError = '';
+    this.bulkUploadResults = null;
+
+    try {
+      this.bulkUploadResults = await this.materialInventoryService.bulkUploadMaterials(this.bulkUploadRows);
+
+      // Refresh tree and table after successful upload
+      await this.loadTree();
+      if (this.selectedBrandId !== null) {
+        await this.loadMaterials(this.selectedBrandId);
       }
     } catch (err: any) {
-      this.materialError = err?.response?.data?.message || 'Error adding material.';
-    }
-  }
-
-  ngOnInit(): void {
-    this.initializeLandCostingDateRange();
-    void this.loadInventoryFolders();
-    void this.loadBusinessName();
-  }
-
-  private async loadBusinessName(): Promise<void> {
-    try {
-      const settings = await this.businessSettingsService.getBusinessProfile();
-      this.businessName = settings?.businessName || 'FWDS HVAC';
-    } catch {
-      this.businessName = 'FWDS HVAC';
-    }
-  }
-
-  selectBrand(name: string): void {
-    this.selectedBrandName = name;
-    this.selectedProductId = null;
-    this.selectedCapacityId = null;
-    this.isLandCostingDrawerOpen = false;
-    this.capacityStockCounts = {};
-    this.expandedBrands.add(name);
-    this.closeBrandContextMenu();
-  }
-
-  selectProduct(brandName: string, productId: number): void {
-    this.selectedBrandName = brandName;
-    this.selectedProductId = productId;
-    this.selectedCapacityId = null;
-    this.isLandCostingDrawerOpen = false;
-    this.resetCapacityFormMessages();
-    this.capacityStockSummary = null;
-    this.capacityStockError = '';
-    this.capacityCountsError = '';
-    this.capacityStockCounts = {};
-    this.activeCapacitySerialTab = 'in-stock';
-    this.serialSearch = '';
-    this.selectedSerialUnitType = 'all';
-    this.serialCurrentPage = 1;
-    this.expandedBrands.add(brandName);
-    this.expandedProducts.add(this.getProductTreeKey(brandName, productId));
-
-    void this.loadCapacityStockCountsForProduct(productId);
-  }
-
-  selectCapacity(brandName: string, productId: number, capacityId: number): void {
-    this.selectedBrandName = brandName;
-    this.selectedProductId = productId;
-    this.selectedCapacityId = capacityId;
-    this.resetCapacityFormMessages();
-    this.serialSearch = '';
-    this.selectedSerialUnitType = 'all';
-    this.serialCurrentPage = 1;
-    void this.loadCapacityStockSummary(productId, capacityId);
-    void this.loadLandCostingReport(productId, capacityId);
-    this.expandedBrands.add(brandName);
-    this.expandedProducts.add(this.getProductTreeKey(brandName, productId));
-  }
-
-  async reloadLandCostingReport(): Promise<void> {
-    if (!this.selectedProductId || !this.selectedCapacityId) {
-      return;
-    }
-
-    await this.loadLandCostingReport(this.selectedProductId, this.selectedCapacityId);
-  }
-
-  openLandCostingDrawer(): void {
-    if (!this.selectedProductId || !this.selectedCapacityId) {
-      return;
-    }
-
-    if (!this.canViewLandCostingReport()) {
-      this.landCostingError = 'You do not have permission to view the land costing report.';
-      return;
-    }
-
-    this.isLandCostingDrawerOpen = true;
-  }
-
-  closeLandCostingDrawer(): void {
-    this.isLandCostingDrawerOpen = false;
-  }
-
-  getSerialStatusColorClass(row: LandCostingReportItemRow): string {
-    if (row.isDefective) {
-      return 'text-red-700 dark:text-red-400'; // Red for defective
-    }
-    if (row.isReturned) {
-      return 'text-orange-700 dark:text-orange-400'; // Orange for returned
-    }
-    if ((row.serialStatus ?? '').toLowerCase() === 'installed') {
-      return 'text-green-700 dark:text-green-400'; // Green for installed
-    }
-    return 'text-gray-700 dark:text-gray-300'; // Plain black/gray for in-stock and others
-  }
-
-  getSerialStatusText(row: LandCostingReportItemRow): string {
-    return row.serialStatus;
-  }
-
-  async exportLandCostingAsExcel(): Promise<void> {
-    if (!this.canExportLandCostingReport()) {
-      this.landCostingError = 'You do not have permission to export land costing reports.';
-      return;
-    }
-
-    if (this.landCostingGroups.length === 0) {
-      this.landCostingError = 'No land costing rows available to export.';
-      return;
-    }
-
-    const excelJs = await import('exceljs');
-    const workbook = new excelJs.Workbook();
-    const worksheet = workbook.addWorksheet('Land Costing Report');
-
-    worksheet.addRow([this.businessName || 'FWDS HVAC']);
-    worksheet.addRow([`Date Range: ${this.landCostingDateFrom} to ${this.landCostingDateTo}`]);
-    worksheet.addRow(['Land Costing Report']);
-    worksheet.addRow([]);
-
-    const titleRow = worksheet.getRow(1);
-    titleRow.font = { bold: true, size: 14 };
-    const centerTitleRow = worksheet.getRow(3);
-    centerTitleRow.font = { bold: true, size: 12 };
-
-    for (const group of this.landCostingGroups) {
-      worksheet.addRow([`Product (${group.capacityName}): ${group.productName}`]);
-      worksheet.addRow([`Dealer: ${group.vendorName || '-'}`]);
-      worksheet.addRow([
-        'No.',
-        'Indoor',
-        'Outdoor',
-        'Landed Cost',
-        'SRP',
-        'Margin',
-      ]);
-
-      const headerRow = worksheet.lastRow;
-      if (headerRow) {
-        headerRow.font = { bold: true };
-      }
-
-      for (const [rowIndex, row] of group.rows.entries()) {
-        worksheet.addRow([
-          rowIndex + 1,
-          row.indoorSerial || '-',
-          row.outdoorSerial || '-',
-          row.landedCost,
-          row.srp,
-          row.marginAmount,
-        ]);
-      }
-
-      worksheet.addRow([`In-Stock Indoor: ${group.inStockIndoorCount} | In-Stock Outdoor: ${group.inStockOutdoorCount}`]);
-      worksheet.addRow([]);
-    }
-
-    worksheet.columns = [
-      { width: 5 },
-      { width: 20 },
-      { width: 20 },
-      { width: 14 },
-      { width: 14 },
-      { width: 14 },
-    ];
-
-    const buffer = await workbook.xlsx.writeBuffer();
-    const blob = new Blob([buffer], {
-      type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
-    });
-    this.downloadBlob(blob, `land_costing_${this.landCostingDateFrom}_${this.landCostingDateTo}.xlsx`);
-  }
-
-  async exportLandCostingAsPdf(): Promise<void> {
-    if (!this.canExportLandCostingReport()) {
-      this.landCostingError = 'You do not have permission to export land costing reports.';
-      return;
-    }
-
-    if (this.landCostingGroups.length === 0) {
-      this.landCostingError = 'No land costing rows available to export.';
-      return;
-    }
-
-    const pdfLib = await import('pdf-lib');
-    const document = await pdfLib.PDFDocument.create();
-    const font = await document.embedFont(pdfLib.StandardFonts.Helvetica);
-    const fontBold = await document.embedFont(pdfLib.StandardFonts.HelveticaBold);
-
-    const pageWidth = 842;
-    const pageHeight = 595;
-    let page = document.addPage([pageWidth, pageHeight]);
-    let y = pageHeight - 40;
-
-    const drawHeader = () => {
-      page.drawText(this.businessName || 'FWDS HVAC', { x: 40, y, size: 14, font: fontBold });
-      y -= 18;
-      page.drawText(`Date Range: ${this.landCostingDateFrom} to ${this.landCostingDateTo}`, {
-        x: 40,
-        y,
-        size: 10,
-        font,
-      });
-      y -= 22;
-      const title = 'Land Costing Report';
-      const titleWidth = fontBold.widthOfTextAtSize(title, 12);
-      page.drawText(title, {
-        x: (pageWidth - titleWidth) / 2,
-        y,
-        size: 12,
-        font: fontBold,
-      });
-      y -= 18;
-    };
-
-    const ensureSpace = (required: number) => {
-      if (y >= required) {
-        return;
-      }
-
-      page = document.addPage([pageWidth, pageHeight]);
-      y = pageHeight - 40;
-      drawHeader();
-    };
-
-    const ellipsis = (value: string, max: number) => {
-      if (value.length <= max) {
-        return value;
-      }
-
-      return `${value.slice(0, Math.max(0, max - 3))}...`;
-    };
-
-    drawHeader();
-
-    for (const group of this.landCostingGroups) {
-      ensureSpace(120);
-      page.drawText(`Product (${group.capacityName}): ${group.productName}`, {
-        x: 40,
-        y,
-        size: 10,
-        font: fontBold,
-      });
-      y -= 14;
-      page.drawText(`Dealer: ${group.vendorName || '-'} | PO: ${group.poNumber || '-'} | Date: ${this.formatDateOnly(group.poDate) || '-'}`, {
-        x: 40,
-        y,
-        size: 9,
-        font,
-      });
-      y -= 16;
-
-      const columns = [
-        { title: 'No.', x: 40, max: 4 },
-        { title: 'Indoor', x: 80, max: 18 },
-        { title: 'Outdoor', x: 220, max: 18 },
-        { title: 'Landed', x: 400, max: 10 },
-        { title: 'SRP', x: 480, max: 10 },
-        { title: 'Margin', x: 550, max: 10 },
-      ];
-
-      for (const column of columns) {
-        page.drawText(column.title, { x: column.x, y, size: 9, font: fontBold });
-      }
-      y -= 12;
-
-      for (const [rowIndex, row] of group.rows.entries()) {
-        ensureSpace(70);
-        page.drawText((rowIndex + 1).toString(), { x: columns[0].x, y, size: 8, font });
-        page.drawText(ellipsis(row.indoorSerial || '-', columns[1].max), { x: columns[1].x, y, size: 8, font });
-        page.drawText(ellipsis(row.outdoorSerial || '-', columns[2].max), { x: columns[2].x, y, size: 8, font });
-        page.drawText((row.landedCost ?? 0).toFixed(2), { x: columns[3].x, y, size: 8, font });
-        page.drawText((row.srp ?? 0).toFixed(2), { x: columns[4].x, y, size: 8, font });
-        page.drawText((row.marginAmount ?? 0).toFixed(2), { x: columns[5].x, y, size: 8, font });
-        y -= 11;
-      }
-
-      ensureSpace(20);
-      page.drawText(`In-Stock Indoor: ${group.inStockIndoorCount} | In-Stock Outdoor: ${group.inStockOutdoorCount}`, { x: 40, y, size: 9, font });
-      y -= 12;
-    }
-
-    ensureSpace(60);
-    page.drawText(`Overall Total Margin: ${this.landCostingTotals.marginAmount.toFixed(2)}`, {
-      x: 40,
-      y,
-      size: 11,
-      font: fontBold,
-    });
-
-    const bytes = await document.save();
-    const pdfBytes = new Uint8Array(bytes);
-    this.downloadBlob(new Blob([pdfBytes], { type: 'application/pdf' }), `land_costing_${this.landCostingDateFrom}_${this.landCostingDateTo}.pdf`);
-  }
-
-  setActiveCapacitySerialTab(tab: CapacitySerialTab): void {
-    this.activeCapacitySerialTab = tab;
-    this.serialSearch = '';
-    this.selectedSerialUnitType = 'all';
-    this.serialCurrentPage = 1;
-  }
-
-  setSelectedSerialUnitType(unitType: string): void {
-    this.selectedSerialUnitType = unitType;
-    this.serialCurrentPage = 1;
-  }
-
-  onSerialSearchChange(): void {
-    this.serialCurrentPage = 1;
-  }
-
-  goToPreviousSerialPage(): void {
-    if (this.serialCurrentPage > 1) {
-      this.serialCurrentPage -= 1;
-    }
-  }
-
-  goToNextSerialPage(): void {
-    if (this.serialCurrentPage < this.serialTotalPages) {
-      this.serialCurrentPage += 1;
-    }
-  }
-
-  setCreationFormMode(mode: CreationFormMode): void {
-    this.isCreationDrawerOpen = true;
-    this.creationFormMode = mode;
-    this.creationError = '';
-    this.creationSuccess = '';
-
-    if (mode === 'product-capacity' && this.selectedBrandName) {
-      this.productFormBrandName = this.selectedBrandName;
-    }
-
-    if (mode === 'capacity-only') {
-      this.capacityOnlySelectedCapacities = ['1.0 HP'];
-      this.capacityOnlyDetails = {
-        '1.0 HP': this.createEmptyCapacityDraft(),
-      };
-    }
-  }
-
-  openCreationDrawer(mode: CreationFormMode = 'all-in-one'): void {
-    this.setCreationFormMode(mode);
-  }
-
-  closeCreationDrawer(): void {
-    this.isCreationDrawerOpen = false;
-    this.creationError = '';
-    this.creationSuccess = '';
-  }
-
-  toggleAllInOneUnitType(unitType: string): void {
-    this.allInOneSelectedUnitTypes = this.toggleUnitTypeSelection(
-      this.allInOneSelectedUnitTypes,
-      unitType,
-    );
-  }
-
-  toggleProductFormUnitType(unitType: string): void {
-    this.productFormSelectedUnitTypes = this.toggleUnitTypeSelection(
-      this.productFormSelectedUnitTypes,
-      unitType,
-    );
-  }
-
-  toggleAllInOneCapacity(capacity: string): void {
-    const nextSelection = this.toggleUnitTypeSelection(
-      this.allInOneSelectedCapacities,
-      capacity,
-    );
-
-    this.allInOneSelectedCapacities = nextSelection;
-    const isSelected = nextSelection.includes(capacity);
-
-    if (isSelected) {
-      this.allInOneCapacityDetails[capacity] =
-        this.allInOneCapacityDetails[capacity] ?? this.createEmptyCapacityDraft();
-      return;
-    }
-
-    delete this.allInOneCapacityDetails[capacity];
-  }
-
-  toggleProductFormCapacity(capacity: string): void {
-    const nextSelection = this.toggleUnitTypeSelection(
-      this.productFormSelectedCapacities,
-      capacity,
-    );
-
-    this.productFormSelectedCapacities = nextSelection;
-    const isSelected = nextSelection.includes(capacity);
-
-    if (isSelected) {
-      this.productFormCapacityDetails[capacity] =
-        this.productFormCapacityDetails[capacity] ?? this.createEmptyCapacityDraft();
-      return;
-    }
-
-    delete this.productFormCapacityDetails[capacity];
-  }
-
-  toggleCapacityOnly(capacity: string): void {
-    const nextSelection = this.toggleUnitTypeSelection(
-      this.capacityOnlySelectedCapacities,
-      capacity,
-    );
-
-    this.capacityOnlySelectedCapacities = nextSelection;
-    const isSelected = nextSelection.includes(capacity);
-
-    if (isSelected) {
-      this.capacityOnlyDetails[capacity] =
-        this.capacityOnlyDetails[capacity] ?? this.createEmptyCapacityDraft();
-      return;
-    }
-
-    delete this.capacityOnlyDetails[capacity];
-  }
-
-  openCapacityOnlyDrawer(): void {
-    if (!this.selectedProduct || !this.selectedBrandName) {
-      this.errorMessage = 'Select a product first to add capacity.';
-      return;
-    }
-
-    this.errorMessage = '';
-    this.setCreationFormMode('capacity-only');
-  }
-
-  async submitCreationForm(): Promise<void> {
-    this.creationError = '';
-    this.creationSuccess = '';
-    this.isSubmittingCreation = true;
-
-    try {
-      if (this.creationFormMode === 'brand-only') {
-        await this.submitBrandOnlyForm();
-        return;
-      }
-
-      if (this.creationFormMode === 'all-in-one') {
-        await this.submitAllInOneForm();
-        return;
-      }
-
-      if (this.creationFormMode === 'product-capacity') {
-        await this.submitProductCapacityForm();
-        return;
-      }
-
-      if (this.creationFormMode === 'capacity-only') {
-        await this.submitCapacityOnlyForm();
-        return;
-      }
-
-      this.creationError = 'Select a supported creation form';
-    } catch (error: unknown) {
-      if (axios.isAxiosError(error)) {
-        this.creationError =
-          (error.response?.data as { message?: string } | undefined)?.message ??
-          'Unable to save inventory data';
-      } else {
-        this.creationError = 'Unable to save inventory data';
-      }
+      this.bulkUploadError =
+        err?.response?.data?.message ||
+        err?.message ||
+        'Failed to upload materials.';
     } finally {
-      this.isSubmittingCreation = false;
+      this.isBulkUploading = false;
     }
   }
 
-  toggleBrand(name: string): void {
-    if (this.expandedBrands.has(name)) {
-      this.expandedBrands.delete(name);
-      return;
-    }
+  // --- Context Menu Methods ---
 
-    this.expandedBrands.add(name);
-  }
-
-  openBrandContextMenu(event: MouseEvent, brandName: string): void {
+  /**
+   * Handle right-click on a product type node.
+   */
+  onProductTypeContextMenu(event: MouseEvent, node: ProductTypeNode): void {
+    if (node.id === null) return; // Don't show context menu for "Uncategorized"
     event.preventDefault();
-    event.stopPropagation();
-    this.brandContextMenuVisible = true;
-    this.brandContextMenuX = event.clientX;
-    this.brandContextMenuY = event.clientY;
-    this.brandContextMenuBrandName = brandName;
+    this.contextMenuX = event.clientX;
+    this.contextMenuY = event.clientY;
+    this.contextMenuType = 'product-type';
+    this.contextMenuNodeId = node.id;
+    this.contextMenuNodeName = node.name;
+    this.isContextMenuOpen = true;
   }
 
-  closeBrandContextMenu(): void {
-    this.brandContextMenuVisible = false;
-    this.brandContextMenuBrandName = null;
+  /**
+   * Handle right-click on a brand node.
+   */
+  onBrandContextMenu(event: MouseEvent, brand: BrandNode): void {
+    event.preventDefault();
+    this.contextMenuX = event.clientX;
+    this.contextMenuY = event.clientY;
+    this.contextMenuType = 'brand';
+    this.contextMenuNodeId = brand.id;
+    this.contextMenuNodeName = brand.name;
+    this.isContextMenuOpen = true;
   }
 
-  async onBrandContextAction(action: 'add-product' | 'edit-brand' | 'delete-brand'): Promise<void> {
-    const brandName = this.brandContextMenuBrandName ?? 'Brand';
-    this.closeBrandContextMenu();
-
-    if (action === 'add-product') {
-      this.addProductFromBrandContext(brandName);
-      return;
-    }
-
-    if (action === 'edit-brand') {
-      await this.editBrandFromContext(brandName);
-      return;
-    }
-
-    if (action === 'delete-brand') {
-      await this.deleteBrandFromContext(brandName);
-      return;
-    }
+  /**
+   * Close the context menu.
+   */
+  closeContextMenu(): void {
+    this.isContextMenuOpen = false;
   }
 
-  @HostListener('document:click')
-  onDocumentClick(): void {
-    this.closeBrandContextMenu();
-  }
-
-  @HostListener('document:contextmenu', ['$event'])
-  onDocumentContextMenu(event: MouseEvent): void {
-    const target = event.target as HTMLElement | null;
-    const isBrandContextTarget =
-      !!target &&
-      (target.closest('[data-brand-context="true"]') !== null ||
-        target.closest('[data-brand-context-menu="true"]') !== null);
-
-    if (!isBrandContextTarget) {
-      this.closeBrandContextMenu();
+  /**
+   * Handle context menu action: Add Brand (from product type node).
+   */
+  contextMenuAddBrand(): void {
+    this.isContextMenuOpen = false;
+    this.openCreateDrawer();
+    // Pre-fill product type from the context menu node
+    const pt = this.productTypes.find(p => p.id === this.contextMenuNodeId);
+    if (pt) {
+      this.productTypeSearch = pt.name;
+      this.productTypePrefix = pt.prefix || '';
     }
   }
 
-  toggleProduct(brandName: string, productId: number): void {
-    const key = this.getProductTreeKey(brandName, productId);
-    if (this.expandedProducts.has(key)) {
-      this.expandedProducts.delete(key);
-      return;
-    }
-
-    this.expandedProducts.add(key);
-  }
-
-  isBrandExpanded(name: string): boolean {
-    if (this.hasTreeSearch) {
-      return true;
-    }
-
-    return this.expandedBrands.has(name);
-  }
-
-  isProductExpanded(brandName: string, productId: number): boolean {
-    if (this.hasTreeSearch) {
-      return true;
-    }
-
-    return this.expandedProducts.has(this.getProductTreeKey(brandName, productId));
-  }
-
-  isBrandSelected(name: string): boolean {
-    return this.selectedNodeType === 'brand' && this.selectedBrandName === name;
-  }
-
-  isProductSelected(productId: number): boolean {
-    return this.selectedNodeType === 'product' && this.selectedProductId === productId;
-  }
-
-  isCapacitySelected(capacityId: number): boolean {
-    return this.selectedNodeType === 'capacity' && this.selectedCapacityId === capacityId;
-  }
-
-  get selectedNodeType(): InventoryNodeType | null {
-    if (this.selectedCapacityId != null) {
-      return 'capacity';
-    }
-
-    if (this.selectedProductId != null) {
-      return 'product';
-    }
-
-    if (this.selectedBrandName) {
-      return 'brand';
-    }
-
-    return null;
-  }
-
-  get selectedNodeTitle(): string {
-    if (this.selectedNodeType === 'capacity' && this.selectedCapacity) {
-      return this.selectedCapacity.name || `Capacity ${this.selectedCapacity.id}`;
-    }
-
-    if (this.selectedNodeType === 'product' && this.selectedProduct) {
-      return this.selectedProduct.name || `Product ${this.selectedProduct.id}`;
-    }
-
-    if (this.selectedNodeType === 'brand' && this.selectedBrandName) {
-      return this.selectedBrandName;
-    }
-
-    return 'Inventory Overview';
-  }
-
-  get selectedNodeDescription(): string {
-    if (this.selectedNodeType === 'capacity' && this.selectedCapacity) {
-      const capacity = this.selectedCapacity;
-      return `Capacity details for ${capacity.name || `#${capacity.id}`}.`;
-    }
-
-    if (this.selectedNodeType === 'product' && this.selectedProduct) {
-      return `Product with ${this.selectedProduct.capacities.length} available capacities.`;
-    }
-
-    if (this.selectedNodeType === 'brand' && this.selectedBrand) {
-      return `Brand with ${this.selectedBrand.products.length} products.`;
-    }
-
-    return 'Select a brand, product, or capacity from the folder tree.';
-  }
-
-  get selectedBrand(): BrandFolder | null {
-    if (!this.selectedBrandName) {
-      return null;
-    }
-
-    return this.brandFolders.find((folder) => folder.name === this.selectedBrandName) ?? null;
-  }
-
-  get selectedCapacity(): ProductCapacityOption | null {
-    if (this.selectedCapacityId == null) {
-      return null;
-    }
-
-    const capacity = this.selectedProduct?.capacities.find((item) => item.id === this.selectedCapacityId);
-    return capacity ?? null;
-  }
-
-  get selectedBrandProducts(): ProductOption[] {
-    if (!this.selectedBrandName) {
-      return [];
-    }
-
-    return (
-      this.brandFolders.find((folder) => folder.name === this.selectedBrandName)?.products ??
-      []
-    );
-  }
-
-  get selectedProduct(): ProductOption | null {
-    const product = this.selectedBrandProducts.find((item) => item.id === this.selectedProductId);
-    return product ?? null;
-  }
-
-  get capacitySerialTabs(): Array<{ key: CapacitySerialTab; label: string; count: number }> {
-    return [
-      { key: 'in-stock', label: 'In-Stock', count: this.getCapacitySerialCount('in-stock') },
-      { key: 'reserved', label: 'Reserved', count: this.getCapacitySerialCount('reserved') },
-      { key: 'installed', label: 'Installed', count: this.getCapacitySerialCount('installed') },
-    ];
-  }
-
-  get activeTabSerialCount(): number {
-    return this.getCapacitySerialCount(this.activeCapacitySerialTab);
-  }
-
-  get activeTabSerialList(): SerialEntry[] {
-    const serials = this.capacityStockSummary?.serials;
-    if (!serials) {
-      return [];
-    }
-
-    let list: SerialEntry[] = [];
-
-    if (this.activeCapacitySerialTab === 'in-stock') {
-      list = serials.inStock ?? [];
-    } else if (this.activeCapacitySerialTab === 'reserved') {
-      list = serials.reserved ?? [];
-    } else {
-      list = serials.installed ?? [];
-    }
-
-    if (this.selectedSerialUnitType !== 'all') {
-      const targetUnitType = this.normalizeUnitTypeValue(this.selectedSerialUnitType);
-      list = list.filter((entry) => {
-        const normalizedUnitType = this.normalizeUnitTypeValue(entry.unitType);
-        return normalizedUnitType === targetUnitType;
-      });
-    }
-
-    const normalizedQuery = this.normalizeSearchText(this.serialSearch);
-    if (!normalizedQuery) {
-      return list;
-    }
-
-    const tokens = normalizedQuery.split(' ').filter(Boolean);
-    return list.filter((entry) => {
-      const searchableText = this.normalizeSearchText(
-        `${entry.serialNumber} ${entry.unitType}`,
-      );
-      return tokens.every((token) => searchableText.includes(token));
-    });
-  }
-
-  get activeTabFilteredSerialCount(): number {
-    return this.activeTabSerialList.length;
-  }
-
-  get serialTotalPages(): number {
-    if (this.activeTabFilteredSerialCount === 0) {
-      return 1;
-    }
-
-    return Math.ceil(this.activeTabFilteredSerialCount / this.serialPageSize);
-  }
-
-  get paginatedActiveTabSerialList(): SerialEntry[] {
-    const page = Math.min(Math.max(this.serialCurrentPage, 1), this.serialTotalPages);
-    const start = (page - 1) * this.serialPageSize;
-    return this.activeTabSerialList.slice(start, start + this.serialPageSize);
-  }
-
-  get serialPageRangeStart(): number {
-    if (this.activeTabFilteredSerialCount === 0) {
-      return 0;
-    }
-
-    const page = Math.min(Math.max(this.serialCurrentPage, 1), this.serialTotalPages);
-    return (page - 1) * this.serialPageSize + 1;
-  }
-
-  get serialPageRangeEnd(): number {
-    if (this.activeTabFilteredSerialCount === 0) {
-      return 0;
-    }
-
-    return Math.min(this.serialPageRangeStart + this.serialPageSize - 1, this.activeTabFilteredSerialCount);
-  }
-
-  get serialUnitTypeOptions(): UnitTypeOption[] {
-    const serials = this.capacityStockSummary?.serials;
-    if (!serials) {
-      return [
-        { value: 'all', label: 'All Unit Types', count: 0 },
-      ];
-    }
-
-    let list: SerialEntry[] = [];
-    if (this.activeCapacitySerialTab === 'in-stock') {
-      list = serials.inStock ?? [];
-    } else if (this.activeCapacitySerialTab === 'reserved') {
-      list = serials.reserved ?? [];
-    } else {
-      list = serials.installed ?? [];
-    }
-
-    const counts = new Map<string, number>();
-    for (const entry of list) {
-      const raw = String(entry.unitType ?? '').trim();
-      const normalized = this.normalizeUnitTypeValue(raw);
-      if (!normalized) {
-        continue;
-      }
-
-      counts.set(normalized, (counts.get(normalized) ?? 0) + 1);
-    }
-
-    const options: UnitTypeOption[] = [
-      { value: 'all', label: 'All Unit Types', count: list.length },
-    ];
-
-    const sorted = Array.from(counts.entries()).sort((a, b) => a[0].localeCompare(b[0]));
-    for (const [value, count] of sorted) {
-      options.push({ value, label: this.formatUnitTypeLabel(value), count });
-    }
-
-    return options;
-  }
-
-  get activeTabSetCount(): number {
-    return this.computeSetCount(this.activeTabSerialCount);
-  }
-
-  get activeTabUnpairedCount(): number {
-    return this.computeUnpairedCount(this.activeTabSerialCount);
-  }
-
-  get activeTabTotalSellingAmount(): number {
-    return this.activeTabSetCount * Number(this.selectedCapacity?.sellPrice ?? 0);
-  }
-
-  get activeTabTotalCostAmount(): number {
-    return this.activeTabSetCount * Number(this.selectedCapacity?.unitPrice ?? 0);
-  }
-
-  get activeTabMarginAmount(): number {
-    return this.activeTabTotalSellingAmount - this.activeTabTotalCostAmount;
-  }
-
-  canViewLandCostingReport(): boolean {
-    return this.canAccessInventoryPermission(this.landCostingViewPermissionKeys);
-  }
-
-  canViewLandCostingMargin(): boolean {
-    return this.canAccessInventoryPermission(this.landCostingMarginPermissionKeys);
-  }
-
-  canExportLandCostingReport(): boolean {
-    return this.canAccessInventoryPermission(this.landCostingExportPermissionKeys);
-  }
-
-
-
-  get hasTreeSearch(): boolean {
-    return this.normalizeSearchText(this.treeSearch).length > 0;
-  }
-
-  get filteredBrandFolders(): BrandFolder[] {
-    const normalizedQuery = this.normalizeSearchText(this.treeSearch);
-    if (!normalizedQuery) {
-      return this.brandFolders;
-    }
-
-    const queryTokens = normalizedQuery.split(' ').filter(Boolean);
-    const matchesTokens = (value: string): boolean => {
-      const normalizedValue = this.normalizeSearchText(value);
-      return queryTokens.every((token) => normalizedValue.includes(token));
-    };
-
-    return this.brandFolders
-      .map((brandFolder) => {
-        const brandMatches = matchesTokens(brandFolder.name);
-
-        const filteredProducts = brandFolder.products
-          .map((product) => {
-            const productMatches = matchesTokens(
-              `${brandFolder.name} ${product.name}`,
-            );
-
-            const filteredCapacities = brandMatches || productMatches
-              ? product.capacities
-              : product.capacities.filter((capacity) =>
-                  matchesTokens(
-                    `${brandFolder.name} ${product.name} ${capacity.name}`,
-                  ),
-                );
-
-            if (brandMatches || productMatches || filteredCapacities.length > 0) {
-              return {
-                ...product,
-                capacities: filteredCapacities,
-              };
-            }
-
-            return null;
-          })
-          .filter((product): product is ProductOption => product !== null);
-
-        if (brandMatches || filteredProducts.length > 0) {
-          return {
-            ...brandFolder,
-            products: filteredProducts,
-          };
-        }
-
-        return null;
-      })
-      .filter((brand): brand is BrandFolder => brand !== null);
-  }
-
-  async addCapacityToSelectedProduct(): Promise<void> {
-    if (!this.selectedProduct || !this.selectedBrandName) {
-      return;
-    }
-
-    const capacityName = this.newCapacityName.trim();
-    if (!capacityName) {
-      this.addCapacityError = 'Capacity name is required';
-      this.addCapacitySuccess = '';
-      return;
-    }
-
-    this.isAddingCapacity = true;
-    this.addCapacityError = '';
-    this.addCapacitySuccess = '';
-
-    try {
-      const response = await apiClient.post<{
-        success: boolean;
-        message?: string;
-      }>('/capacity', {
-        productId: this.selectedProduct.id,
-        capacity: capacityName,
-        indoorModel: this.newCapacityIndoorModel.trim(),
-        outdoorModel: this.newCapacityOutdoorModel.trim(),
-        srp: this.newCapacitySrp ?? 0,
-        netPrice: this.newCapacityNetPrice ?? 0,
-        cashPrice: this.newCapacityCashPrice ?? 0,
-        ccPrice: this.newCapacityCcPrice ?? 0,
-        unitPrice: this.newCapacityUnitPrice ?? 0,
-      });
-
-      if (!response.data.success) {
-        this.addCapacityError = response.data.message ?? 'Unable to add capacity';
-        return;
-      }
-
-      this.addCapacitySuccess = response.data.message ?? 'Capacity added successfully';
-
-      const previousSelection = {
-        brandName: this.selectedBrandName,
-        productId: this.selectedProduct.id,
-      };
-
-      await this.loadInventoryFolders(previousSelection);
-
-      const refreshedProduct = this.selectedProduct;
-      const newCapacity = refreshedProduct?.capacities.find(
-        (capacity) =>
-          this.normalizeSearchText(capacity.name) === this.normalizeSearchText(capacityName),
-      );
-
-      if (newCapacity && previousSelection.brandName) {
-        this.selectCapacity(previousSelection.brandName, previousSelection.productId, newCapacity.id);
-      }
-
-      this.resetCapacityFormFields();
-    } catch (error: unknown) {
-      if (axios.isAxiosError(error)) {
-        this.addCapacityError =
-          (error.response?.data as { message?: string } | undefined)?.message ??
-          'Unable to add capacity';
-      } else {
-        this.addCapacityError = 'Unable to add capacity';
-      }
-    } finally {
-      this.isAddingCapacity = false;
-    }
-  }
-
-  async editSelectedProductDetails(): Promise<void> {
-    if (!this.selectedProduct || !this.selectedBrandName) {
-      return;
-    }
-
-    if (this.isUpdatingProduct) {
-      return;
-    }
-
-    const product = this.selectedProduct;
-    this.editModalMode = 'product';
-    this.editModalTitle = 'Edit Product Details';
-    this.editModalDescription = 'Update product name, unit, and unit types.';
-    this.editModalSubmitLabel = 'Save Product';
-    this.editModalFields = [
-      {
-        key: 'productName',
-        label: 'Product Name',
-        type: 'text',
-        required: true,
-        placeholder: 'Enter product name',
-      },
-      {
-        key: 'unit',
-        label: 'Unit',
-        type: 'text',
-        required: true,
-        placeholder: 'SET',
-      },
-      {
-        key: 'unitTypes',
-        label: 'Unit Types (comma separated)',
-        type: 'text',
-        required: true,
-        placeholder: 'Indoor, Outdoor',
-      },
-    ];
-    this.editModalInitialValues = {
-      productName: product.name ?? '',
-      unit: product.unit ?? 'SET',
-      unitTypes: Array.isArray(product.unitTypes) ? product.unitTypes.join(', ') : '',
-    };
-    this.isEditModalOpen = true;
-  }
-
-  async editSelectedCapacityDetails(): Promise<void> {
-    if (!this.selectedCapacity || !this.selectedProduct || !this.selectedBrandName) {
-      return;
-    }
-
-    if (this.isUpdatingCapacity) {
-      return;
-    }
-
-    const capacity = this.selectedCapacity;
-
-    this.editModalMode = 'capacity';
-    this.editModalTitle = 'Edit Capacity Details';
-    this.editModalDescription = 'Update SRP, net price, model numbers, and capacity name.';
-    this.editModalSubmitLabel = 'Save Capacity';
-    this.editModalFields = [
-      {
-        key: 'capacityName',
-        label: 'Capacity Name',
-        type: 'text',
-        required: true,
-      },
-      {
-        key: 'srp',
-        label: 'SRP',
-        type: 'number',
-        required: true,
-        min: 0,
-        step: 0.01,
-      },
-      {
-        key: 'netPrice',
-        label: 'Net Price',
-        type: 'number',
-        required: true,
-        min: 0,
-        step: 0.01,
-      },
-      {
-        key: 'cashPrice',
-        label: 'Cash Price',
-        type: 'number',
-        required: false,
-        min: 0,
-        step: 0.01,
-      },
-      {
-        key: 'ccPrice',
-        label: 'CC Price',
-        type: 'number',
-        required: false,
-        min: 0,
-        step: 0.01,
-      },
-      {
-        key: 'unitPrice',
-        label: 'Unit Price',
-        type: 'number',
-        required: false,
-        min: 0,
-        step: 0.01,
-      },
-      {
-        key: 'indoorModel',
-        label: 'Indoor Model',
-        type: 'text',
-      },
-      {
-        key: 'outdoorModel',
-        label: 'Outdoor Model',
-        type: 'text',
-      },
-    ];
-    this.editModalInitialValues = {
-      capacityName: capacity.name ?? '',
-      srp: Number(capacity.sellPrice ?? 0),
-      netPrice: Number(capacity.unitPrice ?? 0),
-      cashPrice: Number(capacity.cashPrice ?? 0),
-      ccPrice: Number(capacity.ccPrice ?? 0),
-      unitPrice: Number(capacity.unitPrice ?? 0),
-      indoorModel: String(capacity.indoorModel ?? ''),
-      outdoorModel: String(capacity.outdoorModel ?? ''),
-    };
-    this.isEditModalOpen = true;
-  }
-
-  closeEditModal(): void {
-    if (this.isEditModalSubmitting) {
-      return;
-    }
-
-    this.isEditModalOpen = false;
-    this.editModalMode = null;
-    this.editModalTitle = '';
-    this.editModalDescription = '';
-    this.editModalFields = [];
-    this.editModalInitialValues = {};
-    this.editModalSubmitLabel = 'Save Changes';
-  }
-
-  async onEditModalSave(payload: Record<string, unknown>): Promise<void> {
-    if (!this.editModalMode || this.isEditModalSubmitting) {
-      return;
-    }
-
-    if (this.editModalMode === 'product') {
-      await this.submitProductEditFromModal(payload);
-      return;
-    }
-
-    await this.submitCapacityEditFromModal(payload);
-  }
-
-  private async submitProductEditFromModal(payload: Record<string, unknown>): Promise<void> {
-    if (!this.selectedProduct || !this.selectedBrandName) {
-      return;
-    }
-
-    const productId = this.selectedProduct.id;
-    const brandName = this.selectedBrandName;
-
-    const productName = String(payload['productName'] ?? '').trim();
-    const unit = String(payload['unit'] ?? '').trim().toUpperCase();
-    const unitTypes = String(payload['unitTypes'] ?? '')
-      .split(',')
-      .map((entry) => entry.trim())
-      .filter((entry) => entry.length > 0);
-
-    if (!productName) {
-      this.errorMessage = 'Product name is required';
-      return;
-    }
-
-    if (!unit) {
-      this.errorMessage = 'Unit is required';
-      return;
-    }
-
-    if (unitTypes.length === 0) {
-      this.errorMessage = 'At least one unit type is required';
-      return;
-    }
-
-    this.isUpdatingProduct = true;
-    this.isEditModalSubmitting = true;
-    this.errorMessage = '';
-
-    try {
-      const response = await apiClient.patch<ApiMutationResponse>(`/products/${productId}`, {
-        productName,
-        unit,
-        unitTypes,
-      });
-
-      if (!response.data.success) {
-        this.errorMessage = response.data.message ?? 'Unable to update product details';
-        return;
-      }
-
-      await this.loadInventoryFolders({
-        brandName,
-        productId,
-      });
-
-      this.addCapacitySuccess = response.data.message ?? 'Product details updated successfully';
-      this.addCapacityError = '';
-      this.closeEditModal();
-    } catch (error: unknown) {
-      if (axios.isAxiosError(error)) {
-        this.errorMessage =
-          (error.response?.data as { message?: string } | undefined)?.message ??
-          'Unable to update product details';
-      } else {
-        this.errorMessage = 'Unable to update product details';
-      }
-    } finally {
-      this.isUpdatingProduct = false;
-      this.isEditModalSubmitting = false;
-    }
-  }
-
-  private async submitCapacityEditFromModal(payload: Record<string, unknown>): Promise<void> {
-    if (!this.selectedCapacity || !this.selectedProduct || !this.selectedBrandName) {
-      return;
-    }
-
-    const selectedCapacity = this.selectedCapacity;
-    const selectedProduct = this.selectedProduct;
-    const brandName = this.selectedBrandName;
-
-    const capacityName = String(payload['capacityName'] ?? '').trim();
-    const srp = Number(payload['srp']);
-    const netPrice = Number(payload['netPrice']);
-    const indoorModel = String(payload['indoorModel'] ?? '').trim();
-    const outdoorModel = String(payload['outdoorModel'] ?? '').trim();
-
-    if (!capacityName) {
-      this.errorMessage = 'Capacity name is required';
-      return;
-    }
-
-    if (!Number.isFinite(srp) || !Number.isFinite(netPrice)) {
-      this.errorMessage = 'SRP and Net Price must be valid numbers';
-      return;
-    }
-
-    this.isUpdatingCapacity = true;
-    this.isEditModalSubmitting = true;
-    this.errorMessage = '';
-
-    try {
-      const response = await apiClient.patch<ApiMutationResponse>(`/capacity/${selectedCapacity.id}`, {
-        productId: selectedProduct.id,
-        capacity: capacityName,
-        srp,
-        netPrice,
-        cashPrice: Number(payload['cashPrice'] ?? 0),
-        ccPrice: Number(payload['ccPrice'] ?? 0),
-        unitPrice: Number(payload['unitPrice'] ?? 0),
-        indoorModel,
-        outdoorModel,
-      });
-
-      if (!response.data.success) {
-        this.errorMessage = response.data.message ?? 'Unable to update capacity details';
-        return;
-      }
-
-      await this.loadInventoryFolders({
-        brandName,
-        productId: selectedProduct.id,
-        capacityId: selectedCapacity.id,
-      });
-
-      this.addCapacitySuccess = response.data.message ?? 'Capacity updated successfully';
-      this.addCapacityError = '';
-      this.closeEditModal();
-    } catch (error: unknown) {
-      if (axios.isAxiosError(error)) {
-        this.errorMessage =
-          (error.response?.data as { message?: string } | undefined)?.message ??
-          'Unable to update capacity details';
-      } else {
-        this.errorMessage = 'Unable to update capacity details';
-      }
-    } finally {
-      this.isUpdatingCapacity = false;
-      this.isEditModalSubmitting = false;
-    }
-  }
-
-  private async submitBrandOnlyForm(): Promise<void> {
-    const brandName = this.createBrandName.trim();
-    if (!brandName) {
-      this.creationError = 'Brand name is required';
-      return;
-    }
-
-    const response = await apiClient.post<ApiMutationResponse & { item?: { id?: number; name?: string } }>('/brands', {
-      name: brandName,
-    });
-
-    if (!response.data.success) {
-      this.creationError = response.data.message ?? 'Unable to create brand';
-      return;
-    }
-
-    await this.loadInventoryFolders({ brandName });
-    this.selectBrand(brandName);
-    this.createBrandName = '';
-    this.creationSuccess = response.data.message ?? 'Brand created successfully';
-    this.closeCreationDrawer();
-  }
-
-  private async submitAllInOneForm(): Promise<void> {
-    const brandName = this.allInOneBrandName.trim();
-    if (!brandName) {
-      this.creationError = 'Brand name is required';
-      return;
-    }
-
-    const brandResponse = await apiClient.post<ApiMutationResponse & { item?: { id?: number; name?: string } }>('/brands', {
-      name: brandName,
-    });
-
-    if (!brandResponse.data.success) {
-      this.creationError = brandResponse.data.message ?? 'Unable to create brand';
-      return;
-    }
-
-    const brandId = Number(brandResponse.data.item?.id);
-    if (!Number.isFinite(brandId) || brandId <= 0) {
-      this.creationError = 'Brand created but brand id is unavailable';
-      return;
-    }
-
-    if (!this.allInOneIncludeProduct) {
-      await this.loadInventoryFolders({ brandName });
-      this.selectBrand(brandName);
-      this.resetAllInOneFormFields();
-      this.creationSuccess = 'Brand created successfully';
-      return;
-    }
-
-    const productName = this.allInOneProductName.trim();
-    if (!productName) {
-      this.creationError = 'Product name is required';
-      return;
-    }
-
-    const unitTypes = this.parseUnitTypes(this.allInOneSelectedUnitTypes);
-    if (unitTypes.length === 0) {
-      this.creationError = 'Unit types are required';
-      return;
-    }
-
-    const capacities = this.allInOneIncludeCapacity
-      ? this.buildProductCapacityPayload({
-          names: this.allInOneSelectedCapacities,
-          detailsByName: this.allInOneCapacityDetails,
-        })
-      : [];
-
-    if (capacities === null) {
-      return;
-    }
-
-    const productResponse = await apiClient.post<ApiMutationResponse>('/products', {
-      brandId,
-      productName,
-      unit: (String(this.allInOneUnit || 'SET').trim() || 'SET').toUpperCase(),
-      unitTypes,
-      capacities,
-    });
-
-    if (!productResponse.data.success) {
-      this.creationError = productResponse.data.message ?? 'Unable to create product';
-      return;
-    }
-
-    await this.loadInventoryFolders({ brandName });
-    this.selectBrand(brandName);
-    this.resetAllInOneFormFields();
-    this.creationSuccess = 'Brand, product, and capacity created successfully';
-    this.closeCreationDrawer();
-  }
-
-  private async submitProductCapacityForm(): Promise<void> {
-    const brandName = (this.productFormBrandName || this.selectedBrandName || '').trim();
-    if (!brandName) {
-      this.creationError = 'Select a brand';
-      return;
-    }
-
-    const brandId = this.findBrandIdByName(brandName);
-    if (!brandId) {
-      this.creationError = 'Selected brand is not available';
-      return;
-    }
-
-    const productName = this.productFormProductName.trim();
-    if (!productName) {
-      this.creationError = 'Product name is required';
-      return;
-    }
-
-    const unitTypes = this.parseUnitTypes(this.productFormSelectedUnitTypes);
-    if (unitTypes.length === 0) {
-      this.creationError = 'Unit types are required';
-      return;
-    }
-
-    const capacities = this.productFormIncludeCapacity
-      ? this.buildProductCapacityPayload({
-          names: this.productFormSelectedCapacities,
-          detailsByName: this.productFormCapacityDetails,
-        })
-      : [];
-
-    if (capacities === null) {
-      return;
-    }
-
-    const response = await apiClient.post<ApiMutationResponse>('/products', {
-      brandId,
-      productName,
-      unit: (String(this.productFormUnit || 'SET').trim() || 'SET').toUpperCase(),
-      unitTypes,
-      capacities,
-    });
-
-    if (!response.data.success) {
-      this.creationError = response.data.message ?? 'Unable to create product';
-      return;
-    }
-
-    await this.loadInventoryFolders({ brandName });
-    this.selectBrand(brandName);
-    this.resetProductFormFields();
-    this.creationSuccess = response.data.message ?? 'Product created successfully';
-    this.closeCreationDrawer();
-  }
-
-  private async submitCapacityOnlyForm(): Promise<void> {
-    if (!this.selectedProduct || !this.selectedBrandName) {
-      this.creationError = 'Select a product first';
-      return;
-    }
-
-    const payload = this.buildProductCapacityPayload({
-      names: this.capacityOnlySelectedCapacities,
-      detailsByName: this.capacityOnlyDetails,
-    });
-
-    if (payload === null) {
-      return;
-    }
-
-    for (const capacity of payload) {
-      const response = await apiClient.post<{
-        success: boolean;
-        message?: string;
-      }>('/capacity', {
-        productId: this.selectedProduct.id,
-        capacity: capacity.capacity,
-        indoorModel: capacity.indoorModel,
-        outdoorModel: capacity.outdoorModel,
-        srp: Number(capacity.srp),
-        netPrice: Number(capacity.netPrice),
-      });
-
-      if (!response.data.success) {
-        this.creationError = response.data.message ?? `Unable to add capacity ${capacity.capacity}`;
-        return;
+  /**
+   * Handle context menu action: Add Material (from brand node).
+   */
+  contextMenuAddMaterial(): void {
+    this.isContextMenuOpen = false;
+    this.openCreateDrawer();
+    // Find the brand in materialBrands to get its product_type_id
+    const brand = this.materialBrands.find(b => b.id === this.contextMenuNodeId);
+    if (brand && brand.product_type_id) {
+      const pt = this.productTypes.find(p => p.id === brand.product_type_id);
+      if (pt) {
+        this.productTypeSearch = pt.name;
+        this.productTypePrefix = pt.prefix || '';
       }
     }
-
-    await this.loadInventoryFolders({
-      brandName: this.selectedBrandName,
-      productId: this.selectedProduct.id,
-    });
-
-    this.creationSuccess = 'Capacity added successfully';
-    this.closeCreationDrawer();
+    // Pre-fill brand in the first row
+    if (brand && this.materialRows.length > 0) {
+      this.materialRows[0].brand_name = brand.brandName;
+      void this.generateCodeForRow(this.materialRows[0], brand.id);
+    }
   }
 
-  private parseUnitTypes(values: string[]): string[] {
-    const toLabel = (entry: string): string => {
-      const normalized = entry.trim().replace(/\s+/g, ' ');
-      if (!normalized) {
-        return '';
+  /**
+   * Listen for clicks to close context menu.
+   */
+  @HostListener('document:mousedown', ['$event'])
+  onDocumentMouseDown(event: MouseEvent): void {
+    if (this.isContextMenuOpen) {
+      const target = event.target as HTMLElement;
+      const contextMenu = document.getElementById('tree-context-menu');
+      if (contextMenu && !contextMenu.contains(target)) {
+        this.isContextMenuOpen = false;
       }
-
-      return normalized
-        .split(' ')
-        .map((part) => part.charAt(0).toUpperCase() + part.slice(1).toLowerCase())
-        .join(' ');
-    };
-
-    return values
-      .map((entry) => toLabel(entry))
-      .filter((entry) => entry.length > 0);
-  }
-
-  private findBrandIdByName(name: string): number | null {
-    const brand = this.brandFolders.find((folder) => this.normalizeSearchText(folder.name) === this.normalizeSearchText(name));
-    if (!brand?.id) {
-      return null;
-    }
-
-    return brand.id;
-  }
-
-  private toggleUnitTypeSelection(current: string[], unitType: string): string[] {
-    const normalizedUnitType = String(unitType).trim();
-    if (!normalizedUnitType) {
-      return current;
-    }
-
-    if (current.includes(normalizedUnitType)) {
-      if (current.length === 1) {
-        return current;
-      }
-
-      return current.filter((entry) => entry !== normalizedUnitType);
-    }
-
-    return [...current, normalizedUnitType];
-  }
-
-  private buildProductCapacityPayload(input: {
-    names: string[];
-    detailsByName: Record<string, CapacityDraft>;
-  }): Array<{
-    capacity: string;
-    indoorModel: string;
-    outdoorModel: string;
-    srp: string;
-    netPrice: string;
-    supplierId: string;
-    purchaseOrderId: string;
-    purchaseOrderNo: string;
-  }> | null {
-    const capacityNames = input.names
-      .map((name) => String(name).trim())
-      .filter((name) => name.length > 0);
-
-    if (capacityNames.length === 0) {
-      this.creationError = 'Select at least one capacity';
-      return null;
-    }
-
-    return capacityNames.map((capacityName) => {
-      const details = input.detailsByName[capacityName] ?? this.createEmptyCapacityDraft();
-      const srp = Number(details.srp ?? 0);
-      const netPrice = Number(details.netPrice ?? 0);
-
-      return {
-      capacity: capacityName,
-      indoorModel: String(details.indoorModel ?? '').trim(),
-      outdoorModel: String(details.outdoorModel ?? '').trim(),
-      srp: String(Number.isFinite(srp) ? srp : 0),
-      netPrice: String(Number.isFinite(netPrice) ? netPrice : 0),
-      cashPrice: String(Number.isFinite(Number(details.cashPrice ?? 0)) ? Number(details.cashPrice) : 0),
-      ccPrice: String(Number.isFinite(Number(details.ccPrice ?? 0)) ? Number(details.ccPrice) : 0),
-      unitPrice: String(Number.isFinite(Number(details.unitPrice ?? 0)) ? Number(details.unitPrice) : 0),
-      supplierId: '',
-      purchaseOrderId: '',
-      purchaseOrderNo: '',
-      };
-    });
-  }
-
-  private createEmptyCapacityDraft(): CapacityDraft {
-    return {
-      srp: null,
-      cashPrice: null,
-      ccPrice: null,
-      unitPrice: null,
-      netPrice: null,
-      indoorModel: '',
-      outdoorModel: '',
-    };
-  }
-
-  private resetAllInOneFormFields(): void {
-    this.allInOneBrandName = '';
-    this.allInOneIncludeProduct = true;
-    this.allInOneProductName = '';
-    this.allInOneUnit = 'SET';
-    this.allInOneSelectedUnitTypes = ['Indoor', 'Outdoor'];
-    this.allInOneIncludeCapacity = true;
-    this.allInOneSelectedCapacities = ['1.0 HP'];
-    this.allInOneCapacityDetails = {
-      '1.0 HP': this.createEmptyCapacityDraft(),
-    };
-  }
-
-  private resetProductFormFields(): void {
-    this.productFormProductName = '';
-    this.productFormUnit = 'SET';
-    this.productFormSelectedUnitTypes = ['Indoor', 'Outdoor'];
-    this.productFormIncludeCapacity = true;
-    this.productFormSelectedCapacities = ['1.0 HP'];
-    this.productFormCapacityDetails = {
-      '1.0 HP': this.createEmptyCapacityDraft(),
-    };
-  }
-
-  private async loadInventoryFolders(selection?: {
-    brandName?: string | null;
-    productId?: number | null;
-    capacityId?: number | null;
-  }): Promise<void> {
-    this.isLoading = true;
-    this.errorMessage = '';
-
-    const requestedBrandName = selection?.brandName ?? this.selectedBrandName;
-    const requestedProductId = selection?.productId ?? this.selectedProductId;
-    const requestedCapacityId = selection?.capacityId ?? this.selectedCapacityId;
-
-    try {
-      const [products, rawBrands] = await Promise.all([
-        this.salesOrderService.getProducts(),
-        this.getBrands(),
-      ]);
-
-      // Hide material brands from the inventory folder tree.
-      const brands = rawBrands.filter(
-        (brand) => String(brand.type ?? '').toLowerCase() !== 'mat',
-      );
-
-      // Do not include material brands in the inventory tree.
-      const inventoryProducts = products.filter(
-        (product) => String(product.brandType ?? '').toLowerCase() !== 'mat',
-      );
-
-      const grouped = new Map<string, ProductOption[]>();
-
-      for (const product of inventoryProducts) {
-        const brandName = String(product.brandName ?? 'Uncategorized').trim() || 'Uncategorized';
-        const current = grouped.get(brandName) ?? [];
-        current.push(product);
-        grouped.set(brandName, current);
-      }
-
-      const folderMap = new Map<string, BrandFolder>();
-      for (const brand of brands) {
-        const name = String(brand.name ?? '').trim();
-        if (!name) {
-          continue;
-        }
-
-        folderMap.set(name, {
-          id: Number.isFinite(Number(brand.id)) ? Number(brand.id) : null,
-          name,
-          products: [],
-        });
-      }
-
-      for (const [name, brandProducts] of grouped.entries()) {
-        const existing = folderMap.get(name);
-        if (existing) {
-          existing.products = [...brandProducts].sort((a, b) => a.name.localeCompare(b.name));
-          continue;
-        }
-
-        folderMap.set(name, {
-          id: null,
-          name,
-          products: [...brandProducts].sort((a, b) => a.name.localeCompare(b.name)),
-        });
-      }
-
-      this.brandFolders = Array.from(folderMap.values())
-        .sort((a, b) => a.name.localeCompare(b.name));
-
-      const selectedBrand =
-        this.brandFolders.find((folder) => folder.name === requestedBrandName) ??
-        this.brandFolders[0] ??
-        null;
-
-      this.selectedBrandName = selectedBrand?.name ?? null;
-
-      const selectedProduct =
-        selectedBrand?.products.find((product) => product.id === requestedProductId) ??
-        null;
-
-      this.selectedProductId = selectedProduct?.id ?? null;
-
-      const selectedCapacity =
-        selectedProduct?.capacities.find((capacity) => capacity.id === requestedCapacityId) ??
-        null;
-
-      this.selectedCapacityId = selectedCapacity?.id ?? null;
-
-      this.expandedBrands = new Set(this.selectedBrandName ? [this.selectedBrandName] : []);
-      this.expandedProducts = new Set<string>(
-        this.selectedBrandName && this.selectedProductId != null
-          ? [this.getProductTreeKey(this.selectedBrandName, this.selectedProductId)]
-          : [],
-      );
-    } catch (error: unknown) {
-      if (axios.isAxiosError(error)) {
-        this.errorMessage =
-          (error.response?.data as { message?: string } | undefined)?.message ??
-          'Unable to load inventory folders';
-      } else {
-        this.errorMessage = 'Unable to load inventory folders';
-      }
-
-      this.brandFolders = [];
-      this.selectedBrandName = null;
-      this.selectedProductId = null;
-      this.selectedCapacityId = null;
-      this.expandedBrands.clear();
-      this.expandedProducts.clear();
-    } finally {
-      this.isLoading = false;
-    }
-  }
-
-  private async getBrands(): Promise<BrandOption[]> {
-    const response = await apiClient.get<{ success: boolean; items?: BrandOption[]; message?: string }>('/brands');
-    return response.data.items ?? [];
-  }
-
-  private addProductFromBrandContext(brandName: string): void {
-    const brand = this.brandFolders.find((folder) => folder.name === brandName) ?? null;
-    if (!brand?.id) {
-      this.errorMessage = 'Brand record is not available for this action';
-      return;
-    }
-
-    this.productFormBrandName = brand.name;
-    this.openCreationDrawer('product-capacity');
-  }
-
-  private async editBrandFromContext(brandName: string): Promise<void> {
-    const brand = this.brandFolders.find((folder) => folder.name === brandName) ?? null;
-    if (!brand?.id) {
-      this.errorMessage = 'Brand record is not available for this action';
-      return;
-    }
-
-    const updatedNameInput = window.prompt('Edit Brand Name', brand.name);
-    const updatedName = String(updatedNameInput ?? '').trim();
-
-    if (!updatedName || updatedName === brand.name) {
-      return;
-    }
-
-    this.errorMessage = '';
-
-    try {
-      const response = await apiClient.patch<ApiMutationResponse>(`/brands/${brand.id}`, {
-        name: updatedName,
-      });
-
-      if (!response.data.success) {
-        this.errorMessage = response.data.message ?? 'Unable to update brand';
-        return;
-      }
-
-      await this.loadInventoryFolders({
-        brandName: updatedName,
-      });
-      this.selectBrand(updatedName);
-    } catch (error: unknown) {
-      if (axios.isAxiosError(error)) {
-        this.errorMessage =
-          (error.response?.data as { message?: string } | undefined)?.message ??
-          'Unable to update brand';
-      } else {
-        this.errorMessage = 'Unable to update brand';
-      }
-    }
-  }
-
-  private async deleteBrandFromContext(brandName: string): Promise<void> {
-    const brand = this.brandFolders.find((folder) => folder.name === brandName) ?? null;
-    if (!brand?.id) {
-      this.errorMessage = 'Brand record is not available for this action';
-      return;
-    }
-
-    const confirmed = window.confirm(`Delete brand "${brand.name}"?`);
-    if (!confirmed) {
-      return;
-    }
-
-    this.errorMessage = '';
-
-    try {
-      const response = await apiClient.delete<ApiMutationResponse>(`/brands/${brand.id}`);
-
-      if (!response.data.success) {
-        this.errorMessage = response.data.message ?? 'Unable to delete brand';
-        return;
-      }
-
-      await this.loadInventoryFolders();
-    } catch (error: unknown) {
-      if (axios.isAxiosError(error)) {
-        this.errorMessage =
-          (error.response?.data as { message?: string } | undefined)?.message ??
-          'Unable to delete brand';
-      } else {
-        this.errorMessage = 'Unable to delete brand';
-      }
-    }
-  }
-
-  private async loadCapacityStockSummary(productId: number, capacityId: number): Promise<void> {
-    const normalizedProductId = Number(productId);
-    const normalizedCapacityId = Number(capacityId);
-
-    if (!Number.isFinite(normalizedProductId) || !Number.isFinite(normalizedCapacityId)) {
-      console.warn('Invalid productId or capacityId for loading capacity stock summary');
-      return;
-    }
-
-    this.isLoadingCapacityStock = true;
-    this.capacityStockError = '';
-    this.activeCapacitySerialTab = 'in-stock';
-    this.serialSearch = '';
-    this.selectedSerialUnitType = 'all';
-    this.serialCurrentPage = 1;
-
-    try {
-      const response = await apiClient.get<{
-        success: boolean;
-        message?: string;
-        item?: {
-          branchId?: number | null;
-          productId: number;
-          capacityId: number;
-          unit?: string;
-          unitTypes?: string[];
-          unitTypeCount?: number;
-          counts?: {
-            inStock?: number;
-            reserved?: number;
-            installed?: number;
-            delivered?: number;
-          };
-          serials?: {
-            inStock?: Array<{ serialNumber?: string; unitType?: string }>;
-            reserved?: Array<{ serialNumber?: string; unitType?: string }>;
-            installed?: Array<{ serialNumber?: string; unitType?: string }>;
-            delivered?: Array<{ serialNumber?: string; unitType?: string }>;
-          };
-        };
-      }>('/serial-number/list-by-scope', {
-        params: {
-          productId: normalizedProductId,
-          capacityId: normalizedCapacityId,
-        },
-      });
-
-      if (!response.data.success) {
-        this.capacityStockSummary = null;
-        this.capacityStockError = response.data.message ?? 'Unable to load serial stock summary';
-        return;
-      }
-
-      const item = response.data.item;
-      if (!item) {
-        this.capacityStockSummary = null;
-        this.capacityStockError = 'Unable to load serial stock summary';
-        return;
-      }
-
-      this.capacityStockSummary = {
-        branchId: item.branchId ?? null,
-        productId: Number(item.productId) || normalizedProductId,
-        capacityId: Number(item.capacityId) || normalizedCapacityId,
-        unit: String(item.unit ?? '').trim(),
-        unitTypes: Array.isArray(item.unitTypes) ? item.unitTypes : [],
-        unitTypeCount: Number(item.unitTypeCount) || 0,
-        counts: {
-          inStock: Number(item.counts?.inStock) || 0,
-          reserved: Number(item.counts?.reserved) || 0,
-          installed: Number(item.counts?.installed ?? item.counts?.delivered) || 0,
-        },
-        serials: {
-          inStock: this.mapSerialEntries(item.serials?.inStock ?? []),
-          reserved: this.mapSerialEntries(item.serials?.reserved ?? []),
-          installed: this.mapSerialEntries(item.serials?.installed ?? item.serials?.delivered ?? []),
-        },
-      };
-    } catch (error: unknown) {
-      this.capacityStockSummary = null;
-      if (axios.isAxiosError(error)) {
-        this.capacityStockError =
-          (error.response?.data as { message?: string } | undefined)?.message ??
-          'Unable to load serial stock summary';
-      } else {
-        this.capacityStockError = 'Unable to load serial stock summary';
-      }
-    } finally {
-      this.isLoadingCapacityStock = false;
-    }
-
-    // Cache counts so the folder tree can show stock at a glance without selecting the capacity.
-    this.capacityStockCounts[normalizedCapacityId] = {
-      inStock: this.capacityStockSummary?.counts.inStock ?? 0,
-      reserved: this.capacityStockSummary?.counts.reserved ?? 0,
-      installed: this.capacityStockSummary?.counts.installed ?? 0,
-      total:
-        (this.capacityStockSummary?.counts.inStock ?? 0) +
-        (this.capacityStockSummary?.counts.reserved ?? 0) +
-        (this.capacityStockSummary?.counts.installed ?? 0),
-      unit: String(this.capacityStockSummary?.unit ?? '').trim(),
-      unitTypeCount: Number(this.capacityStockSummary?.unitTypeCount ?? 0),
-    };
-  }
-
-  private async loadCapacityStockCountsForProduct(productId: number): Promise<void> {
-    const normalizedProductId = Number(productId);
-    if (!Number.isFinite(normalizedProductId) || normalizedProductId <= 0) {
-      return;
-    }
-
-    const capacities = this.selectedProduct?.capacities ?? [];
-    if (capacities.length === 0) {
-      this.capacityStockCounts = {};
-      return;
-    }
-
-    this.isLoadingCapacityCounts = true;
-    this.capacityCountsError = '';
-
-    const results = await Promise.allSettled(
-      capacities.map((capacity) =>
-        apiClient
-          .get<{
-            success: boolean;
-            message?: string;
-            item?: {
-              counts?: {
-                inStock?: number;
-                reserved?: number;
-                installed?: number;
-              };
-              unit?: string;
-              unitTypeCount?: number;
-            };
-          }>('/serial-number/capacity-stock-summary', {
-            params: {
-              productId: normalizedProductId,
-              capacityId: capacity.id,
-            },
-          })
-          .then((response) => ({ capacityId: capacity.id, data: response.data }))
-          .catch((error) => ({ capacityId: capacity.id, error })),
-      ),
-    );
-
-    const counts: typeof this.capacityStockCounts = {};
-    for (const result of results) {
-      if (result.status !== 'fulfilled') {
-        continue;
-      }
-
-      const resolved = result.value;
-      if (!('data' in resolved) || !resolved.data) {
-        continue;
-      }
-
-      const { capacityId, data } = resolved;
-      if (!data.success || !data.item?.counts) {
-        continue;
-      }
-
-      const inStock = Number(data.item.counts.inStock ?? 0);
-      const reserved = Number(data.item.counts.reserved ?? 0);
-      const installed = Number(data.item.counts.installed ?? 0);
-      const unit = String(data.item.unit ?? '').trim();
-      const unitTypeCount = Number(data.item.unitTypeCount ?? 0);
-
-      counts[capacityId] = {
-        inStock,
-        reserved,
-        installed,
-        total: inStock + reserved + installed,
-        unit,
-        unitTypeCount,
-      };
-    }
-
-    this.capacityStockCounts = counts;
-    this.isLoadingCapacityCounts = false;
-  }
-
-  getCapacityStockLabel(capacityId: number): string | null {
-    const counts = this.capacityStockCounts[capacityId];
-    if (!counts) {
-      return null;
-    }
-
-    const normalizedUnit = String(counts.unit ?? '').trim().toLowerCase();
-    const divisor = Number(counts.unitTypeCount ?? 0);
-
-    if (normalizedUnit === 'set' && divisor > 0) {
-      const setCount = Math.floor(counts.inStock / divisor);
-      return `${setCount} SET`;
-    }
-
-    return `${counts.inStock} in stock`;
-  }
-
-  private async loadLandCostingReport(productId: number, capacityId: number): Promise<void> {
-    this.isLoadingLandCostingReport = true;
-    this.landCostingError = '';
-
-    try {
-      const response = await apiClient.get<{
-        success: boolean;
-        message?: string;
-        item?: {
-          dateFrom?: string;
-          dateTo?: string;
-          totals?: {
-            serialCount?: number;
-            landedCost?: number;
-            srp?: number;
-            marginAmount?: number;
-            marginPercent?: number;
-          };
-          groups?: Array<{
-            productName?: string;
-            capacityName?: string;
-            vendorName?: string;
-            poNumber?: string;
-            poDate?: string | null;
-            rows?: Array<{
-              category?: string;
-              serialNumber?: string;
-              indoorSerial?: string;
-              outdoorSerial?: string;
-              landedCost?: number;
-              srp?: number;
-              marginAmount?: number;
-              status?: string;
-              isDefective?: boolean;
-              isReturned?: boolean;
-              serialStatus?: string;
-            }>;
-          }>;
-        };
-      }>('/serial-number/reports/land-costing', {
-        params: {
-          dateFrom: this.landCostingDateFrom,
-          dateTo: this.landCostingDateTo,
-          productId,
-          capacityId,
-        },
-      });
-
-      if (!response.data.success || !response.data.item) {
-        this.landCostingGroups = [];
-        this.landCostingTotals = {
-          serialCount: 0,
-          landedCost: 0,
-          srp: 0,
-          marginAmount: 0,
-          marginPercent: 0,
-        };
-        this.landCostingError = response.data.message ?? 'Unable to load land costing report';
-        return;
-      }
-
-      this.landCostingDateFrom = String(response.data.item.dateFrom ?? this.landCostingDateFrom);
-      this.landCostingDateTo = String(response.data.item.dateTo ?? this.landCostingDateTo);
-
-      const groups = Array.isArray(response.data.item.groups) ? response.data.item.groups : [];
-      this.landCostingGroups = groups.map((group) => {
-        const mappedGroup = {
-          productName: String(group.productName ?? '').trim(),
-          capacityName: String(group.capacityName ?? '').trim(),
-          vendorName: String(group.vendorName ?? '').trim(),
-          poNumber: String(group.poNumber ?? '').trim(),
-          poDate: group.poDate ?? null,
-          rows: Array.isArray(group.rows)
-            ? group.rows.map((row) => ({
-                indoorSerial: String(row.indoorSerial ?? '').trim(),
-                outdoorSerial: String(row.outdoorSerial ?? '').trim(),
-                landedCost: Number(row.landedCost) || 0,
-                srp: Number(row.srp) || 0,
-                marginAmount: Number(row.marginAmount) || 0,
-                serialStatus: String(row.serialStatus ?? 'In-Stock').trim(),
-                isDefective: Boolean(row.isDefective ?? false),
-                isReturned: Boolean(row.isReturned ?? false),
-              }))
-            : [],
-        };
-        return {
-          ...mappedGroup,
-          inStockCount: mappedGroup.rows.filter(row => row.serialStatus.toLowerCase() === 'in-stock').length,
-          inStockIndoorCount: mappedGroup.rows.filter(row => row.indoorSerial && row.serialStatus.toLowerCase() === 'in-stock').length,
-          inStockOutdoorCount: mappedGroup.rows.filter(row => row.outdoorSerial && row.serialStatus.toLowerCase() === 'in-stock').length,
-        };
-      });
-
-      this.landCostingTotals = {
-        serialCount: Number(response.data.item.totals?.serialCount) || this.landCostingGroups.reduce((total, group) => total + group.rows.length, 0),
-        landedCost: Number(response.data.item.totals?.landedCost) || 0,
-        srp: Number(response.data.item.totals?.srp) || 0,
-        marginAmount: Number(response.data.item.totals?.marginAmount) || 0,
-        marginPercent: Number(response.data.item.totals?.marginPercent) || 0,
-      };
-    } catch (error: unknown) {
-      this.landCostingGroups = [];
-      this.landCostingTotals = {
-        serialCount: 0,
-        landedCost: 0,
-        srp: 0,
-        marginAmount: 0,
-        marginPercent: 0,
-      };
-
-      if (axios.isAxiosError(error)) {
-        this.landCostingError =
-          (error.response?.data as { message?: string } | undefined)?.message ??
-          'Unable to load land costing report';
-      } else {
-        this.landCostingError = 'Unable to load land costing report';
-      }
-    } finally {
-      this.isLoadingLandCostingReport = false;
-    }
-  }
-
-  private formatDateOnly(value: string | null | undefined): string {
-    if (!value) {
-      return '';
-    }
-
-    const parsed = new Date(value);
-    if (Number.isNaN(parsed.getTime())) {
-      return String(value);
-    }
-
-    const year = parsed.getFullYear();
-    const month = String(parsed.getMonth() + 1).padStart(2, '0');
-    const day = String(parsed.getDate()).padStart(2, '0');
-    return `${year}-${month}-${day}`;
-  }
-
-  private initializeLandCostingDateRange(): void {
-    const now = new Date();
-    const from = new Date(now.getFullYear(), now.getMonth() - 6, now.getDate());
-    this.landCostingDateFrom = this.formatDateOnly(from.toISOString());
-    this.landCostingDateTo = this.formatDateOnly(now.toISOString());
-  }
-
-  private downloadBlob(blob: Blob, fileName: string): void {
-    const objectUrl = URL.createObjectURL(blob);
-    const anchor = document.createElement('a');
-    anchor.href = objectUrl;
-    anchor.download = fileName;
-    anchor.click();
-    URL.revokeObjectURL(objectUrl);
-  }
-
-  private getCapacitySerialCount(tab: CapacitySerialTab): number {
-    const counts = this.capacityStockSummary?.counts;
-    if (!counts) {
-      return 0;
-    }
-
-    if (tab === 'in-stock') {
-      return Number(counts.inStock) || 0;
-    }
-
-    if (tab === 'reserved') {
-      return Number(counts.reserved) || 0;
-    }
-
-    return Number(counts.installed) || 0;
-  }
-
-  private computeSetCount(serialCount: number): number {
-    const normalizedUnit = String(this.capacityStockSummary?.unit ?? '').trim().toLowerCase();
-    const divisor = Number(this.capacityStockSummary?.unitTypeCount ?? 0);
-
-    if (normalizedUnit === 'set' && divisor > 0) {
-      return Math.floor(serialCount / divisor);
-    }
-
-    return serialCount;
-  }
-
-  private computeUnpairedCount(serialCount: number): number {
-    const normalizedUnit = String(this.capacityStockSummary?.unit ?? '').trim().toLowerCase();
-    const divisor = Number(this.capacityStockSummary?.unitTypeCount ?? 0);
-
-    if (normalizedUnit === 'set' && divisor > 0) {
-      return serialCount % divisor;
-    }
-
-    return 0;
-  }
-
-  private normalizeSearchText(value: string): string {
-    return value.toLowerCase().trim().replace(/\s+/g, ' ');
-  }
-
-  private canAccessInventoryPermission(permissionKeys: string[]): boolean {
-    const acceptedKeys = permissionKeys ?? [];
-    if (acceptedKeys.length === 0) {
-      return true;
-    }
-
-    const isDenied = acceptedKeys.some((permissionKey) => this.rbacService.hasDeniedPermissionKey(permissionKey));
-    if (isDenied) {
-      return false;
-    }
-
-    const hasAnyAllowedRules = this.rbacService.hasAnyEffectivePermissionWithPrefix(this.landCostingPermissionPrefix);
-    const hasAnyDeniedRules = this.rbacService.hasAnyDeniedPermissionWithPrefix(this.landCostingPermissionPrefix);
-
-    if (!hasAnyAllowedRules && !hasAnyDeniedRules) {
-      return this.rbacService.canAccess('inventory', 'canRead');
-    }
-
-    const isExplicitlyAllowed = acceptedKeys.some((permissionKey) =>
-      this.rbacService.hasEffectivePermissionKey(permissionKey),
-    );
-    if (isExplicitlyAllowed) {
-      return true;
-    }
-
-    if (!hasAnyAllowedRules && hasAnyDeniedRules) {
-      return true;
-    }
-
-    return false;
-  }
-
-  private normalizeUnitTypeValue(value: string): string {
-    const normalized = this.normalizeSearchText(value)
-      .replace(/[\s_-]*qty$/i, '')
-      .replace(/quantity$/i, '')
-      .trim();
-
-    return normalized;
-  }
-
-  private formatUnitTypeLabel(value: string): string {
-    const normalized = this.normalizeUnitTypeValue(value);
-    if (!normalized) {
-      return 'Unknown';
-    }
-
-    return normalized
-      .split(/[\s_-]+/)
-      .filter(Boolean)
-      .map((part) => part.charAt(0).toUpperCase() + part.slice(1))
-      .join(' ');
-  }
-
-  private mapSerialEntries(
-    entries: Array<{ serialNumber?: string; unitType?: string }>,
-  ): SerialEntry[] {
-    return entries
-      .map((entry) => ({
-        serialNumber: String(entry.serialNumber ?? '').trim(),
-        unitType: this.normalizeUnitTypeValue(String(entry.unitType ?? '')),
-      }))
-      .filter((entry) => entry.serialNumber.length > 0);
-  }
-
-  private resetCapacityFormFields(): void {
-    this.newCapacityName = '';
-    this.newCapacitySrp = null;
-    this.newCapacityNetPrice = null;
-    this.newCapacityIndoorModel = '';
-    this.newCapacityOutdoorModel = '';
-  }
-
-  private resetCapacityFormMessages(): void {
-    this.addCapacityError = '';
-    this.addCapacitySuccess = '';
-  }
-
-  get canBulkInstall(): boolean {
-    return this.rbacService.isAdminOrSuperAdmin();
-  }
-
-  get notFoundInsertableSerials(): Array<{ serialNumber: string; csvStatus: string; csvUnitType: string }> {
-    return (this.csvPreviewResult?.notFound ?? []).filter(
-      (entry) => String(entry.csvStatus ?? '').trim().toLowerCase() !== 'installed',
-    );
-  }
-
-  get notFoundInstalledReviewCount(): number {
-    return (this.csvPreviewResult?.notFound ?? []).filter(
-      (entry) => String(entry.csvStatus ?? '').trim().toLowerCase() === 'installed',
-    ).length;
-  }
-
-  openCsvModal(): void {
-    this.isCsvModalOpen = true;
-    this.csvPreviewResult = null;
-    this.csvConfirmMessage = '';
-    this.csvConfirmError = '';
-    this.csvModalTab = 'will-install';
-    this.csvToInstallTargetStatus = 'installed';
-    this.csvAlreadyInstalledTargetStatus = 'in-stock';
-    this.csvNotFoundTargetStatus = 'in-stock';
-    this.csvNotFoundInsert = false;
-  }
-
-  closeCsvModal(): void {
-    this.isCsvModalOpen = false;
-    this.csvPreviewResult = null;
-    this.csvConfirmMessage = '';
-    this.csvConfirmError = '';
-  }
-
-  triggerCsvFileInput(): void {
-    const input = document.getElementById('csvFileInput') as HTMLInputElement | null;
-    input?.click();
-  }
-
-  downloadCsvTemplate(): void {
-    const rows = [
-      'serialNumber,unitType,status',
-      'AC-IN-0001,Indoor,in-stock',
-      'AC-OUT-0001,Outdoor,in-stock',
-    ];
-
-    this.downloadCsvFile(rows, 'inventory-serial-upload-template.csv');
-  }
-
-  async onCsvFileSelected(event: Event): Promise<void> {
-    const file = (event.target as HTMLInputElement).files?.[0];
-    if (!file) return;
-    this.isCsvParsing = true;
-    this.csvPreviewResult = null;
-    this.csvConfirmMessage = '';
-    this.csvConfirmError = '';
-    try {
-      const text = await file.text();
-      const lines = text.split(/[\r\n]+/).map((l) => l.trim()).filter((l) => l.length > 0);
-      // Detect header row
-      const hasHeader = lines[0]?.toLowerCase().startsWith('serialnumber') || lines[0]?.toLowerCase().startsWith('serial_number') || lines[0]?.toLowerCase().startsWith('serial number');
-      const dataLines = hasHeader ? lines.slice(1) : lines;
-      const rows = dataLines
-        .map((line) => {
-          const parts = line.split(',');
-          const has3Cols = parts.length >= 3;
-          const serialNumber = (parts[0] ?? '').trim();
-          const unitType = has3Cols ? (parts[1] ?? '').trim() : '';
-          const status = has3Cols ? (parts[2] ?? '').trim().toLowerCase() : (parts[1] ?? '').trim().toLowerCase();
-          return { serialNumber, unitType, status };
-        })
-        .filter((r) => r.serialNumber.length > 0);
-      if (rows.length === 0) {
-        this.csvConfirmError = 'No serial numbers found in the file.';
-        return;
-      }
-      const result = await this.salesOrderService.previewCsvSerials(rows);
-      if (!result.success) {
-        this.csvConfirmError = result.message ?? 'Failed to preview serials';
-        return;
-      }
-      this.csvPreviewResult = {
-        summary: result.summary!,
-        toInstall: result.toInstall ?? [],
-        alreadyInstalled: result.alreadyInstalled ?? [],
-        notFound: result.notFound ?? [],
-        otherStatus: result.otherStatus ?? [],
-      };
-      this.csvModalTab = 'will-install';
-    } catch {
-      this.csvConfirmError = 'Failed to read or process the CSV file.';
-    } finally {
-      this.isCsvParsing = false;
-      (event.target as HTMLInputElement).value = '';
-    }
-  }
-
-  async confirmCsvInstall(): Promise<void> {
-    if (!this.csvPreviewResult || this.isCsvConfirming) return;
-    const serials = this.csvPreviewResult.toInstall.map((s) => s.serialNumber);
-    if (serials.length === 0) { this.csvConfirmError = 'No serials to update.'; return; }
-    this.isCsvConfirming = true;
-    this.csvConfirmMessage = '';
-    this.csvConfirmError = '';
-    try {
-      const result = await this.salesOrderService.bulkUpdateSerialStatus(serials, this.csvToInstallTargetStatus);
-      if (!result.success) { this.csvConfirmError = result.message ?? 'Failed to update serials'; return; }
-      this.csvConfirmMessage = result.message ?? `Updated ${result.updated} serial(s) to ${this.csvToInstallTargetStatus}`;
-      this.csvPreviewResult = {
-        ...this.csvPreviewResult,
-        summary: { ...this.csvPreviewResult.summary, toInstall: 0, alreadyInstalled: this.csvPreviewResult.summary.alreadyInstalled + serials.length },
-        alreadyInstalled: [...this.csvPreviewResult.alreadyInstalled, ...this.csvPreviewResult.toInstall.map((s) => ({ serialNumber: s.serialNumber, unitType: s.unitType, productName: s.productName, capacityName: s.capacityName }))],
-        toInstall: [],
-      };
-      if (this.selectedProductId && this.selectedCapacityId) await this.loadCapacityStockSummary(this.selectedProductId, this.selectedCapacityId);
-    } catch { this.csvConfirmError = 'Failed to update serial numbers.'; }
-    finally { this.isCsvConfirming = false; }
-  }
-
-  async revertInstalledToStock(): Promise<void> {
-    if (!this.csvPreviewResult || this.isCsvRevertingInstalled) return;
-    const serials = this.csvPreviewResult.alreadyInstalled.map((s) => s.serialNumber);
-    if (serials.length === 0) { this.csvConfirmError = 'No installed serials to revert.'; return; }
-    this.isCsvRevertingInstalled = true;
-    this.csvConfirmMessage = '';
-    this.csvConfirmError = '';
-    try {
-      const result = await this.salesOrderService.bulkUpdateSerialStatus(serials, this.csvAlreadyInstalledTargetStatus);
-      if (!result.success) { this.csvConfirmError = result.message ?? 'Failed to revert serials'; return; }
-      this.csvConfirmMessage = result.message ?? `Reverted ${result.updated} serial(s) to ${this.csvAlreadyInstalledTargetStatus}`;
-      this.csvPreviewResult = { ...this.csvPreviewResult, summary: { ...this.csvPreviewResult.summary, alreadyInstalled: 0 }, alreadyInstalled: [] };
-      if (this.selectedProductId && this.selectedCapacityId) await this.loadCapacityStockSummary(this.selectedProductId, this.selectedCapacityId);
-    } catch { this.csvConfirmError = 'Failed to revert serial numbers.'; }
-    finally { this.isCsvRevertingInstalled = false; }
-  }
-
-  async insertNotFoundAsInStock(): Promise<void> {
-    if (!this.csvPreviewResult || this.isCsvInsertingNotFound) return;
-    const serials = this.notFoundInsertableSerials;
-    if (serials.length === 0) { this.csvConfirmError = 'No serials to insert.'; return; }
-    if (this.csvNotFoundTargetStatus !== 'in-stock') {
-      this.csvConfirmError = 'Not-found serials can only be inserted as in-stock.';
-      return;
-    }
-    if (!this.selectedProductId || !this.selectedCapacityId) {
-      this.csvConfirmError = 'Select a product and capacity before inserting not-found serials.';
-      return;
-    }
-    this.isCsvInsertingNotFound = true;
-    this.csvConfirmMessage = '';
-    this.csvConfirmError = '';
-    try {
-      const result = await this.salesOrderService.insertBulkSerials(
-        serials.map((s) => ({
-          serialNumber: s.serialNumber,
-          unitType: s.csvUnitType,
-          status: 'in-stock',
-          productId: this.selectedProductId!,
-          capacityId: this.selectedCapacityId!,
-        }))
-      );
-      if (!result.success) { this.csvConfirmError = result.message ?? 'Failed to insert serials'; return; }
-      this.csvConfirmMessage = result.message ?? `Inserted ${result.inserted} serial(s) as in-stock`;
-      this.csvPreviewResult = {
-        ...this.csvPreviewResult,
-        summary: {
-          ...this.csvPreviewResult.summary,
-          notFound: this.notFoundInstalledReviewCount,
-        },
-        notFound: this.csvPreviewResult.notFound.filter(
-          (entry) => String(entry.csvStatus ?? '').trim().toLowerCase() === 'installed',
-        ),
-      };
-      if (this.selectedProductId && this.selectedCapacityId) await this.loadCapacityStockSummary(this.selectedProductId, this.selectedCapacityId);
-    } catch { this.csvConfirmError = 'Failed to insert serial numbers.'; }
-    finally { this.isCsvInsertingNotFound = false; }
-  }
-
-  downloadCsvSummary(): void {
-    if (!this.csvPreviewResult) return;
-    const rows: string[] = ['Serial Number,Unit Type,CSV Status,DB Status,Category,Product,Capacity'];
-    for (const s of this.csvPreviewResult.toInstall) {
-      rows.push(`${s.serialNumber},${s.unitType},${s.csvStatus},in-stock/reserved,To Install,${s.productName},${s.capacityName}`);
-    }
-    for (const s of this.csvPreviewResult.alreadyInstalled) {
-      rows.push(`${s.serialNumber},${s.unitType},installed,installed,Already Installed,${s.productName},${s.capacityName}`);
-    }
-    for (const s of this.csvPreviewResult.notFound) {
-      rows.push(`${s.serialNumber},,${s.csvStatus},,Not Found in DB,,`);
-    }
-    for (const s of this.csvPreviewResult.otherStatus) {
-      rows.push(`${s.serialNumber},${s.unitType},${s.csvStatus},${s.dbStatus},Other Status,${s.productName},${s.capacityName}`);
-    }
-    this.downloadCsvFile(rows, `serial-summary-${new Date().toISOString().slice(0, 10)}.csv`);
-  }
-
-  private downloadCsvFile(rows: string[], filename: string): void {
-    const blob = new Blob([rows.join('\n')], { type: 'text/csv' });
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement('a');
-    a.href = url;
-    a.download = filename;
-    a.click();
-    URL.revokeObjectURL(url);
-  }
-
-  private getProductTreeKey(brandName: string, productId: number): string {
-    return `${brandName}::${productId}`;
-  }
-
-  toggleSerialSelection(serialNumber: string): void {
-    if (this.selectedSerials.has(serialNumber)) {
-      this.selectedSerials.delete(serialNumber);
-    } else {
-      this.selectedSerials.add(serialNumber);
-    }
-  }
-
-  selectAllVisibleSerials(serials: Array<{ serialNumber: string }>): void {
-    const allSelected = serials.every(s => this.selectedSerials.has(s.serialNumber));
-    if (allSelected) {
-      serials.forEach(s => this.selectedSerials.delete(s.serialNumber));
-    } else {
-      serials.forEach(s => this.selectedSerials.add(s.serialNumber));
-    }
-  }
-
-  clearSerialSelection(): void {
-    this.selectedSerials.clear();
-    this.bulkUpdateMessage = '';
-    this.bulkUpdateError = '';
-  }
-
-  async bulkMarkAsInstalled(): Promise<void> {
-    if (this.selectedSerials.size === 0 || this.isBulkUpdating) return;
-    this.isBulkUpdating = true;
-    this.bulkUpdateMessage = '';
-    this.bulkUpdateError = '';
-    try {
-      const result = await this.salesOrderService.bulkUpdateSerialStatus(
-        Array.from(this.selectedSerials), 'installed'
-      );
-      if (!result.success) {
-        this.bulkUpdateError = result.message ?? 'Failed to update serials';
-        return;
-      }
-      this.bulkUpdateMessage = result.message ?? `Updated ${result.updated} serial(s) to installed`;
-      this.selectedSerials.clear();
-      // Reload the current capacity stock summary
-      if (this.selectedProductId && this.selectedCapacityId) {
-        await this.loadCapacityStockSummary(this.selectedProductId, this.selectedCapacityId);
-      }
-    } catch {
-      this.bulkUpdateError = 'Failed to update serial numbers';
-    } finally {
-      this.isBulkUpdating = false;
     }
   }
 }

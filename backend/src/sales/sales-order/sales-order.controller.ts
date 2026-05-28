@@ -13,12 +13,15 @@ import {
 } from '@nestjs/common';
 import { SalesOrderService } from './sales-order.service';
 import { CreateSalesOrderDto } from './dto/create-sales-order.dto';
+import { CreateMaterialSalesOrderDto } from './dto/create-material-sales-order.dto';
 import { CreateStatementOfAccountDto } from './dto/create-statement-of-account.dto';
 import { CreateCustomerDto } from './dto/create-customer.dto';
 import { UpdateCustomerDto } from './dto/update-customer.dto';
 import { UpdateSalesOrderDto } from './dto/update-sales-order.dto';
+import { UpdateMaterialSalesOrderDto } from './dto/update-material-sales-order.dto';
 import { JwtAuthGuard } from 'src/auth/jwt-auth.guard';
 import { ListSalesOrderQueryDto } from './dto/list-sales-order-query.dto';
+import { ListMaterialSalesOrderQueryDto } from './dto/list-material-sales-order-query.dto';
 import { AddMaterialItemDto } from './dto/add-material-item.dto';
 import { CreateSalesOrderMigrationPreviewDto } from './dto/create-sales-order-migration-preview.dto';
 import { CreateSalesOrderMigrationImportDto } from './dto/create-sales-order-migration-import.dto';
@@ -112,6 +115,51 @@ export class SalesOrderController {
     @Req() request: { user?: Record<string, unknown> },
   ) {
     return this.salesOrderService.findAll(this.withEffectiveBranchScope(query, request));
+  }
+
+  @Get('materials')
+  getMaterialSalesOrders(@Query() query: ListMaterialSalesOrderQueryDto) {
+    return this.salesOrderService.getMaterialSalesOrders({
+      status: query.status,
+      page: query.page ? Number(query.page) : undefined,
+      limit: query.limit ? Number(query.limit) : undefined,
+      search: query.search,
+    });
+  }
+
+  @Get('materials/next-number')
+  async getNextMaterialSoNumber() {
+    return this.salesOrderService.getNextMaterialSoNumber();
+  }
+
+  @Get('materials/:id')
+  getMaterialSalesOrderById(@Param('id') id: string) {
+    return this.salesOrderService.findOneMaterialSalesOrder(+id);
+  }
+
+  @Post('materials')
+  createMaterialSalesOrder(
+    @Body() dto: CreateMaterialSalesOrderDto,
+    @Req() request: { user?: Record<string, unknown> },
+  ) {
+    const userId = Number(request.user?.sub);
+    const branchId = Number(
+      request.user?.branchId ?? request.user?.branch_id ?? request.user?.branch,
+    );
+
+    return this.salesOrderService.createMaterialSalesOrder(
+      dto,
+      Number.isFinite(userId) ? userId : undefined,
+      Number.isFinite(branchId) ? branchId : undefined,
+    );
+  }
+
+  @Patch('materials/:id')
+  updateMaterialSalesOrder(
+    @Param('id') id: string,
+    @Body() dto: UpdateMaterialSalesOrderDto,
+  ) {
+    return this.salesOrderService.updateMaterialSalesOrder(+id, dto);
   }
 
   @Get('deliveries')

@@ -439,17 +439,17 @@
                   <div>
                     <label class="mb-1 block text-xs font-medium text-gray-600 dark:text-gray-300">Parts Name</label>
                     <div class="relative">
-                      <input 
-                        type="text" 
-                        [(ngModel)]="activeItem.partsName" 
-                        [name]="'partsName_' + activeProductTabIndex" 
+                      <input
+                        type="text"
+                        [(ngModel)]="activeItem.partsName"
+                        [name]="'partsName_' + activeProductTabIndex"
                         (input)="onPartsSearch(activeProductTabIndex, $event)"
                         (focus)="onPartComboboxFocus(activeProductTabIndex)"
                         (blur)="onPartComboboxBlur(activeProductTabIndex)"
-                        [readonly]="isTransferPOViewOnly" 
+                        [readonly]="isTransferPOViewOnly"
                         autocomplete="off"
-                        class="w-full rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm dark:border-gray-700 dark:bg-gray-900" 
-                        placeholder="Enter parts name" 
+                        class="w-full rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm dark:border-gray-700 dark:bg-gray-900"
+                        placeholder="Enter parts name"
                       />
                       <ul *ngIf="isPartDropdownOpenByItem[activeProductTabIndex] && partOptionsByItem[activeProductTabIndex]?.length" class="absolute z-10 mt-1 max-h-60 w-full overflow-auto rounded-md bg-white py-1 text-base shadow-lg ring-1 ring-black ring-opacity-5 focus:outline-none dark:bg-gray-800 sm:text-sm">
                         <li *ngFor="let part of partOptionsByItem[activeProductTabIndex]" (click)="selectPart(activeProductTabIndex, part)" class="relative cursor-pointer select-none px-4 py-2 text-gray-900 hover:bg-blue-600 hover:text-white dark:text-gray-200">
@@ -510,19 +510,20 @@
                     </div>
                   </div>
                   <div>
-                    <label class="mb-1 block text-xs font-medium text-gray-600 dark:text-gray-300">Material Name</label>
+                    <label class="mb-1 block text-xs font-medium text-gray-600 dark:text-gray-300">Material Name <span class="text-error-500">*</span></label>
                     <div class="relative">
-                      <input 
-                        type="text" 
-                        [(ngModel)]="activeItem.materialName" 
-                        [name]="'materialName_' + activeProductTabIndex" 
+                      <input
+                        type="text"
+                        [(ngModel)]="activeItem.materialName"
+                        [name]="'materialName_' + activeProductTabIndex"
                         (input)="onMaterialsSearch(activeProductTabIndex, $event)"
                         (focus)="onMaterialComboboxFocus(activeProductTabIndex)"
                         (blur)="onMaterialComboboxBlur(activeProductTabIndex)"
-                        [readonly]="isTransferPOViewOnly" 
+                        [readonly]="isTransferPOViewOnly"
                         autocomplete="off"
-                        class="w-full rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm dark:border-gray-700 dark:bg-gray-900" 
-                        placeholder="Enter material name" 
+                        class="w-full rounded-lg border bg-white px-3 py-2 text-sm dark:bg-gray-900"
+                        [ngClass]="isAcmMaterialNameInvalid(activeProductTabIndex) ? 'border-error-500 dark:border-error-400' : 'border-gray-300 dark:border-gray-700'"
+                        placeholder="Enter material name"
                       />
                       <ul *ngIf="isMaterialDropdownOpenByItem[activeProductTabIndex] && materialOptionsByItem[activeProductTabIndex]?.length" class="absolute z-10 mt-1 max-h-60 w-full overflow-auto rounded-md bg-white py-1 text-base shadow-lg ring-1 ring-black ring-opacity-5 focus:outline-none dark:bg-gray-800 sm:text-sm">
                         <li *ngFor="let material of materialOptionsByItem[activeProductTabIndex]" (click)="selectMaterial(activeProductTabIndex, material)" class="relative cursor-pointer select-none px-4 py-2 text-gray-900 hover:bg-blue-600 hover:text-white dark:text-gray-200">
@@ -531,6 +532,9 @@
                         </li>
                       </ul>
                     </div>
+                    @if (isAcmMaterialNameInvalid(activeProductTabIndex)) {
+                      <p class="mt-1 text-xs text-error-600 dark:text-error-400">Material name is required</p>
+                    }
                   </div>
                   <div>
                     <label class="mb-1 block text-xs font-medium text-gray-600 dark:text-gray-300">Material Code</label>
@@ -552,8 +556,11 @@
                     <input type="number" [(ngModel)]="activeItem.unitPrice" (ngModelChange)="recalculateTotalAmount()" [name]="'acmUnitPrice_' + activeProductTabIndex" [readonly]="isTransferPOViewOnly" class="w-full rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm dark:border-gray-700 dark:bg-gray-900" placeholder="0.00" />
                   </div>
                   <div>
-                    <label class="mb-1 block text-xs font-medium text-gray-600 dark:text-gray-300">Quantity</label>
-                    <input type="number" [(ngModel)]="activeItem.quantity" (ngModelChange)="recalculateTotalAmount()" [name]="'acmQty_' + activeProductTabIndex" [readonly]="isTransferPOViewOnly" class="w-full rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm dark:border-gray-700 dark:bg-gray-900" />
+                    <label class="mb-1 block text-xs font-medium text-gray-600 dark:text-gray-300">Quantity <span class="text-error-500">*</span></label>
+                    <input type="number" [(ngModel)]="activeItem.quantity" (ngModelChange)="recalculateTotalAmount()" [name]="'acmQty_' + activeProductTabIndex" [readonly]="isTransferPOViewOnly" min="1" max="999999" class="w-full rounded-lg border bg-white px-3 py-2 text-sm dark:bg-gray-900" [ngClass]="isAcmQuantityInvalid(activeProductTabIndex) ? 'border-error-500 dark:border-error-400' : 'border-gray-300 dark:border-gray-700'" />
+                    @if (isAcmQuantityInvalid(activeProductTabIndex)) {
+                      <p class="mt-1 text-xs text-error-600 dark:text-error-400">Quantity must be a whole number between 1 and 999,999</p>
+                    }
                   </div>
                 }
               </div>

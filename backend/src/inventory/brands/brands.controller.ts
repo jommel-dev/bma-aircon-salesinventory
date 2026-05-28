@@ -28,6 +28,11 @@ export class BrandsController {
     return this.brandsService.findAll();
   }
 
+  @Get('materials')
+  getMaterialBrands() {
+    return this.brandsService.getMaterialBrands();
+  }
+
   @Get(':id')
   findOne(@Param('id') id: string) {
     return this.brandsService.findOne(+id);

@@ -187,6 +187,7 @@ export class PurchaseOrderComponent implements OnInit, OnDestroy {
   materialSearchByItem: Record<number, string> = {};
   materialOptionsByItem: Record<number, any[]> = {};
   isMaterialDropdownOpenByItem: Record<number, boolean> = {};
+  acmValidationAttempted = false;
   private brandDebounceTimers: Record<number, any> = {};
   private partDebounceTimers: Record<number, any> = {};
   private materialDebounceTimers: Record<number, any> = {};
@@ -616,6 +617,7 @@ export class PurchaseOrderComponent implements OnInit, OnDestroy {
     this.isCreating = true;
     this.createError = '';
     this.createSuccess = '';
+    this.acmValidationAttempted = true;
 
     try {
       const validationError = this.validatePurchaseForm();
@@ -2137,6 +2139,7 @@ export class PurchaseOrderComponent implements OnInit, OnDestroy {
     this.isTransferPO = false;
     this.originatingSalesOrder = null;
     this.vendorMode = 'existing';
+    this.acmValidationAttempted = false;
     this.createForm = {
       poType: 'ACU',
       vendorId: '',
@@ -2882,6 +2885,24 @@ export class PurchaseOrderComponent implements OnInit, OnDestroy {
     setTimeout(() => {
       this.isMaterialDropdownOpenByItem[index] = false;
     }, 150);
+  }
+
+  isAcmMaterialNameInvalid(index: number): boolean {
+    if (!this.acmValidationAttempted || this.createForm.poType !== 'ACM') {
+      return false;
+    }
+    const item = this.createForm.productItems[index];
+    return !item?.materialName?.trim();
+  }
+
+  isAcmQuantityInvalid(index: number): boolean {
+    if (!this.acmValidationAttempted || this.createForm.poType !== 'ACM') {
+      return false;
+    }
+    const item = this.createForm.productItems[index];
+    if (!item) return false;
+    const qty = Number(item.quantity);
+    return !Number.isFinite(qty) || !Number.isInteger(qty) || qty < 1 || qty > 999999;
   }
 
   selectPartsBrand(productIndex: number, brand: BrandOption): void {
@@ -3888,9 +3909,19 @@ export class PurchaseOrderComponent implements OnInit, OnDestroy {
         if (!String(item.capacityId ?? '').trim()) {
           return `Capacity is required for item ${index + 1}.`;
         }
+      } else if (item.productType === 'ACM') {
+        // ACM: validate material name (required) and quantity (1-999999)
+        if (!item.materialName?.trim()) {
+          return `Material name is required for item ${index + 1}.`;
+        }
+
+        const acmQty = Number(item.quantity);
+        if (!Number.isFinite(acmQty) || !Number.isInteger(acmQty) || acmQty < 1 || acmQty > 999999) {
+          return `Quantity must be a whole number between 1 and 999,999 for item ${index + 1}.`;
+        }
       } else {
-        // For ACP/ACM, we still want a name at least
-        const itemName = item.productType === 'ACP' ? item.partsName : item.materialName;
+        // For ACP, we still want a name at least
+        const itemName = item.partsName;
         if (!itemName?.trim()) {
           return `Item name is required for item ${index + 1}.`;
         }
@@ -3900,9 +3931,11 @@ export class PurchaseOrderComponent implements OnInit, OnDestroy {
         return `Unit price must be valid for item ${index + 1}.`;
       }
 
-      const qtyToCheck = item.productType === 'ACM' ? Number(item.quantity) : Number(item.totalSetQty);
-      if (!Number.isFinite(qtyToCheck) || qtyToCheck <= 0) {
-        return `Quantity must be greater than 0 for item ${index + 1}.`;
+      if (item.productType !== 'ACM') {
+        const qtyToCheck = Number(item.totalSetQty);
+        if (!Number.isFinite(qtyToCheck) || qtyToCheck <= 0) {
+          return `Quantity must be greater than 0 for item ${index + 1}.`;
+        }
       }
     }
 

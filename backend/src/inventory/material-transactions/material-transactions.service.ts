@@ -1,4 +1,5 @@
 import { Injectable, BadRequestException } from '@nestjs/common';
+import { PoolClient } from 'pg';
 import { DatabaseService } from 'src/database/database.service';
 import { MaterialsService } from '../materials/materials.service';
 import { MaterialStockService } from '../material-stock/material-stock.service';
@@ -13,22 +14,34 @@ export class MaterialTransactionsService {
   ) {}
 
   // Create a single material transaction item (atomic: insert + stock update)
+  private async resolveTransactionPrices(dto: CreateMaterialTransactionDto, client: PoolClient) {
+    const material = await this.materialsService.findOne(dto.material_id, { client });
+
+    return {
+      ...dto,
+      unit_price: dto.unit_price ?? material.unit_price ?? 0,
+      sell_price: dto.sell_price ?? material.sell_price ?? 0,
+      discount_price: dto.discount_price ?? 0,
+    };
+  }
+
   async create(dto: CreateMaterialTransactionDto) {
     return this.db.withTransaction(async (client) => {
+      const resolvedDto = await this.resolveTransactionPrices(dto, client);
       const res = await client.query(
         `INSERT INTO tbltransaction_material_items 
          (trans_type, material_id, quantity, unit_price, sell_price, discount_price, purchase_id, sales_id)
          VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
          RETURNING *`,
         [
-          dto.trans_type,
-          dto.material_id,
-          dto.quantity,
-          dto.unit_price || 0,
-          dto.sell_price || 0,
-          dto.discount_price || 0,
-          dto.purchase_id || null,
-          dto.sales_id || null,
+          resolvedDto.trans_type,
+          resolvedDto.material_id,
+          resolvedDto.quantity,
+          resolvedDto.unit_price,
+          resolvedDto.sell_price,
+          resolvedDto.discount_price,
+          resolvedDto.purchase_id || null,
+          resolvedDto.sales_id || null,
         ],
       );
 
@@ -82,20 +95,21 @@ export class MaterialTransactionsService {
       const created: any[] = [];
 
       for (const dto of dtos) {
+        const resolvedDto = await this.resolveTransactionPrices(dto, client);
         const res = await client.query(
           `INSERT INTO tbltransaction_material_items 
            (trans_type, material_id, quantity, unit_price, sell_price, discount_price, purchase_id, sales_id)
            VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
            RETURNING *`,
           [
-            dto.trans_type,
-            dto.material_id,
-            dto.quantity,
-            dto.unit_price || 0,
-            dto.sell_price || 0,
-            dto.discount_price || 0,
-            dto.purchase_id || null,
-            dto.sales_id || null,
+            resolvedDto.trans_type,
+            resolvedDto.material_id,
+            resolvedDto.quantity,
+            resolvedDto.unit_price,
+            resolvedDto.sell_price,
+            resolvedDto.discount_price,
+            resolvedDto.purchase_id || null,
+            resolvedDto.sales_id || null,
           ],
         );
 

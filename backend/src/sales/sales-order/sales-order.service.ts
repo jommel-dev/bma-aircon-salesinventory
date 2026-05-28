@@ -1,9 +1,10 @@
-import { BadRequestException, Injectable } from '@nestjs/common';
+import { BadRequestException, Injectable, NotFoundException } from '@nestjs/common';
 import { CreateSalesOrderDto } from './dto/create-sales-order.dto';
 import { CreateStatementOfAccountDto } from './dto/create-statement-of-account.dto';
 import { CreateCustomerDto } from './dto/create-customer.dto';
 import { UpdateCustomerDto } from './dto/update-customer.dto';
 import { UpdateSalesOrderDto } from './dto/update-sales-order.dto';
+import { UpdateMaterialSalesOrderDto } from './dto/update-material-sales-order.dto';
 import { DatabaseService } from 'src/database/database.service';
 import { PoolClient } from 'pg';
 import { randomUUID } from 'crypto';
@@ -6476,6 +6477,188 @@ export class SalesOrderService {
     return `This action removes a #${id} salesOrder`;
   }
 
+  async findOneMaterialSalesOrder(id: number) {
+    if (!Number.isFinite(id) || id <= 0) {
+      return {
+        success: false,
+        message: 'Invalid sales order id',
+      };
+    }
+
+    try {
+      const salesResult = await this.databaseService.query<{
+        id: number;
+        soNumber: string | null;
+        customerId: string | null;
+        customerName: string | null;
+        customerAddress: string | null;
+        customerContactPerson: string | null;
+        customerContactNumber: string | null;
+        totalAmount: string | null;
+        status: string | null;
+        scheduleDate: string | null;
+        salesType: string | null;
+        remarks: string | null;
+        createdAt: string | null;
+      }>(
+        `SELECT
+           so.id,
+           COALESCE(to_jsonb(so)->>'so_number', to_jsonb(so)->>'soNumber') AS "soNumber",
+           COALESCE(to_jsonb(so)->>'customer_id', to_jsonb(so)->>'customerId') AS "customerId",
+           COALESCE(to_jsonb(c)->>'name', to_jsonb(c)->>'customer_name', '') AS "customerName",
+           COALESCE(to_jsonb(c)->>'address', '') AS "customerAddress",
+           COALESCE(to_jsonb(c)->>'contact_person', to_jsonb(c)->>'contactPerson', '') AS "customerContactPerson",
+           COALESCE(to_jsonb(c)->>'contact_number', to_jsonb(c)->>'contactNumber', '') AS "customerContactNumber",
+           COALESCE(to_jsonb(so)->>'total_amount', to_jsonb(so)->>'totalAmount', '0') AS "totalAmount",
+           COALESCE(so.status, 'draft') AS status,
+           COALESCE(to_jsonb(so)->>'scheduleDate', to_jsonb(so)->>'schedule_date', null) AS "scheduleDate",
+           COALESCE(to_jsonb(so)->>'salesType', to_jsonb(so)->>'sales_type', '') AS "salesType",
+           COALESCE(to_jsonb(so)->>'remarks', '') AS remarks,
+           COALESCE(to_jsonb(so)->>'created_at', to_jsonb(so)->>'createdAt', null) AS "createdAt"
+         FROM tblsales_order so
+         LEFT JOIN tblcustomer c
+           ON c.id::text = COALESCE(to_jsonb(so)->>'customer_id', to_jsonb(so)->>'customerId')
+         WHERE so.id = $1
+         LIMIT 1`,
+        [id],
+      );
+
+      if (salesResult.rowCount === 0) {
+        return {
+          success: false,
+          message: 'Sales order not found',
+        };
+      }
+
+      const lineItemsResult = await this.databaseService.query<{
+        id: number;
+        materialId: number | null;
+        description: string;
+        itemCode: string | null;
+        brand: string | null;
+        cost: string;
+        rate: string;
+        qty: number;
+        total: string;
+        isNonInventory: boolean;
+        createdAt: string | null;
+      }>(
+        `SELECT
+           soi.id,
+           soi.material_id AS "materialId",
+           soi.description,
+           soi.item_code AS "itemCode",
+           soi.brand,
+           soi.cost::text,
+           soi.rate::text,
+           soi.qty,
+           soi.total::text,
+           soi.is_non_inventory AS "isNonInventory",
+           soi.created_at AS "createdAt"
+         FROM tblsales_order_items soi
+         WHERE soi.sales_order_id = $1
+         ORDER BY soi.id ASC`,
+        [id],
+      );
+
+      // Fetch payment details
+      const paymentDetailsResult = await this.databaseService.query<{
+        id: number;
+        method: string;
+        amount: string;
+        terms: string | null;
+        termsDueDate: string | null;
+        referenceNo: string | null;
+        paymentDate: string | null;
+        issuedBy: string | null;
+        ccCharge: string | null;
+        checkNo: string | null;
+        bankName: string | null;
+        bankAccount: string | null;
+        postDated: string | null;
+        downPayment: string | null;
+        status: string | null;
+      }>(
+        `SELECT
+           id,
+           method,
+           amount::text,
+           terms,
+           terms_due_date::text AS "termsDueDate",
+           reference_no AS "referenceNo",
+           payment_date::text AS "paymentDate",
+           issued_by AS "issuedBy",
+           cc_charge AS "ccCharge",
+           check_no AS "checkNo",
+           bank_name AS "bankName",
+           bank_account AS "bankAccount",
+           post_dated::text AS "postDated",
+           down_payment::text AS "downPayment",
+           status
+         FROM tblsales_order_payments
+         WHERE sales_order_id = $1
+         ORDER BY id ASC`,
+        [id],
+      );
+
+      const sales = salesResult.rows[0];
+
+      return {
+        success: true,
+        item: {
+          id: sales.id,
+          soNumber: sales.soNumber,
+          customerId: sales.customerId,
+          customerName: sales.customerName,
+          customerAddress: sales.customerAddress,
+          customerContactPerson: sales.customerContactPerson,
+          customerContactNumber: sales.customerContactNumber,
+          totalAmount: this.toOptionalNumber(sales.totalAmount) ?? 0,
+          status: sales.status ?? 'draft',
+          deliveryDate: sales.scheduleDate,
+          salesType: sales.salesType ?? '',
+          remarks: sales.remarks ?? '',
+          createdAt: sales.createdAt,
+          productItems: lineItemsResult.rows.map((item, index) => ({
+            id: item.id,
+            itemNo: index + 1,
+            materialId: item.materialId,
+            description: item.description,
+            itemCode: item.itemCode,
+            brand: item.brand,
+            cost: this.toOptionalNumber(item.cost) ?? 0,
+            rate: this.toOptionalNumber(item.rate) ?? 0,
+            qty: item.qty,
+            total: this.toOptionalNumber(item.total) ?? 0,
+            isNonInventory: item.isNonInventory,
+          })),
+          paymentDetails: paymentDetailsResult.rows.map((payment) => ({
+            id: payment.id,
+            method: payment.method ?? 'Cash',
+            amount: this.toOptionalNumber(payment.amount) ?? 0,
+            terms: payment.terms ?? '',
+            termsDueDate: payment.termsDueDate ?? '',
+            referenceNo: payment.referenceNo ?? '',
+            paymentDate: payment.paymentDate ?? '',
+            issuedBy: payment.issuedBy ?? '',
+            ccCharge: payment.ccCharge ?? '',
+            checkNo: payment.checkNo ?? '',
+            bankName: payment.bankName ?? '',
+            bankAccount: payment.bankAccount ?? '',
+            postDated: payment.postDated ?? '',
+            downPayment: this.toOptionalNumber(payment.downPayment) ?? 0,
+            status: payment.status ?? 'unpaid',
+          })),
+        },
+      };
+    } catch (error) {
+      return {
+        success: false,
+        message: error instanceof Error ? error.message : 'Failed to fetch material sales order',
+      };
+    }
+  }
+
   private async releaseReturnedMaterials(client: PoolClient, salesId: number, userId?: number) {
     const materialItems = await this.materialTransactionsService.findBySalesId(salesId);
 
@@ -6502,5 +6685,547 @@ export class SalesOrderService {
         { client },
       );
     }
+  }
+
+  async getNextMaterialSoNumber(): Promise<{ soNumber: string }> {
+    // Get the current sequence value from tblsequences
+    const result = await this.databaseService.query(
+      `SELECT current_value, prefix FROM tblsequences WHERE name = 'sales_order_number' LIMIT 1`,
+    );
+
+    if (result.rows.length === 0) {
+      // No sequence exists yet — default to 2026-0001
+      return { soNumber: '2026-0001' };
+    }
+
+    const currentValue = Number(result.rows[0].current_value) || 0;
+    const prefix = result.rows[0].prefix || new Date().getFullYear().toString();
+    const nextValue = currentValue + 1;
+
+    return { soNumber: `${prefix}-${nextValue}` };
+  }
+
+  async createMaterialSalesOrder(
+    dto: {
+      customer_id?: string | null;
+      customer?: { name: string; address?: string; contact_person?: string; contact_number?: string };
+      deliveryDate?: string;
+      salesType?: string;
+      status: 'draft' | 'pending' | 'complete' | 'voided';
+      productItems?: Array<{
+        materialId?: number | null;
+        description: string;
+        itemCode?: string | null;
+        brand?: string | null;
+        cost: number;
+        rate: number;
+        discount?: number;
+        qty: number;
+        isNonInventory: boolean;
+      }>;
+      paymentDetails?: Array<{
+        method: string;
+        amount: number;
+        terms?: string;
+        termsDueDate?: string | null;
+        referenceNo?: string;
+        paymentDate?: string | null;
+        issuedBy?: string;
+        ccCharge?: string;
+        checkNo?: string;
+        bankName?: string;
+        bankAccount?: string;
+        postDated?: string;
+        downPayment?: number;
+        status?: string;
+      }>;
+      remarks?: string;
+    },
+    userId?: number,
+    branchId?: number,
+  ) {
+    const status = dto.status;
+    const productItems = Array.isArray(dto.productItems) ? dto.productItems : [];
+
+    // Require at least 1 product item when status is 'pending'
+    if (status === 'pending' && productItems.length === 0) {
+      throw new BadRequestException(
+        'At least one product item is required when status is pending',
+      );
+    }
+
+    try {
+      const result = await this.databaseService.withTransaction(async (client) => {
+        // Resolve customer
+        let customerId: string | null = null;
+        if (dto.customer_id || dto.customer) {
+          customerId = await this.upsertCustomerFromPayload(client, {
+            customer_id: dto.customer_id ?? undefined,
+            customer: dto.customer,
+          } as any);
+        }
+
+        // Compute total amount from line items
+        let totalAmount = 0;
+        for (const item of productItems) {
+          const discount = Number(item.discount) || 0;
+          const effectiveRate = Math.max(item.rate - discount, 0);
+          const lineTotal = Math.round(effectiveRate * item.qty * 100) / 100;
+          totalAmount += lineTotal;
+        }
+        totalAmount = Math.round(totalAmount * 100) / 100;
+
+        // Insert into tblsales_order
+        const salesRecord: Record<string, unknown> = {
+          customer_id: customerId,
+          total_amount: totalAmount,
+          status: status,
+          "salesType": 'sales', // Always 'sales' for new material orders
+        };
+
+        if (userId) {
+          salesRecord['created_by'] = userId;
+        }
+        if (branchId) {
+          salesRecord['branchId'] = branchId;
+        }
+        if (dto.deliveryDate) {
+          salesRecord['scheduleDate'] = dto.deliveryDate;
+        }
+        if (dto.remarks !== undefined) {
+          salesRecord['remarks'] = dto.remarks ?? '';
+        }
+
+        const columns = Object.keys(salesRecord);
+        const values = Object.values(salesRecord);
+        const quotedColumns = columns.map((col) => `"${col}"`).join(', ');
+        const placeholders = values.map((_, i) => `$${i + 1}`).join(', ');
+
+        const insertResult = await client.query<{ id: number }>(
+          `INSERT INTO tblsales_order (${quotedColumns}) VALUES (${placeholders}) RETURNING id`,
+          values,
+        );
+
+        if (insertResult.rowCount === 0) {
+          throw new Error('Failed to create sales order');
+        }
+
+        const salesOrderId = insertResult.rows[0].id;
+
+        // Insert line items into tblsales_order_items
+        for (const item of productItems) {
+          const discount = Number(item.discount) || 0;
+          const effectiveRate = Math.max(item.rate - discount, 0);
+          const lineTotal = Math.round(effectiveRate * item.qty * 100) / 100;
+
+          await client.query(
+            `INSERT INTO tblsales_order_items
+              (sales_order_id, material_id, description, item_code, brand, cost, rate, discount, qty, total, is_non_inventory)
+            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)`,
+            [
+              salesOrderId,
+              item.materialId ?? null,
+              item.description,
+              item.itemCode ?? null,
+              item.brand ?? null,
+              item.cost,
+              item.rate,
+              discount,
+              item.qty,
+              lineTotal,
+              item.isNonInventory,
+            ],
+          );
+        }
+
+        // Insert payment details into tblsales_order_payments
+        const paymentDetailsList = Array.isArray(dto.paymentDetails) ? dto.paymentDetails : [];
+        for (const payment of paymentDetailsList) {
+          const paymentMethod = String(payment.method ?? 'Cash').trim();
+          const paymentStatus = this.getMaterialPaymentAutoStatus(paymentMethod, payment.termsDueDate, payment.postDated) ?? payment.status ?? 'unpaid';
+
+          await client.query(
+            `INSERT INTO tblsales_order_payments
+              (sales_order_id, method, amount, terms, terms_due_date, reference_no, payment_date, issued_by, cc_charge, check_no, bank_name, bank_account, post_dated, down_payment, status)
+            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15)`,
+            [
+              salesOrderId,
+              paymentMethod,
+              Number(payment.amount) || 0,
+              payment.terms || null,
+              payment.termsDueDate || null,
+              payment.referenceNo || null,
+              payment.paymentDate || null,
+              payment.issuedBy || null,
+              payment.ccCharge || null,
+              payment.checkNo || null,
+              payment.bankName || null,
+              payment.bankAccount || null,
+              payment.postDated || null,
+              Number(payment.downPayment) || 0,
+              paymentStatus,
+            ],
+          );
+        }
+
+        return { salesOrderId };
+      });
+
+      return {
+        success: true,
+        message: 'Material sales order created successfully',
+        id: result.salesOrderId,
+      };
+    } catch (error) {
+      if (error instanceof BadRequestException) {
+        throw error;
+      }
+      throw new BadRequestException(
+        error instanceof Error ? error.message : 'Failed to create material sales order',
+      );
+    }
+  }
+
+  async getMaterialSalesOrders(query: {
+    status?: string;
+    page?: number;
+    limit?: number;
+    search?: string;
+  }) {
+    const page = this.normalizePage(query.page);
+    const limit = this.normalizeLimit(query.limit);
+    const offset = (page - 1) * limit;
+    const search = String(query.search ?? '').trim().toLowerCase();
+    const status = String(query.status ?? 'draft').trim().toLowerCase();
+
+    const params: unknown[] = [];
+    const whereParts: string[] = [];
+
+    // Always filter by salesType = 'sales'
+    whereParts.push(`LOWER(COALESCE(so."salesType", '')) = 'sales'`);
+
+    // Filter by status
+    params.push(status);
+    whereParts.push(`LOWER(COALESCE(so.status, '')) = $${params.length}`);
+
+    // Search filter
+    if (search) {
+      params.push(`%${search}%`);
+      const searchIndex = params.length;
+      whereParts.push(`(
+        LOWER(COALESCE(so.so_number, '')) LIKE $${searchIndex}
+        OR LOWER(COALESCE(c.name, '')) LIKE $${searchIndex}
+        OR LOWER(COALESCE(so.remarks, '')) LIKE $${searchIndex}
+      )`);
+    }
+
+    const whereSql = whereParts.length > 0 ? `WHERE ${whereParts.join(' AND ')}` : '';
+
+    // Count query
+    const countSql = `
+      SELECT COUNT(*)::text AS total
+      FROM tblsales_order so
+      LEFT JOIN tblcustomer c ON c.id::text = COALESCE(to_jsonb(so)->>'customer_id', to_jsonb(so)->>'customerId')
+      ${whereSql}
+    `;
+
+    const countResult = await this.databaseService.query<{ total: string }>(countSql, params);
+    const total = Number(countResult.rows[0]?.total ?? 0);
+
+    // List query
+    params.push(limit);
+    const limitIndex = params.length;
+    params.push(offset);
+    const offsetIndex = params.length;
+
+    const listSql = `
+      SELECT
+        so.id,
+        COALESCE(so.so_number, '') AS "soNumber",
+        COALESCE(to_jsonb(so)->>'customer_id', '') AS "customerId",
+        COALESCE(c.name, '') AS "customerName",
+        COALESCE(so.total_amount, 0)::numeric AS "totalAmount",
+        COALESCE(so.status, 'draft') AS status,
+        COALESCE(so."salesType", '') AS "salesType",
+        so."scheduleDate" AS "deliveryDate",
+        so.created_at AS "createdAt",
+        so.remarks
+      FROM tblsales_order so
+      LEFT JOIN tblcustomer c ON c.id::text = COALESCE(to_jsonb(so)->>'customer_id', to_jsonb(so)->>'customerId')
+      ${whereSql}
+      ORDER BY so.id DESC
+      LIMIT $${limitIndex}
+      OFFSET $${offsetIndex}
+    `;
+
+    const listResult = await this.databaseService.query<{
+      id: number;
+      soNumber: string;
+      customerId: string | null;
+      customerName: string;
+      totalAmount: string | number | null;
+      status: string | null;
+      salesType: string | null;
+      deliveryDate: string | null;
+      createdAt: string | null;
+      remarks: string | null;
+    }>(listSql, params);
+
+    return {
+      success: true,
+      items: listResult.rows.map((row) => ({
+        id: row.id,
+        soNumber: row.soNumber,
+        customerId: row.customerId,
+        customerName: row.customerName,
+        totalAmount: Number(row.totalAmount ?? 0),
+        status: row.status ?? 'draft',
+        salesType: row.salesType ?? '',
+        deliveryDate: row.deliveryDate,
+        createdAt: row.createdAt,
+        remarks: row.remarks ?? '',
+      })),
+      meta: {
+        page,
+        limit,
+        total,
+        totalPages: Math.max(1, Math.ceil(total / limit)),
+      },
+    };
+  }
+
+  async updateMaterialSalesOrder(
+    id: number,
+    dto: UpdateMaterialSalesOrderDto,
+  ) {
+    if (!Number.isFinite(id) || id <= 0) {
+      return { success: false, message: 'Invalid sales order id' };
+    }
+
+    try {
+      const result = await this.databaseService.withTransaction(async (client) => {
+        // 1. Fetch existing order to get its current salesType
+        const existingResult = await client.query<{
+          id: number;
+          sales_type: string | null;
+          status: string | null;
+          customer_id: string | null;
+        }>(
+          `SELECT id, "salesType" AS sales_type, status, customer_id::text AS customer_id
+           FROM tblsales_order
+           WHERE id = $1
+           LIMIT 1`,
+          [id],
+        );
+
+        if (existingResult.rowCount === 0) {
+          throw new NotFoundException(`Sales order ${id} not found`);
+        }
+
+        const existingOrder = existingResult.rows[0];
+        const existingSalesType = String(existingOrder.sales_type ?? 'sales').trim();
+
+        // 2. Determine the salesType to persist:
+        //    Preserve original salesType if it differs from 'sales'
+        const salesTypeToUse =
+          existingSalesType && existingSalesType !== 'sales'
+            ? existingSalesType
+            : String(dto.salesType ?? 'sales').trim() || 'sales';
+
+        // 3. Handle customer upsert if customer data is provided
+        let customerId: string | null = existingOrder.customer_id;
+        if (dto.customer_id || dto.customer) {
+          customerId = await this.upsertCustomerFromPayload(client, {
+            customer_id: dto.customer_id,
+            customer: dto.customer as any,
+          });
+        }
+
+        // 4. Compute total from product items
+        const productItems = Array.isArray(dto.productItems) ? dto.productItems : [];
+        let computedTotal = 0;
+        for (const item of productItems) {
+          const rate = Number(item.rate ?? 0);
+          const qty = Number(item.qty ?? 0);
+          computedTotal += Math.round(rate * qty * 100) / 100;
+        }
+
+        // 5. Build update fields — explicitly omit 'installer'
+        const updateFields: string[] = [];
+        const updateParams: unknown[] = [];
+
+        // customer_id
+        updateParams.push(customerId);
+        updateFields.push(`customer_id = $${updateParams.length}`);
+
+        // total_amount
+        updateParams.push(computedTotal);
+        updateFields.push(`total_amount = $${updateParams.length}`);
+
+        // status (if provided)
+        if (dto.status) {
+          updateParams.push(dto.status);
+          updateFields.push(`status = $${updateParams.length}`);
+        }
+
+        // sales_type — preserved or updated
+        updateParams.push(salesTypeToUse);
+        updateFields.push(`"salesType" = $${updateParams.length}`);
+
+        // schedule_date (delivery date)
+        if (dto.deliveryDate !== undefined) {
+          updateParams.push(dto.deliveryDate || null);
+          updateFields.push(`"scheduleDate" = $${updateParams.length}`);
+        }
+
+        // remarks
+        if (dto.remarks !== undefined) {
+          updateParams.push(dto.remarks ?? '');
+          updateFields.push(`remarks = $${updateParams.length}`);
+        }
+
+        // NOTE: 'installer' is intentionally NOT included in the update (Req 4.3, 4.4)
+
+        // 6. Execute the update on tblsales_order
+        updateParams.push(id);
+        const updateSql = `
+          UPDATE tblsales_order
+          SET ${updateFields.join(', ')}
+          WHERE id = $${updateParams.length}
+          RETURNING id
+        `;
+
+        const updateResult = await client.query<{ id: number }>(updateSql, updateParams);
+        if (updateResult.rowCount === 0) {
+          throw new Error('Failed to update sales order');
+        }
+
+        // 7. Replace line items: delete existing + insert new (within same transaction)
+        await client.query(
+          `DELETE FROM tblsales_order_items WHERE sales_order_id = $1`,
+          [id],
+        );
+
+        // Insert new line items
+        for (const item of productItems) {
+          const rate = Number(item.rate ?? 0);
+          const qty = Number(item.qty ?? 0);
+          const total = Math.round(rate * qty * 100) / 100;
+
+          await client.query(
+            `INSERT INTO tblsales_order_items
+              (sales_order_id, material_id, description, item_code, brand, cost, rate, qty, total, is_non_inventory)
+             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)`,
+            [
+              id,
+              item.materialId ?? null,
+              item.description,
+              item.itemCode ?? null,
+              item.brand ?? null,
+              Number(item.cost ?? 0),
+              rate,
+              qty,
+              total,
+              Boolean(item.isNonInventory),
+            ],
+          );
+        }
+
+        // 8. Replace payment details: delete existing + insert new
+        if (dto.paymentDetails !== undefined) {
+          await client.query(
+            `DELETE FROM tblsales_order_payments WHERE sales_order_id = $1`,
+            [id],
+          );
+
+          const paymentDetailsList = Array.isArray(dto.paymentDetails) ? dto.paymentDetails : [];
+          for (const payment of paymentDetailsList) {
+            const paymentMethod = String(payment.method ?? 'Cash').trim();
+            const paymentStatus = this.getMaterialPaymentAutoStatus(paymentMethod, payment.termsDueDate, payment.postDated) ?? payment.status ?? 'unpaid';
+
+            await client.query(
+              `INSERT INTO tblsales_order_payments
+                (sales_order_id, method, amount, terms, terms_due_date, reference_no, payment_date, issued_by, cc_charge, check_no, bank_name, bank_account, post_dated, down_payment, status)
+              VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15)`,
+              [
+                id,
+                paymentMethod,
+                Number(payment.amount) || 0,
+                payment.terms || null,
+                payment.termsDueDate || null,
+                payment.referenceNo || null,
+                payment.paymentDate || null,
+                payment.issuedBy || null,
+                payment.ccCharge || null,
+                payment.checkNo || null,
+                payment.bankName || null,
+                payment.bankAccount || null,
+                payment.postDated || null,
+                Number(payment.downPayment) || 0,
+                paymentStatus,
+              ],
+            );
+          }
+        }
+
+        return {
+          salesOrderId: id,
+          customerId,
+          totalAmount: computedTotal,
+          status: dto.status ?? existingOrder.status,
+          salesType: salesTypeToUse,
+        };
+      });
+
+      return {
+        success: true,
+        message: 'Material sales order updated successfully',
+        data: result,
+      };
+    } catch (error) {
+      if (error instanceof NotFoundException) {
+        return { success: false, message: error.message };
+      }
+      return {
+        success: false,
+        message: error instanceof Error ? error.message : 'Failed to update material sales order',
+      };
+    }
+  }
+
+  private getMaterialPaymentAutoStatus(method: string, termsDueDate?: string | null, postDated?: string | null): string {
+    const normalizedMethod = (method ?? '').trim().toLowerCase();
+
+    // Cash and Bank Transfer are always 'paid'
+    if (normalizedMethod === 'cash' || normalizedMethod === 'bank transfer') {
+      return 'paid';
+    }
+
+    const today = new Date();
+    today.setHours(0, 0, 0, 0);
+
+    // Check if termsDueDate is past today
+    if (termsDueDate) {
+      const dueDate = new Date(termsDueDate);
+      if (!Number.isNaN(dueDate.getTime())) {
+        dueDate.setHours(0, 0, 0, 0);
+        if (dueDate < today) {
+          return 'overdue';
+        }
+      }
+    }
+
+    // Check if postDated (cheque) is past today
+    if (postDated) {
+      const chequeDate = new Date(postDated);
+      if (!Number.isNaN(chequeDate.getTime())) {
+        chequeDate.setHours(0, 0, 0, 0);
+        if (chequeDate < today) {
+          return 'overdue';
+        }
+      }
+    }
+
+    return 'unpaid';
   }
 }
