@@ -17,7 +17,7 @@ const nodeEnv = String(appEnv?.['NODE_ENV'] ?? '').trim().toLowerCase();
 const hostName = String(globalThis.location?.hostname ?? '').trim().toLowerCase();
 const isLocalHost = hostName === 'localhost' || hostName === '127.0.0.1';
 const isProductionBuild = nodeEnv === 'production' || !isLocalHost;
-const fallbackProductionApiBaseUrl = 'https://bagama-hvac-is-backend-e2j6k.ondigitalocean.app';
+const fallbackProductionApiBaseUrl = 'https://bma-sales-inventory-backend-2mxqn.ondigitalocean.app/';
 
 if (!configuredApiBaseUrl && isProductionBuild) {
   console.warn(
