@@ -6886,6 +6886,198 @@ export class SalesOrderService {
     }
   }
 
+  async migrateMaterialSalesOrders(rows: Array<Record<string, unknown>>, userId?: number) {
+    if (!Array.isArray(rows) || rows.length === 0) {
+      return { success: false, message: 'No rows provided', summary: { total: 0, created: 0, skipped: 0, failed: 0 } };
+    }
+
+    // Group rows by salesNo
+    const grouped = new Map<string, Array<Record<string, unknown>>>();
+    for (const row of rows) {
+      const salesNo = String(row['salesNo'] ?? row['poNo'] ?? '').trim();
+      if (!salesNo) continue;
+      if (!grouped.has(salesNo)) grouped.set(salesNo, []);
+      grouped.get(salesNo)!.push(row);
+    }
+
+    const summary = { total: grouped.size, created: 0, skipped: 0, failed: 0 };
+    const details: Array<{ salesNo: string; status: string; message?: string }> = [];
+
+    for (const [salesNo, groupRows] of grouped.entries()) {
+      try {
+        // Check for duplicate — look for existing migrated order with same legacy SO number
+        const existingResult = await this.databaseService.query<{ id: number }>(
+          `SELECT id FROM tblsales_order WHERE remarks LIKE $1 AND status IN ('complete', 'migrated') LIMIT 1`,
+          [`%Original SO#: ${salesNo}%`],
+        );
+
+        if (existingResult.rowCount > 0) {
+          summary.skipped++;
+          details.push({ salesNo, status: 'skipped', message: 'SO number already exists' });
+          continue;
+        }
+
+        await this.databaseService.withTransaction(async (client) => {
+          const firstRow = groupRows[0];
+          const dealer = String(firstRow['dealer'] ?? '').trim();
+          const address = String(firstRow['address'] ?? '').trim();
+          const deliveryDate = String(firstRow['deliveryDate'] ?? '').trim() || null;
+          const createdAt = String(firstRow['createdAt'] ?? '').trim() || null;
+          const paymentTerm = String(firstRow['paymentTerm'] ?? '').trim();
+          const paymentStatus = String(firstRow['paymentStatus'] ?? '').trim() || 'unpaid';
+          const bankName = String(firstRow['bankName'] ?? '').trim() || null;
+          const bankAccount = String(firstRow['bankAccount'] ?? '').trim() || null;
+          const checkNo = String(firstRow['checkNo'] ?? '').trim() || null;
+          const issuedBy = String(firstRow['issuedBy'] ?? '').trim() || null;
+          const referenceNo = String(firstRow['referenceNo'] ?? '').trim() || null;
+          const paymentDate = String(firstRow['paymentDate'] ?? '').trim() || null;
+          const terms = String(firstRow['terms'] ?? '').trim() || null;
+          const termsDueDate = String(firstRow['termsDueDate'] ?? '').trim() || null;
+
+          // Resolve customer by dealer name
+          let customerId: string | null = null;
+          if (dealer) {
+            customerId = await this.upsertCustomerFromPayload(client, {
+              customer: { name: dealer, address: address || undefined },
+            } as any);
+          }
+
+          // Compute total amount from all items in the group
+          let totalAmount = 0;
+          for (const item of groupRows) {
+            const price = Number(item['price']) || 0;
+            const qty = Number(item['quantity']) || 0;
+            totalAmount += Math.round(price * qty * 100) / 100;
+          }
+          totalAmount = Math.round(totalAmount * 100) / 100;
+
+          // Insert into tblsales_order
+          const insertSoParams: unknown[] = [
+            customerId,
+            'complete',
+            'sales',
+            deliveryDate,
+            totalAmount,
+            `Migrated from legacy system. Original SO#: ${salesNo}`,
+          ];
+          let insertSoSql = `
+            INSERT INTO tblsales_order
+              (customer_id, status, "salesType", "scheduleDate", total_amount, remarks`;
+
+          if (createdAt) {
+            insertSoParams.push(createdAt);
+            insertSoSql += `, created_at`;
+          }
+          if (userId) {
+            insertSoParams.push(userId);
+            insertSoSql += `, created_by`;
+          }
+
+          const placeholders = insertSoParams.map((_, i) => `$${i + 1}`).join(', ');
+          insertSoSql += `) VALUES (${placeholders}) RETURNING id`;
+
+          const soResult = await client.query<{ id: number }>(insertSoSql, insertSoParams);
+          const salesOrderId = soResult.rows[0].id;
+
+          // Insert line items
+          for (const item of groupRows) {
+            const description = String(item['productDescription'] ?? '').trim();
+            const itemCode = String(item['itemCode'] ?? '').trim() || null;
+            const cost = Number(item['cost']) || 0;
+            const price = Number(item['price']) || 0;
+            const qty = Number(item['quantity']) || 0;
+            const lineTotal = Math.round(price * qty * 100) / 100;
+
+            // Try to match material by itemCode
+            let materialId: number | null = null;
+            if (itemCode) {
+              const materialResult = await client.query<{ id: number }>(
+                `SELECT id FROM tblmaterials WHERE material_code = $1 LIMIT 1`,
+                [itemCode],
+              );
+              if (materialResult.rowCount > 0) {
+                materialId = materialResult.rows[0].id;
+              }
+            }
+
+            await client.query(
+              `INSERT INTO tblsales_order_items
+                (sales_order_id, material_id, description, item_code, cost, rate, discount, qty, total, is_non_inventory)
+              VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)`,
+              [
+                salesOrderId,
+                materialId,
+                description,
+                itemCode,
+                cost,
+                price,
+                0,
+                qty,
+                lineTotal,
+                false,
+              ],
+            );
+          }
+
+          // Insert payment record
+          const normalizedMethod = this.normalizeMigrationPaymentMethod(paymentTerm);
+
+          await client.query(
+            `INSERT INTO tblsales_order_payments
+              (sales_order_id, method, amount, status, bank_name, bank_account, check_no, issued_by, reference_no, payment_date, terms, terms_due_date)
+            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)`,
+            [
+              salesOrderId,
+              normalizedMethod,
+              totalAmount,
+              paymentStatus,
+              bankName,
+              bankAccount,
+              checkNo,
+              issuedBy,
+              referenceNo,
+              paymentDate,
+              terms,
+              termsDueDate,
+            ],
+          );
+        });
+
+        summary.created++;
+        details.push({ salesNo, status: 'created' });
+      } catch (error) {
+        summary.failed++;
+        details.push({
+          salesNo,
+          status: 'failed',
+          message: error instanceof Error ? error.message : 'Unknown error',
+        });
+      }
+    }
+
+    return {
+      success: true,
+      message: `Migration complete: ${summary.created} created, ${summary.skipped} skipped, ${summary.failed} failed`,
+      summary,
+      details,
+    };
+  }
+
+  private normalizeMigrationPaymentMethod(raw: string): string {
+    const map: Record<string, string> = {
+      'BANK TRANSFER': 'Bank Transfer',
+      'CASH': 'Cash',
+      'GCASH': 'GCash',
+      'TERMS': 'Terms',
+      'CHEQUE': 'Cheque',
+      'CREDIT CARD': 'Credit Card',
+      'INSTALLMENT': 'Installment',
+      'TERMS WITH DP': 'Terms with DP',
+    };
+    const upper = (raw ?? '').trim().toUpperCase();
+    return map[upper] ?? (raw.trim() || 'Cash');
+  }
+
   async getMaterialSalesOrders(query: {
     status?: string;
     page?: number;

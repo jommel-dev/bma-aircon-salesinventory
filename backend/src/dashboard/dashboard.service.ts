@@ -254,47 +254,78 @@ export class DashboardService {
       termsDueDate?: string | null;
     },
   ): Promise<void> {
-    const paymentColumns = await this.getTableColumns(client, 'tblso_payments');
-    const soIdColumn = this.pickColumn(paymentColumns, ['so_id', 'soId']);
-    const methodColumn = this.pickColumn(paymentColumns, ['method']);
-    const amountColumn = this.pickColumn(paymentColumns, ['amount']);
-    const statusColumn = this.pickColumn(paymentColumns, ['status']);
-    const paymentDateColumn = this.pickColumn(paymentColumns, ['payment_date', 'paymentDate']);
-    const referenceNoColumn = this.pickColumn(paymentColumns, ['reference_no', 'referenceNo']);
-    const checkNoColumn = this.pickColumn(paymentColumns, ['check_no', 'checkNo']);
-    const bankNameColumn = this.pickColumn(paymentColumns, ['bank_name', 'bankName']);
-    const bankAccountColumn = this.pickColumn(paymentColumns, ['bank_account', 'bankAccount']);
-    const postDatedColumn = this.pickColumn(paymentColumns, ['post_dated', 'postDated']);
-    const termsDueDateColumn = this.pickColumn(paymentColumns, ['terms_due_date', 'termsDueDate']);
-
-    if (!soIdColumn || !methodColumn || !amountColumn || !statusColumn) {
-      throw new BadRequestException('Sales payment columns are not configured as expected');
-    }
-
-    const record: Record<string, unknown> = {
-      [soIdColumn]: salesOrderId,
-      [methodColumn]: payload.method,
-      [amountColumn]: payload.amount,
-      [statusColumn]: payload.status,
-    };
-
-    if (paymentDateColumn) record[paymentDateColumn] = payload.paymentDate ?? null;
-    if (referenceNoColumn && payload.referenceNo !== undefined) record[referenceNoColumn] = payload.referenceNo;
-    if (checkNoColumn && payload.checkNo !== undefined) record[checkNoColumn] = payload.checkNo;
-    if (bankNameColumn && payload.bankName !== undefined) record[bankNameColumn] = payload.bankName;
-    if (bankAccountColumn && payload.bankAccount !== undefined) record[bankAccountColumn] = payload.bankAccount;
-    if (postDatedColumn && payload.postDated !== undefined) record[postDatedColumn] = payload.postDated;
-    if (termsDueDateColumn && payload.termsDueDate !== undefined) record[termsDueDateColumn] = payload.termsDueDate;
-
-    const columns = Object.keys(record);
-    const values = Object.values(record);
-    const placeholders = values.map((_, index) => `$${index + 1}`);
-
-    await client.query(
-      `INSERT INTO tblso_payments (${columns.map((column) => `"${column}"`).join(', ')})
-       VALUES (${placeholders.join(', ')})`,
-      values,
+    // Check if this is a material sales order (salesType = 'sales')
+    const soTypeResult = await client.query<{ salesType: string }>(
+      `SELECT COALESCE(to_jsonb(so)->>'salesType', '') AS "salesType" FROM tblsales_order so WHERE so.id = $1 LIMIT 1`,
+      [salesOrderId],
     );
+    const salesType = (soTypeResult.rows[0]?.salesType ?? '').toLowerCase();
+    const isMaterialOrder = salesType === 'sales';
+
+    if (isMaterialOrder) {
+      // Write to tblsales_order_payments (new payment table for material orders)
+      await client.query(
+        `INSERT INTO tblsales_order_payments
+          (sales_order_id, method, amount, status, payment_date, reference_no, check_no, bank_name, bank_account, post_dated, terms_due_date)
+        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)`,
+        [
+          salesOrderId,
+          payload.method,
+          payload.amount,
+          payload.status,
+          payload.paymentDate || null,
+          payload.referenceNo || null,
+          payload.checkNo || null,
+          payload.bankName || null,
+          payload.bankAccount || null,
+          payload.postDated || null,
+          payload.termsDueDate || null,
+        ],
+      );
+    } else {
+      // Write to tblso_payments (legacy payment table for ACU orders)
+      const paymentColumns = await this.getTableColumns(client, 'tblso_payments');
+      const soIdColumn = this.pickColumn(paymentColumns, ['so_id', 'soId']);
+      const methodColumn = this.pickColumn(paymentColumns, ['method']);
+      const amountColumn = this.pickColumn(paymentColumns, ['amount']);
+      const statusColumn = this.pickColumn(paymentColumns, ['status']);
+      const paymentDateColumn = this.pickColumn(paymentColumns, ['payment_date', 'paymentDate']);
+      const referenceNoColumn = this.pickColumn(paymentColumns, ['reference_no', 'referenceNo']);
+      const checkNoColumn = this.pickColumn(paymentColumns, ['check_no', 'checkNo']);
+      const bankNameColumn = this.pickColumn(paymentColumns, ['bank_name', 'bankName']);
+      const bankAccountColumn = this.pickColumn(paymentColumns, ['bank_account', 'bankAccount']);
+      const postDatedColumn = this.pickColumn(paymentColumns, ['post_dated', 'postDated']);
+      const termsDueDateColumn = this.pickColumn(paymentColumns, ['terms_due_date', 'termsDueDate']);
+
+      if (!soIdColumn || !methodColumn || !amountColumn || !statusColumn) {
+        throw new BadRequestException('Sales payment columns are not configured as expected');
+      }
+
+      const record: Record<string, unknown> = {
+        [soIdColumn]: salesOrderId,
+        [methodColumn]: payload.method,
+        [amountColumn]: payload.amount,
+        [statusColumn]: payload.status,
+      };
+
+      if (paymentDateColumn) record[paymentDateColumn] = payload.paymentDate ?? null;
+      if (referenceNoColumn && payload.referenceNo !== undefined) record[referenceNoColumn] = payload.referenceNo;
+      if (checkNoColumn && payload.checkNo !== undefined) record[checkNoColumn] = payload.checkNo;
+      if (bankNameColumn && payload.bankName !== undefined) record[bankNameColumn] = payload.bankName;
+      if (bankAccountColumn && payload.bankAccount !== undefined) record[bankAccountColumn] = payload.bankAccount;
+      if (postDatedColumn && payload.postDated !== undefined) record[postDatedColumn] = payload.postDated;
+      if (termsDueDateColumn && payload.termsDueDate !== undefined) record[termsDueDateColumn] = payload.termsDueDate;
+
+      const columns = Object.keys(record);
+      const values = Object.values(record);
+      const placeholders = values.map((_, index) => `$${index + 1}`);
+
+      await client.query(
+        `INSERT INTO tblso_payments (${columns.map((column) => `"${column}"`).join(', ')})
+         VALUES (${placeholders.join(', ')})`,
+        values,
+      );
+    }
   }
 
   private async updateSalesOrderStatusForSettlement(client: PoolClient, salesOrderId: number, branchId?: number): Promise<void> {
@@ -357,6 +388,18 @@ export class DashboardService {
           )::timestamptz
         END AS due_date
       FROM tblso_payments sp
+      UNION ALL
+      SELECT
+        sop.sales_order_id::text AS so_id,
+        COALESCE(sop.amount, 0) AS amount,
+        REPLACE(REPLACE(LOWER(TRIM(COALESCE(sop.method, ''))), '_', '-'), ' ', '-') AS normalized_method,
+        REPLACE(REPLACE(LOWER(TRIM(COALESCE(sop.status, ''))), '_', '-'), ' ', '-') AS normalized_status,
+        CASE
+          WHEN REPLACE(REPLACE(LOWER(TRIM(COALESCE(sop.method, ''))), '_', '-'), ' ', '-') = 'cheque'
+            THEN sop.post_dated::timestamptz
+          ELSE sop.terms_due_date::timestamptz
+        END AS due_date
+      FROM tblsales_order_payments sop
     ),
     payment_totals AS (
       SELECT

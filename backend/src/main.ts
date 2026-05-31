@@ -1,5 +1,6 @@
 import { NestFactory } from '@nestjs/core';
 import { ValidationPipe } from '@nestjs/common';
+import { json, urlencoded } from 'express';
 import { AppModule } from './app.module';
 import { ApiExceptionFilter } from './common/filters/api-exception.filter';
 import { ApiErrorResponseInterceptor } from './common/interceptors/api-error-response.interceptor';
@@ -13,6 +14,11 @@ async function bootstrap() {
   console.log('CORS_ORIGINS:', process.env.CORS_ORIGINS || 'http://localhost:4200');
 
   const app = await NestFactory.create(AppModule);
+
+  // Increase body size limit for bulk migrations
+  app.use(json({ limit: '10mb' }));
+  app.use(urlencoded({ extended: true, limit: '10mb' }));
+
   app.useGlobalPipes(new ValidationPipe({
     transform: true,
     transformOptions: { enableImplicitConversion: true },

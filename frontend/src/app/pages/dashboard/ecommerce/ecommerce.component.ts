@@ -1,5 +1,6 @@
 import { Component, HostListener, OnInit } from '@angular/core';
 import { DecimalPipe } from '@angular/common';
+import { FormsModule } from '@angular/forms';
 import {
   DashboardActivityItem,
   DashboardKpiCard,
@@ -14,7 +15,7 @@ import {
 
 @Component({
   selector: 'app-ecommerce',
-  imports: [DecimalPipe],
+  imports: [DecimalPipe, FormsModule],
   templateUrl: './ecommerce.component.html',
 })
 export class EcommerceComponent implements OnInit {
@@ -82,6 +83,7 @@ export class EcommerceComponent implements OnInit {
   expandedSalesSummaryMode: DashboardSalesDetailMode | null = null;
   salesSummaryDetailItems: Array<{ id?: string | number; [key: string]: unknown }> = [];
   salesSummaryLoading = false;
+  salesSummarySearch = '';
   settlementBusy = false;
   settlementError = '';
   settlementTarget: {
@@ -189,6 +191,7 @@ export class EcommerceComponent implements OnInit {
     this.closeOperationDetail();
     this.closeSettlementModal();
     this.expandedSalesSummaryMode = mode;
+    this.salesSummarySearch = '';
     this.salesSummaryLoading = true;
     void this.fetchSalesSummaryDetail(mode);
   }
@@ -229,6 +232,16 @@ export class EcommerceComponent implements OnInit {
     return item['id'] ?? index;
   }
 
+  getFilteredSalesSummaryItems(): Array<{ id?: string | number; [key: string]: unknown }> {
+    const search = (this.salesSummarySearch ?? '').trim().toLowerCase();
+    if (!search) return this.salesSummaryDetailItems;
+    return this.salesSummaryDetailItems.filter(item => {
+      const soNumber = String(item['soNumber'] ?? '').toLowerCase();
+      const customer = String(item['customer'] ?? '').toLowerCase();
+      return soNumber.includes(search) || customer.includes(search);
+    });
+  }
+
   trackOperationDetailRow(index: number, item: { id?: string | number; [key: string]: unknown }): string | number {
     return item['id'] ?? index;
   }
@@ -236,10 +249,10 @@ export class EcommerceComponent implements OnInit {
   formatCurrencyValue(value: unknown): string {
     const amount = Number(value);
     if (!Number.isFinite(amount)) {
-      return 'PHP 0';
+      return 'PHP 0.00';
     }
 
-    return `PHP ${amount.toLocaleString('en-PH', { maximumFractionDigits: 0 })}`;
+    return `PHP ${amount.toLocaleString('en-PH', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
   }
 
   formatDateValue(value: unknown): string {

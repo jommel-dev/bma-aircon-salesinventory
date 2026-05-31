@@ -2,6 +2,7 @@ import { CommonModule } from '@angular/common';
 import { Component, OnInit } from '@angular/core';
 import { FormsModule } from '@angular/forms';
 import { Router } from '@angular/router';
+import { DomSanitizer, SafeResourceUrl } from '@angular/platform-browser';
 import {
   SalesOrderMaterialService,
   SalesOrderStatus,
@@ -9,11 +10,22 @@ import {
   MaterialSalesOrderListMeta,
   MaterialSalesOrderListParams,
 } from '../../shared/services/sales-order-material.service';
+import { PrintSalesOrderService, PrintSalesOrderData } from '../../shared/services/print-sales-order.service';
 import { PageBreadcrumbComponent } from '../../shared/components/common/page-breadcrumb/page-breadcrumb.component';
 
 interface TabDefinition {
   key: SalesOrderStatus;
   label: string;
+}
+
+interface MigrationPreviewGroup {
+  salesNo: string;
+  dealer: string;
+  itemCount: number;
+  total: number;
+  paymentMethod: string;
+  paymentStatus: string;
+  deliveryDate: string;
 }
 
 @Component({
@@ -46,8 +58,25 @@ export class SalesOrderMaterialsComponent implements OnInit {
   private searchDebounceTimer: ReturnType<typeof setTimeout> | null = null;
   private readonly searchDebounceMs = 300;
 
+  // Print modal state
+  isPrintModalOpen = false;
+  printPdfUrl: SafeResourceUrl | null = null;
+  isPrintLoading = false;
+
+  // Migration modal state
+  isMigrateModalOpen = false;
+  isMigrating = false;
+  migrateProgress = '';
+  migrateError = '';
+  migrateFileName = '';
+  migrateRows: any[] = [];
+  migratePreview: MigrationPreviewGroup[] = [];
+  migrateResults: { summary: { total: number; created: number; skipped: number; failed: number }; details: any[] } | null = null;
+
   constructor(
     private salesOrderMaterialService: SalesOrderMaterialService,
+    private printSalesOrderService: PrintSalesOrderService,
+    private sanitizer: DomSanitizer,
     private router: Router,
   ) {}
 
@@ -143,15 +172,61 @@ export class SalesOrderMaterialsComponent implements OnInit {
     return s === 'pending' || s === 'complete';
   }
 
-  onPrintOrder(orderId: number, soNumber: string | null): void {
-    // Open a print-friendly view in a new window
-    const printUrl = `/users/sales-order-materials/edit/${orderId}`;
-    const printWindow = window.open(printUrl, '_blank', 'width=800,height=600');
-    if (printWindow) {
-      printWindow.addEventListener('afterprint', () => {
-        printWindow.close();
-      });
+  async onPrintOrder(orderId: number, soNumber: string | null): Promise<void> {
+    this.isPrintLoading = true;
+    this.isPrintModalOpen = true;
+    this.printPdfUrl = null;
+
+    try {
+      const order = await this.salesOrderMaterialService.getMaterialSalesOrderById(orderId);
+
+      // Build payment term label
+      let paymentTerm = '';
+      if (order.paymentDetails && order.paymentDetails.length > 0) {
+        const payment = order.paymentDetails[0];
+        if (payment.method === 'Terms') {
+          paymentTerm = `TERMS ${payment.terms || ''} Day(s)`;
+        } else {
+          paymentTerm = payment.method || '';
+        }
+      }
+
+      // Format delivery date
+      const deliveryDate = order.scheduleDate
+        ? new Date(order.scheduleDate).toLocaleDateString('en-US', { month: '2-digit', day: '2-digit', year: 'numeric' })
+        : '';
+
+      const printData: PrintSalesOrderData = {
+        dealer: order.customerName || '',
+        address: order.customerAddress || '',
+        deliveryDate,
+        soNumber: order.soNumber || '',
+        paymentTerm,
+        terms: order.paymentDetails?.[0]?.terms || '',
+        totalAmount: order.totalAmount || 0,
+        items: (order.productItems || []).map(item => ({
+          quantity: item.qty,
+          unit: 'pcs',
+          description: item.description || '',
+          unitPrice: item.rate,
+          amount: item.total,
+        })),
+      };
+
+      const dataUri = await this.printSalesOrderService.generatePdf(printData);
+      this.printPdfUrl = this.sanitizer.bypassSecurityTrustResourceUrl(dataUri);
+    } catch (err) {
+      console.error('Failed to generate print PDF:', err);
+      this.isPrintModalOpen = false;
+      this.printPdfUrl = null;
+    } finally {
+      this.isPrintLoading = false;
     }
+  }
+
+  closePrintModal(): void {
+    this.isPrintModalOpen = false;
+    this.printPdfUrl = null;
   }
 
   onCreateOrder(): void {
@@ -160,5 +235,253 @@ export class SalesOrderMaterialsComponent implements OnInit {
 
   onEditOrder(orderId: number): void {
     this.router.navigate(['/users/sales-order-materials/edit', orderId]);
+  }
+
+  // ─── Migration Methods ──────────────────────────────────────────────────────
+
+  openMigrateModal(): void {
+    this.migrateError = '';
+    this.migrateRows = [];
+    this.migrateFileName = '';
+    this.migratePreview = [];
+    this.migrateResults = null;
+    this.isMigrating = false;
+    this.isMigrateModalOpen = true;
+  }
+
+  closeMigrateModal(): void {
+    this.isMigrateModalOpen = false;
+    this.migrateError = '';
+    this.migrateRows = [];
+    this.migrateFileName = '';
+    this.migratePreview = [];
+    this.migrateResults = null;
+  }
+
+  async onMigrateFileSelected(event: Event): Promise<void> {
+    const input = event.target as HTMLInputElement;
+    if (!input.files || input.files.length === 0) return;
+
+    const file = input.files[0];
+    this.migrateFileName = file.name;
+    this.migrateError = '';
+    this.migrateRows = [];
+    this.migratePreview = [];
+    this.migrateResults = null;
+
+    const ext = file.name.split('.').pop()?.toLowerCase();
+
+    try {
+      if (ext === 'csv') {
+        await this.parseMigrateCsv(file);
+      } else if (ext === 'xlsx' || ext === 'xls') {
+        await this.parseMigrateExcel(file);
+      } else {
+        this.migrateError = 'Unsupported file type. Please upload a .csv or .xlsx file.';
+      }
+    } catch (err: any) {
+      this.migrateError = err?.message || 'Failed to parse file.';
+    }
+
+    input.value = '';
+  }
+
+  private async parseMigrateCsv(file: File): Promise<void> {
+    const text = await file.text();
+    const lines = text.split(/\r?\n/).filter(line => line.trim());
+    if (lines.length < 2) {
+      this.migrateError = 'CSV file must have a header row and at least one data row.';
+      return;
+    }
+
+    const headers = this.parseCsvLine(lines[0]).map(h => h.trim());
+    if (!headers.includes('salesNo')) {
+      this.migrateError = 'CSV must contain a "salesNo" column.';
+      return;
+    }
+
+    const rows: any[] = [];
+    for (let i = 1; i < lines.length; i++) {
+      const values = this.parseCsvLine(lines[i]);
+      const row: any = {};
+      for (let j = 0; j < headers.length; j++) {
+        row[headers[j]] = values[j]?.trim() ?? '';
+      }
+      if (row['salesNo']?.trim()) {
+        rows.push(row);
+      }
+    }
+
+    this.migrateRows = rows;
+    this.buildMigratePreview();
+  }
+
+  private async parseMigrateExcel(file: File): Promise<void> {
+    const ExcelJS = await import('exceljs');
+    const workbook = new ExcelJS.Workbook();
+    const arrayBuffer = await file.arrayBuffer();
+    await workbook.xlsx.load(arrayBuffer);
+
+    const worksheet = workbook.worksheets[0];
+    if (!worksheet || worksheet.rowCount < 2) {
+      this.migrateError = 'Excel file must have a header row and at least one data row.';
+      return;
+    }
+
+    const headerRow = worksheet.getRow(1);
+    const headers: string[] = [];
+    headerRow.eachCell({ includeEmpty: true }, (cell, colNumber) => {
+      headers[colNumber - 1] = (cell.value?.toString() ?? '').trim();
+    });
+
+    if (!headers.includes('salesNo')) {
+      this.migrateError = 'Excel file must contain a "salesNo" column.';
+      return;
+    }
+
+    const rows: any[] = [];
+    for (let i = 2; i <= worksheet.rowCount; i++) {
+      const row = worksheet.getRow(i);
+      const rowObj: any = {};
+      let hasData = false;
+
+      row.eachCell({ includeEmpty: true }, (cell, colNumber) => {
+        const key = headers[colNumber - 1];
+        if (key) {
+          const val = cell.value?.toString()?.trim() ?? '';
+          rowObj[key] = val;
+          if (val) hasData = true;
+        }
+      });
+
+      if (hasData && rowObj['salesNo']?.trim()) {
+        rows.push(rowObj);
+      }
+    }
+
+    this.migrateRows = rows;
+    this.buildMigratePreview();
+  }
+
+  private parseCsvLine(line: string): string[] {
+    const result: string[] = [];
+    let current = '';
+    let inQuotes = false;
+
+    for (let i = 0; i < line.length; i++) {
+      const char = line[i];
+      if (char === '"') {
+        if (inQuotes && line[i + 1] === '"') {
+          current += '"';
+          i++;
+        } else {
+          inQuotes = !inQuotes;
+        }
+      } else if (char === ',' && !inQuotes) {
+        result.push(current);
+        current = '';
+      } else {
+        current += char;
+      }
+    }
+    result.push(current);
+    return result;
+  }
+
+  private buildMigratePreview(): void {
+    const grouped = new Map<string, any[]>();
+    for (const row of this.migrateRows) {
+      const salesNo = row['salesNo'] ?? '';
+      if (!grouped.has(salesNo)) grouped.set(salesNo, []);
+      grouped.get(salesNo)!.push(row);
+    }
+
+    this.migratePreview = Array.from(grouped.entries()).map(([salesNo, items]) => {
+      let total = 0;
+      for (const item of items) {
+        const price = Number(item['price']) || 0;
+        const qty = Number(item['quantity']) || 0;
+        total += price * qty;
+      }
+      const firstRow = items[0];
+      return {
+        salesNo,
+        dealer: firstRow['dealer'] ?? '—',
+        itemCount: items.length,
+        total: Math.round(total * 100) / 100,
+        paymentMethod: firstRow['paymentTerm'] ?? '—',
+        paymentStatus: firstRow['paymentStatus'] ?? '—',
+        deliveryDate: firstRow['deliveryDate'] ?? '—',
+      };
+    });
+  }
+
+  async submitMigration(): Promise<void> {
+    if (this.migrateRows.length === 0) {
+      this.migrateError = 'No rows to migrate.';
+      return;
+    }
+
+    this.isMigrating = true;
+    this.migrateError = '';
+    this.migrateResults = null;
+    this.migrateProgress = 'Preparing migration...';
+
+    try {
+      // Group rows by salesNo first, then batch by complete orders (max 50 orders per batch)
+      const ORDERS_PER_BATCH = 50;
+      const grouped = new Map<string, any[]>();
+      for (const row of this.migrateRows) {
+        const salesNo = row['salesNo'] ?? row['poNo'] ?? '';
+        if (!salesNo) continue;
+        if (!grouped.has(salesNo)) grouped.set(salesNo, []);
+        grouped.get(salesNo)!.push(row);
+      }
+
+      const allSalesNos = Array.from(grouped.keys());
+      const totalBatches = Math.ceil(allSalesNos.length / ORDERS_PER_BATCH);
+      const combinedSummary = { total: 0, created: 0, skipped: 0, failed: 0 };
+      const combinedDetails: any[] = [];
+
+      // Send batches of complete orders
+      for (let i = 0; i < allSalesNos.length; i += ORDERS_PER_BATCH) {
+        const batchNum = Math.floor(i / ORDERS_PER_BATCH) + 1;
+        const batchKeys = allSalesNos.slice(i, i + ORDERS_PER_BATCH);
+        const batchRows: any[] = [];
+        for (const key of batchKeys) {
+          batchRows.push(...grouped.get(key)!);
+        }
+
+        this.migrateProgress = `Processing batch ${batchNum} of ${totalBatches} (${combinedSummary.created} created so far)...`;
+
+        const result = await this.salesOrderMaterialService.migrateSalesOrders(batchRows);
+
+        combinedSummary.total += result.summary?.total ?? 0;
+        combinedSummary.created += result.summary?.created ?? 0;
+        combinedSummary.skipped += result.summary?.skipped ?? 0;
+        combinedSummary.failed += result.summary?.failed ?? 0;
+
+        if (result.details) {
+          combinedDetails.push(...result.details);
+        }
+      }
+
+      this.migrateProgress = '';
+      this.migrateResults = {
+        summary: combinedSummary,
+        details: combinedDetails,
+      };
+
+      // Refresh the list after migration
+      await this.loadOrders();
+    } catch (err: any) {
+      this.migrateProgress = '';
+      this.migrateError =
+        err?.response?.data?.message ||
+        err?.message ||
+        'Migration failed. Please try again.';
+    } finally {
+      this.isMigrating = false;
+    }
   }
 }

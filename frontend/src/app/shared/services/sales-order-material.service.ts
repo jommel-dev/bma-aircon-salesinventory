@@ -87,6 +87,7 @@ export interface MaterialSalesOrderListItem {
   status: string;
   salesType: string;
   scheduleDate: string | null;
+  deliveryDate: string | null;
   createdAt: string | null;
 }
 
@@ -261,6 +262,14 @@ export class SalesOrderMaterialService {
     const data = response.data;
     // Backend may return a flat array or { items: [...] }
     return data.items ?? (Array.isArray(data) ? data : []);
+  }
+
+  /**
+   * Migrate material sales orders from CSV data.
+   */
+  async migrateSalesOrders(rows: any[]): Promise<any> {
+    const response = await apiClient.post('/sales-order/materials/migrate', { rows });
+    return response.data;
   }
 
   // ─── Legacy Methods (kept for backward compatibility) ───────────────────────

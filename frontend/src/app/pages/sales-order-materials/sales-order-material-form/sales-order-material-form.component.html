@@ -11,6 +11,20 @@
       <p *ngIf="orderId && currentSoNumber" class="mt-0.5 text-sm text-gray-500 dark:text-gray-400">
         SO#: <span class="font-medium text-brand-600 dark:text-brand-400">{{ currentSoNumber }}</span>
       </p>
+      <div class="mt-1 flex items-center gap-2 text-sm text-gray-500 dark:text-gray-400">
+        <span>Delivery:</span>
+        @if (isAdmin) {
+          <input
+            type="date"
+            [ngModel]="deliveryDate"
+            (ngModelChange)="onDeliveryDateChange($event)"
+            name="deliveryDate"
+            class="rounded border border-gray-300 bg-white px-2 py-0.5 text-sm text-gray-700 dark:border-gray-700 dark:bg-gray-900 dark:text-gray-300"
+          />
+        } @else {
+          <span class="font-medium text-gray-700 dark:text-gray-300">{{ deliveryDate }}</span>
+        }
+      </div>
     </div>
     <button
       type="button"
@@ -22,154 +36,57 @@
   </div>
 
   <form #orderForm="ngForm" (ngSubmit)="$event.preventDefault()">
-    <div class="grid grid-cols-1 gap-5 md:grid-cols-2">
-      <!-- Delivery Date -->
-      <div>
-        <label class="mb-1 block text-xs font-medium text-gray-600 dark:text-gray-300">
-          Delivery Date
-        </label>
-        <input
-          type="date"
-          [ngModel]="deliveryDate"
-          (ngModelChange)="onDeliveryDateChange($event)"
-          name="deliveryDate"
-          [disabled]="!isAdmin"
-          class="w-full rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm dark:border-gray-700 dark:bg-gray-900 disabled:cursor-not-allowed disabled:opacity-60"
-        />
-        @if (!isAdmin) {
-          <p class="mt-1 text-xs text-gray-400 dark:text-gray-500">
-            Delivery date is set to today and cannot be changed.
-          </p>
-        }
-      </div>
-
-      <!-- Customer Mode Toggle -->
-      <div>
-        <label class="mb-1 block text-xs font-medium text-gray-600 dark:text-gray-300">
-          Customer Type
-        </label>
-        <div class="flex gap-4">
-          <label class="flex items-center gap-1.5 text-sm text-gray-700 dark:text-gray-300">
-            <input
-              type="radio"
-              [(ngModel)]="customerMode"
-              name="customerMode"
-              value="existing"
-              class="text-brand-500"
-            />
-            Existing
-          </label>
-          <label class="flex items-center gap-1.5 text-sm text-gray-700 dark:text-gray-300">
-            <input
-              type="radio"
-              [(ngModel)]="customerMode"
-              name="customerMode"
-              value="new"
-              class="text-brand-500"
-            />
-            New
-          </label>
-        </div>
-      </div>
-    </div>
 
     <!-- Customer Selection -->
     <div class="mt-5">
-      @if (customerMode === 'existing') {
-        <div>
-          <label class="mb-1 block text-xs font-medium text-gray-600 dark:text-gray-300">
-            Customer
-          </label>
-          <div class="relative">
-            <input
-              type="text"
-              [ngModel]="customerSearch"
-              (ngModelChange)="onCustomerSearchChange($event)"
-              name="customerSearch"
-              placeholder="Search and select customer"
-              autocomplete="off"
-              (focus)="onCustomerComboboxFocus()"
-              (blur)="onCustomerComboboxBlur()"
-              class="w-full rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm dark:border-gray-700 dark:bg-gray-900"
-            />
+      <label class="mb-1 block text-xs font-medium text-gray-600 dark:text-gray-300">
+        Customer
+      </label>
+      <div class="relative">
+        <input
+          type="text"
+          [ngModel]="customerSearch"
+          (ngModelChange)="onCustomerSearchChange($event)"
+          name="customerSearch"
+          placeholder="Search and select customer"
+          autocomplete="off"
+          (focus)="onCustomerComboboxFocus()"
+          (blur)="onCustomerComboboxBlur()"
+          class="w-full rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm dark:border-gray-700 dark:bg-gray-900"
+        />
 
-            @if (isCustomerDropdownOpen) {
-              <div class="absolute z-40 mt-1 max-h-56 w-full overflow-y-auto rounded-lg border border-gray-200 bg-white shadow-lg dark:border-gray-700 dark:bg-gray-900">
-                @if (getFilteredCustomerOptions().length === 0) {
-                  <p class="px-3 py-2 text-xs text-gray-500 dark:text-gray-400">No customers found.</p>
-                } @else {
-                  @for (customer of getFilteredCustomerOptions(); track customer.id) {
-                    <button
-                      type="button"
-                      (mousedown)="$event.preventDefault()"
-                      (click)="selectCustomer(customer.id)"
-                      class="flex w-full items-center justify-between px-3 py-2 text-left text-sm text-gray-700 hover:bg-gray-50 dark:text-gray-200 dark:hover:bg-gray-800"
-                    >
-                      <span>{{ customer.name }}</span>
-                    </button>
-                  }
-                }
-              </div>
+        @if (isCustomerDropdownOpen) {
+          <div class="absolute z-40 mt-1 max-h-56 w-full overflow-y-auto rounded-lg border border-gray-200 bg-white shadow-lg dark:border-gray-700 dark:bg-gray-900">
+            @if (getFilteredCustomerOptions().length === 0) {
+              <p class="px-3 py-2 text-xs text-gray-500 dark:text-gray-400">No customers found.</p>
+            } @else {
+              @for (customer of getFilteredCustomerOptions(); track customer.id) {
+                <button
+                  type="button"
+                  (mousedown)="$event.preventDefault()"
+                  (click)="selectCustomer(customer.id)"
+                  class="flex w-full items-center justify-between px-3 py-2 text-left text-sm text-gray-700 hover:bg-gray-50 dark:text-gray-200 dark:hover:bg-gray-800"
+                >
+                  <span>{{ customer.name }}</span>
+                </button>
+              }
             }
           </div>
-          <p class="mt-1 text-xs text-gray-500 dark:text-gray-400">
-            Type customer name and pick one from the list.
-          </p>
+        }
+      </div>
+      <p class="mt-1 text-xs text-gray-500 dark:text-gray-400">
+        Type customer name and pick one from the list, or enter a new customer name.
+      </p>
 
-          @if (selectedCustomerId) {
-            <div class="mt-3 grid grid-cols-1 gap-3 md:grid-cols-2">
-              <div>
-                <label class="mb-1 block text-xs font-medium text-gray-600 dark:text-gray-300">Address</label>
-                <input
-                  type="text"
-                  [(ngModel)]="customerForm.address"
-                  name="customer_address"
-                  readonly
-                  class="w-full rounded-lg border border-gray-300 bg-gray-50 px-3 py-2 text-sm dark:border-gray-700 dark:bg-gray-800"
-                />
-              </div>
-              <div>
-                <label class="mb-1 block text-xs font-medium text-gray-600 dark:text-gray-300">Contact Person</label>
-                <input
-                  type="text"
-                  [(ngModel)]="customerForm.contact_person"
-                  name="customer_contact_person"
-                  readonly
-                  class="w-full rounded-lg border border-gray-300 bg-gray-50 px-3 py-2 text-sm dark:border-gray-700 dark:bg-gray-800"
-                />
-              </div>
-              <div>
-                <label class="mb-1 block text-xs font-medium text-gray-600 dark:text-gray-300">Contact Number</label>
-                <input
-                  type="text"
-                  [(ngModel)]="customerForm.contact_number"
-                  name="customer_contact_number"
-                  readonly
-                  class="w-full rounded-lg border border-gray-300 bg-gray-50 px-3 py-2 text-sm dark:border-gray-700 dark:bg-gray-800"
-                />
-              </div>
-            </div>
-          }
-        </div>
-      } @else {
-        <!-- New Customer Form -->
-        <div class="grid grid-cols-1 gap-3 md:grid-cols-2">
-          <div>
-            <label class="mb-1 block text-xs font-medium text-gray-600 dark:text-gray-300">Customer Name</label>
-            <input
-              type="text"
-              [(ngModel)]="customerForm.name"
-              name="new_customer_name"
-              placeholder="Enter customer name"
-              class="w-full rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm dark:border-gray-700 dark:bg-gray-900"
-            />
-          </div>
+      <!-- Customer detail fields: always editable -->
+      @if (selectedCustomerId || customerSearch.trim()) {
+        <div class="mt-3 grid grid-cols-1 gap-3 md:grid-cols-2">
           <div>
             <label class="mb-1 block text-xs font-medium text-gray-600 dark:text-gray-300">Address</label>
             <input
               type="text"
               [(ngModel)]="customerForm.address"
-              name="new_customer_address"
+              name="customer_address"
               placeholder="Enter address"
               class="w-full rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm dark:border-gray-700 dark:bg-gray-900"
             />
@@ -179,7 +96,7 @@
             <input
               type="text"
               [(ngModel)]="customerForm.contact_person"
-              name="new_customer_contact_person"
+              name="customer_contact_person"
               placeholder="Enter contact person"
               class="w-full rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm dark:border-gray-700 dark:bg-gray-900"
             />
@@ -189,7 +106,7 @@
             <input
               type="text"
               [(ngModel)]="customerForm.contact_number"
-              name="new_customer_contact_number"
+              name="customer_contact_number"
               placeholder="Enter contact number"
               class="w-full rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm dark:border-gray-700 dark:bg-gray-900"
             />
@@ -198,17 +115,7 @@
       }
     </div>
 
-    <!-- Remarks -->
-    <div class="mt-5">
-      <label class="mb-1 block text-xs font-medium text-gray-600 dark:text-gray-300">Remarks</label>
-      <textarea
-        [(ngModel)]="remarks"
-        name="remarks"
-        rows="2"
-        placeholder="Optional remarks..."
-        class="w-full rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm dark:border-gray-700 dark:bg-gray-900"
-      ></textarea>
-    </div>
+
 
     <!-- Material Search -->
     <div class="mt-5">
@@ -252,7 +159,7 @@
                   (click)="addNonInventoryItem()"
                   class="mt-2 inline-flex items-center rounded-md bg-gray-100 px-3 py-1.5 text-xs font-medium text-gray-700 hover:bg-gray-200 dark:bg-gray-800 dark:text-gray-300 dark:hover:bg-gray-700"
                 >
-                  + Add as non-inventory item
+                  + Add as Other
                 </button>
               </div>
             } @else {
@@ -267,7 +174,7 @@
                     {{ material.material_name }}
                   </span>
                   <span class="text-xs text-gray-500 dark:text-gray-400">
-                    {{ material.material_code || '—' }} · {{ material.brand_name || 'No brand' }} · {{ material.product_type }}
+                    <span class="font-semibold text-brand-600 dark:text-brand-400">{{ material.material_code || '—' }}</span> · {{ material.brand_name || 'No brand' }} · {{ material.product_type }}
                   </span>
                 </button>
               }

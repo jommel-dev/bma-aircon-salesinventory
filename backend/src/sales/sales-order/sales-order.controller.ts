@@ -25,6 +25,7 @@ import { ListMaterialSalesOrderQueryDto } from './dto/list-material-sales-order-
 import { AddMaterialItemDto } from './dto/add-material-item.dto';
 import { CreateSalesOrderMigrationPreviewDto } from './dto/create-sales-order-migration-preview.dto';
 import { CreateSalesOrderMigrationImportDto } from './dto/create-sales-order-migration-import.dto';
+import { MigrateMaterialSalesOrderDto } from './dto/migrate-material-sales-order.dto';
 import { MaterialTransactionsService } from 'src/inventory/material-transactions/material-transactions.service';
 import { AuditActorContext } from 'src/audit-log/audit-log.service';
 
@@ -135,6 +136,18 @@ export class SalesOrderController {
   @Get('materials/:id')
   getMaterialSalesOrderById(@Param('id') id: string) {
     return this.salesOrderService.findOneMaterialSalesOrder(+id);
+  }
+
+  @Post('materials/migrate')
+  migrateMaterialSalesOrders(
+    @Body() body: MigrateMaterialSalesOrderDto,
+    @Req() request: { user?: Record<string, unknown> },
+  ) {
+    const userId = Number(request.user?.sub);
+    return this.salesOrderService.migrateMaterialSalesOrders(
+      body.rows ?? [],
+      Number.isFinite(userId) ? userId : undefined,
+    );
   }
 
   @Post('materials')
