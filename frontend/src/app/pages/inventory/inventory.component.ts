@@ -1,4 +1,4 @@
-import { Component, OnInit, HostListener, ElementRef } from '@angular/core';
+import { Component, OnInit, HostListener, ElementRef, ViewChildren, QueryList, AfterViewChecked } from '@angular/core';
 import { CommonModule } from '@angular/common';
 import { FormsModule } from '@angular/forms';
 import { PageBreadcrumbComponent } from '../../shared/components/common/page-breadcrumb/page-breadcrumb.component';
@@ -34,7 +34,12 @@ interface AllInOneMaterialRow {
   imports: [CommonModule, FormsModule, PageBreadcrumbComponent],
   templateUrl: './inventory.component.html',
 })
-export class InventoryComponent implements OnInit {
+export class InventoryComponent implements OnInit, AfterViewChecked {
+  /** Query all inline edit inputs for auto-focus */
+  @ViewChildren('inlineInput') inlineInputs!: QueryList<ElementRef>;
+
+  /** Flag to trigger focus on next view check */
+  private shouldFocusInlineInput = false;
   /** Tree data from the backend */
   treeNodes: ProductTypeNode[] = [];
 
@@ -56,11 +61,28 @@ export class InventoryComponent implements OnInit {
   /** Materials for the selected brand (with computed columns) */
   materials: ComputedMaterialRow[] = [];
 
+  /** Filter text for the materials table */
+  materialFilter = '';
+
   /** Loading state for materials table */
   isMaterialsLoading = false;
 
   /** Error message for materials loading */
   materialsError = '';
+
+  // --- Inline Editing State ---
+
+  /** ID of the material currently being inline-edited (null = none) */
+  inlineEditId: number | null = null;
+
+  /** Which field is being inline-edited */
+  inlineEditField: 'material_name' | 'unit_price' | 'sell_price' | null = null;
+
+  /** Temporary value while inline editing */
+  inlineEditValue = '';
+
+  /** Whether an inline save is in progress */
+  isInlineSaving = false;
 
   /** ID of the material whose action menu is currently open (null = no menu open) */
   activeMenuId: number | null = null;
@@ -234,6 +256,17 @@ export class InventoryComponent implements OnInit {
     void this.loadTree();
   }
 
+  ngAfterViewChecked(): void {
+    if (this.shouldFocusInlineInput && this.inlineInputs?.length > 0) {
+      this.shouldFocusInlineInput = false;
+      const input = this.inlineInputs.first?.nativeElement as HTMLInputElement;
+      if (input) {
+        input.focus();
+        input.select();
+      }
+    }
+  }
+
   /**
    * Fetch the tree data from the backend API
    */
@@ -274,6 +307,8 @@ export class InventoryComponent implements OnInit {
   selectBrand(brand: BrandNode): void {
     this.selectedBrandId = brand.id;
     this.selectedBrandName = brand.name;
+    this.materialFilter = '';
+    this.cancelInlineEdit();
     void this.loadMaterials(brand.id);
   }
 
@@ -309,6 +344,125 @@ export class InventoryComponent implements OnInit {
   getStockBadge(row: ComputedMaterialRow): StockBadgeConfig {
     const status = getStockStatus(row.on_hand_stock, row.reorder_level);
     return getStockBadgeConfig(status);
+  }
+
+  /**
+   * Get materials filtered by the search text.
+   * Matches against material_name and material_code.
+   */
+  get filteredMaterials(): ComputedMaterialRow[] {
+    const filter = this.materialFilter.trim().toLowerCase();
+    if (!filter) return this.materials;
+    return this.materials.filter(m =>
+      m.material_name.toLowerCase().includes(filter) ||
+      (m.material_code ?? '').toLowerCase().includes(filter)
+    );
+  }
+
+  // --- Inline Editing Methods ---
+
+  /**
+   * Start inline editing a cell.
+   */
+  startInlineEdit(row: ComputedMaterialRow, field: 'material_name' | 'unit_price' | 'sell_price'): void {
+    if (this.isInlineSaving) return;
+    this.inlineEditId = row.id;
+    this.inlineEditField = field;
+    this.inlineEditValue = String(row[field]);
+    this.shouldFocusInlineInput = true;
+  }
+
+  /**
+   * Check if a specific cell is currently being inline-edited.
+   */
+  isInlineEditing(rowId: number, field: string): boolean {
+    return this.inlineEditId === rowId && this.inlineEditField === field;
+  }
+
+  /**
+   * Cancel inline editing without saving.
+   */
+  cancelInlineEdit(): void {
+    this.inlineEditId = null;
+    this.inlineEditField = null;
+    this.inlineEditValue = '';
+  }
+
+  /**
+   * Handle keydown in inline edit input.
+   */
+  onInlineEditKeydown(event: KeyboardEvent, row: ComputedMaterialRow): void {
+    if (event.key === 'Enter') {
+      event.preventDefault();
+      (event.target as HTMLInputElement).blur();
+    } else if (event.key === 'Escape') {
+      this.cancelInlineEdit();
+    }
+  }
+
+  /**
+   * Save the inline edit value to the backend.
+   */
+  async saveInlineEdit(row: ComputedMaterialRow): Promise<void> {
+    if (!this.inlineEditField) return;
+
+    const field = this.inlineEditField;
+    const newValue = this.inlineEditValue.trim();
+
+    // Validate
+    if (field === 'material_name' && !newValue) {
+      this.cancelInlineEdit();
+      return;
+    }
+
+    const numericValue = field !== 'material_name' ? parseFloat(newValue) : null;
+    if (field !== 'material_name' && (isNaN(numericValue!) || numericValue! < 0)) {
+      this.cancelInlineEdit();
+      return;
+    }
+
+    // Check if value actually changed
+    const currentValue = String(row[field]);
+    if (newValue === currentValue) {
+      this.cancelInlineEdit();
+      return;
+    }
+
+    this.isInlineSaving = true;
+
+    try {
+      const updateData: Record<string, any> = {};
+      if (field === 'material_name') {
+        updateData['material_name'] = newValue;
+      } else {
+        updateData[field] = numericValue;
+      }
+
+      await this.materialInventoryService.updateMaterial(row.id, updateData);
+
+      // Update local data without full reload
+      if (field === 'material_name') {
+        row.material_name = newValue;
+      } else if (field === 'unit_price') {
+        row.unit_price = numericValue!;
+      } else if (field === 'sell_price') {
+        row.sell_price = numericValue!;
+      }
+      // Recompute derived columns
+      if (field === 'unit_price' || field === 'sell_price') {
+        row.margin = Math.round((row.sell_price - row.unit_price + Number.EPSILON) * 100) / 100;
+        row.overallCost = Math.round((row.unit_price * row.on_hand_stock + Number.EPSILON) * 100) / 100;
+        row.overallPrice = Math.round((row.sell_price * row.on_hand_stock + Number.EPSILON) * 100) / 100;
+        row.overallMargin = Math.round((row.overallPrice - row.overallCost + Number.EPSILON) * 100) / 100;
+      }
+
+      this.cancelInlineEdit();
+    } catch (err: any) {
+      // On error, just cancel — the value reverts visually
+      this.cancelInlineEdit();
+    } finally {
+      this.isInlineSaving = false;
+    }
   }
 
   // --- Action Menu ---

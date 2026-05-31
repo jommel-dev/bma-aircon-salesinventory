@@ -1,0 +1,133 @@
+<div class="min-h-screen bg-gray-50 dark:bg-gray-950">
+  <app-page-breadcrumb pageTitle="PO Materials (ACM)" />
+
+  <!-- Tab Navigation -->
+  <div class="border-b border-default">
+    <ul class="flex flex-wrap -mb-px text-sm font-medium text-center text-body">
+      @for (tab of tabs; track tab.key) {
+        <li class="me-2">
+          <button
+            type="button"
+            (click)="setTab(tab.key)"
+            [ngClass]="{
+              'text-brand-700 border-brand-500 dark:text-brand-300': activeTab === tab.key,
+              'border-transparent text-gray-500 hover:text-brand-700 hover:border-brand-400 dark:text-gray-400 dark:hover:text-brand-300': activeTab !== tab.key
+            }"
+            [attr.aria-current]="activeTab === tab.key ? 'page' : null"
+            class="inline-flex items-center justify-center p-4 border-b-2 rounded-t-base group transition-colors"
+          >
+            {{ tab.label }}
+          </button>
+        </li>
+      }
+    </ul>
+  </div>
+
+  <!-- Search and Actions -->
+  <div class="rounded-2xl border border-gray-200 bg-white p-5 mt-4 dark:border-gray-800 dark:bg-white/3 xl:p-6">
+    <div class="mb-4 flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+      <input
+        type="text"
+        [value]="search"
+        (input)="onSearchChange($any($event.target).value)"
+        placeholder="Search by PO number or vendor..."
+        class="w-full rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm text-gray-700 focus:border-brand-300 focus:outline-none dark:border-gray-700 dark:bg-gray-900 dark:text-gray-300 sm:max-w-sm"
+      />
+      <div class="flex items-center gap-3">
+        <span class="text-sm text-gray-500 dark:text-gray-400">
+          Showing {{ items.length }} of {{ meta.total }}
+        </span>
+        <button
+          type="button"
+          (click)="onCreateOrder()"
+          class="rounded-lg bg-brand-600 px-4 py-2 text-sm font-medium text-white transition hover:bg-brand-700"
+        >
+          + New PO
+        </button>
+      </div>
+    </div>
+
+    <!-- Loading State -->
+    @if (isLoading) {
+      <div class="py-10 text-center text-sm text-gray-500 dark:text-gray-400">Loading purchase orders...</div>
+    } @else if (errorMessage) {
+      <div class="rounded-lg border border-red-300 bg-red-50 px-4 py-3 text-sm text-red-600 dark:border-red-500/30 dark:bg-red-500/10 dark:text-red-400">
+        {{ errorMessage }}
+      </div>
+    } @else {
+      <!-- Orders Table -->
+      <div class="overflow-x-auto">
+        <table class="w-full min-w-[640px]">
+          <thead>
+            <tr class="border-b border-gray-200 dark:border-gray-800">
+              <th class="px-4 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-400">PO Number</th>
+              <th class="px-4 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-400">Vendor</th>
+              <th class="px-4 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-400">Status</th>
+              <th class="px-4 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-400">Total Amount</th>
+              <th class="px-4 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-400">Date</th>
+              <th class="px-4 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-400">Action</th>
+            </tr>
+          </thead>
+          <tbody>
+            @for (item of items; track item.id) {
+              <tr class="border-b border-gray-100 hover:bg-gray-50 dark:border-gray-800 dark:hover:bg-gray-900">
+                <td class="px-4 py-3 text-sm font-medium text-gray-900 dark:text-white">{{ item.poNumber || '—' }}</td>
+                <td class="px-4 py-3 text-sm text-gray-600 dark:text-gray-300">{{ item.vendorName || '—' }}</td>
+                <td class="px-4 py-3">
+                  <span class="inline-flex rounded-full px-2.5 py-0.5 text-xs font-semibold" [ngClass]="getStatusClass(item.status)">
+                    {{ formatStatus(item.status) }}
+                  </span>
+                </td>
+                <td class="px-4 py-3 text-sm text-gray-600 dark:text-gray-300">{{ formatCurrency(item.totalAmount) }}</td>
+                <td class="px-4 py-3 text-sm text-gray-600 dark:text-gray-300">{{ item.createdAt ? (item.createdAt | date: 'MMM dd, yyyy') : '—' }}</td>
+                <td class="px-4 py-3">
+                  <button
+                    type="button"
+                    (click)="onEditOrder(item.id)"
+                    class="inline-flex items-center rounded-lg border border-gray-300 bg-white px-3 py-1.5 text-xs font-medium text-gray-700 transition hover:bg-gray-50 dark:border-gray-700 dark:bg-gray-900 dark:text-gray-300 dark:hover:bg-gray-800"
+                  >
+                    Edit
+                  </button>
+                </td>
+              </tr>
+            }
+          </tbody>
+        </table>
+      </div>
+
+      <!-- Empty State -->
+      @if (items.length === 0) {
+        <div class="flex flex-col items-center justify-center px-6 py-12">
+          <p class="text-sm text-gray-500 dark:text-gray-400">No purchase orders found.</p>
+        </div>
+      }
+
+      <!-- Pagination -->
+      @if (meta.totalPages > 1) {
+        <div class="flex items-center justify-between border-t border-gray-200 px-4 py-4 dark:border-gray-800">
+          <p class="text-sm text-gray-600 dark:text-gray-400">
+            Page {{ meta.page }} of {{ meta.totalPages }}
+          </p>
+          <div class="flex gap-2">
+            <button
+              type="button"
+              (click)="goToPage(meta.page - 1)"
+              [disabled]="meta.page === 1"
+              class="rounded-lg border border-gray-300 px-3 py-1.5 text-sm font-medium text-gray-700 transition hover:bg-gray-50 disabled:cursor-not-allowed disabled:opacity-50 dark:border-gray-700 dark:bg-gray-900 dark:text-gray-300 dark:hover:bg-gray-800"
+            >
+              Previous
+            </button>
+            <button
+              type="button"
+              (click)="goToPage(meta.page + 1)"
+              [disabled]="meta.page === meta.totalPages"
+              class="rounded-lg border border-gray-300 px-3 py-1.5 text-sm font-medium text-gray-700 transition hover:bg-gray-50 disabled:cursor-not-allowed disabled:opacity-50 dark:border-gray-700 dark:bg-gray-900 dark:text-gray-300 dark:hover:bg-gray-800"
+            >
+              Next
+            </button>
+          </div>
+        </div>
+      }
+    }
+  </div>
+</div>

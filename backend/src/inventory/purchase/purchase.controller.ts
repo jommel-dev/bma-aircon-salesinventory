@@ -8,6 +8,8 @@ import {
   Query,
   Req,
   ForbiddenException,
+  NotFoundException,
+  BadRequestException,
 } from '@nestjs/common';
 import { PurchaseService } from './purchase.service';
 import { CreatePurchaseDto } from './dto/create-purchase.dto';
@@ -151,6 +153,11 @@ export class PurchaseController {
     return this.purchaseService.getMasterData(this.withEffectiveBranchScope(query, request));
   }
 
+  @Get('materials/search')
+  searchMaterials(@Query('query') query?: string) {
+    return this.purchaseService.searchMaterials(query);
+  }
+
   @Get('vendors/list')
   getVendors(@Query('search') search?: string) {
     return this.purchaseService.getVendors(search);
@@ -223,15 +230,22 @@ export class PurchaseController {
   @Patch(':id/revert-in-progress')
   @UseGuards(PermissionGuard)
   @Permissions(['purchase-order.button.revert-in-progress', 'purchase-order.revert', 'purchase_order.canUpdate'])
-  revertInProgress(
+  async revertInProgress(
     @Param('id') id: string,
     @Req() request: { user?: { sub?: unknown } },
   ) {
     const userId = Number(request.user?.sub);
-    return this.purchaseService.revertInProgress(
+    const result = await this.purchaseService.revertInProgress(
       +id,
       Number.isFinite(userId) ? userId : undefined,
     );
+    if (!result.success) {
+      if (result.message?.toLowerCase().includes('not found')) {
+        throw new NotFoundException(result.message);
+      }
+      throw new BadRequestException(result.message);
+    }
+    return result;
   }
 
   @Patch(':id/revert-deliveries')
@@ -251,35 +265,49 @@ export class PurchaseController {
   @Patch(':id/verify-receive')
   @UseGuards(PermissionGuard)
   @Permissions(['purchase-order.button.verify-receive', 'purchase-order.verify', 'purchase_order.canUpdate'])
-  verifyAndReceive(
+  async verifyAndReceive(
     @Param('id') id: string,
     @Req() request: { user?: Record<string, unknown>; ip?: string },
   ) {
     const userId = Number(request.user?.sub);
-    return this.purchaseService.verifyAndReceive(
+    const result = await this.purchaseService.verifyAndReceive(
       +id,
       Number.isFinite(userId) ? userId : undefined,
       this.buildAuditContext(request),
     );
+    if (!result.success) {
+      if (result.message?.toLowerCase().includes('not found')) {
+        throw new NotFoundException(result.message);
+      }
+      throw new BadRequestException(result.message);
+    }
+    return result;
   }
 
   @UseGuards(PermissionGuard)
   @Patch(':id/receive-request')
   @Permissions(['purchase-order.button.receive-request', 'purchase-order.button.complete', 'purchase-order.complete'], { allowOwner: true })
-  receiveRequest(
+  async receiveRequest(
     @Param('id') id: string,
     @Req() request: { user?: Record<string, unknown>; ip?: string },
   ) {
     const userId = Number(request.user?.sub);
-    return this.purchaseService.completeRequest(
+    const result = await this.purchaseService.completeRequest(
       +id,
       Number.isFinite(userId) ? userId : undefined,
       this.buildAuditContext(request),
     );
+    if (!result.success) {
+      if (result.message?.toLowerCase().includes('not found')) {
+        throw new NotFoundException(result.message);
+      }
+      throw new BadRequestException(result.message);
+    }
+    return result;
   }
 
   @Patch(':id/approve')
-  approve(
+  async approve(
     @Param('id') id: string,
     @Req() request: { user?: Record<string, unknown>; ip?: string },
   ) {
@@ -292,11 +320,18 @@ export class PurchaseController {
     ]);
     if (!allowed) throw new ForbiddenException('You do not have permission to approve purchase orders');
 
-    return this.purchaseService.approve(
+    const result = await this.purchaseService.approve(
       +id,
       Number.isFinite(userId) ? userId : undefined,
       this.buildAuditContext(request),
     );
+    if (!result.success) {
+      if (result.message?.toLowerCase().includes('not found')) {
+        throw new NotFoundException(result.message);
+      }
+      throw new BadRequestException(result.message);
+    }
+    return result;
   }
 
   @Patch(':id/cancel')

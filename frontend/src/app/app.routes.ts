@@ -13,6 +13,8 @@ import { InventoryComponent } from './pages/inventory/inventory.component';
 import { QuotationComponent } from './pages/quotation/quotation.component';
 import { SalesOrderMaterialsComponent } from './pages/sales-order-materials/sales-order-materials.component';
 import { SalesOrderMaterialFormPageComponent } from './pages/sales-order-materials/sales-order-material-form/sales-order-material-form-page.component';
+import { PoMaterialsListComponent } from './pages/purchase-order-materials/po-materials-list/po-materials-list.component';
+import { PoMaterialsFormPageComponent } from './pages/purchase-order-materials/po-materials-form/po-materials-form-page.component';
 import { SettingsComponent } from './pages/settings/settings.component';
 import { AccountingComponent } from './pages/accounting/accounting.component';
 import { ProjectsComponent } from './pages/projects/projects.component';
@@ -147,6 +149,36 @@ export const routes: Routes = [
           permission: 'canRead',
         },
         title: 'Edit Material Sales Order',
+      },
+      {
+        path: 'purchase-order-materials',
+        component: PoMaterialsListComponent,
+        canActivate: [rbacGuard],
+        data: {
+          menu: 'purchase_order',
+          permission: 'canRead',
+        },
+        title: 'PO Materials',
+      },
+      {
+        path: 'purchase-order-materials/new',
+        component: PoMaterialsFormPageComponent,
+        canActivate: [rbacGuard],
+        data: {
+          menu: 'purchase_order',
+          permission: 'canRead',
+        },
+        title: 'Create PO Materials',
+      },
+      {
+        path: 'purchase-order-materials/edit/:id',
+        component: PoMaterialsFormPageComponent,
+        canActivate: [rbacGuard],
+        data: {
+          menu: 'purchase_order',
+          permission: 'canRead',
+        },
+        title: 'Edit PO Materials',
       },
       {
         path: 'quotation',

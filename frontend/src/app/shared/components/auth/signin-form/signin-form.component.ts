@@ -19,6 +19,7 @@ const MENU_ROUTE_MAP: Array<{ menu: string; route: string }> = [
   { menu: 'customers', route: '/users/customers' },
   { menu: 'today_schedule', route: '/users/schedule-today-sales-order' },
   { menu: 'purchase_order', route: '/users/purchase-order' },
+  { menu: 'purchase_order_materials', route: '/users/purchase-order-materials' },
   { menu: 'inventory', route: '/users/inventory' },
   { menu: 'accounting', route: '/users/accounting' },
   { menu: 'payroll', route: '/users/payroll' },

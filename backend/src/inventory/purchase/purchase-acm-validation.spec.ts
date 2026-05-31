@@ -52,7 +52,7 @@ describe('PurchaseService - ACM Validation', () => {
 
       const result = service.create(dto as any);
       await expect(result).rejects.toThrow(BadRequestException);
-      await expect(result).rejects.toThrow('Material name is required');
+      await expect(result).rejects.toThrow('productItems[0].materialName: Material identification is required for ACM items');
     });
 
     it('should reject ACM items with quantity less than 1', async () => {
@@ -70,7 +70,7 @@ describe('PurchaseService - ACM Validation', () => {
 
       const result = service.create(dto as any);
       await expect(result).rejects.toThrow(BadRequestException);
-      await expect(result).rejects.toThrow('Quantity is required and must be between 1 and 999,999');
+      await expect(result).rejects.toThrow('productItems[0].totalSetQty: Quantity must be between 1 and 999,999');
     });
 
     it('should reject ACM items with quantity greater than 999999', async () => {
@@ -88,7 +88,7 @@ describe('PurchaseService - ACM Validation', () => {
 
       const result = service.create(dto as any);
       await expect(result).rejects.toThrow(BadRequestException);
-      await expect(result).rejects.toThrow('Quantity is required and must be between 1 and 999,999');
+      await expect(result).rejects.toThrow('productItems[0].totalSetQty: Quantity must be between 1 and 999,999');
     });
 
     it('should reject ACM items with non-integer quantity', async () => {
@@ -106,7 +106,7 @@ describe('PurchaseService - ACM Validation', () => {
 
       const result = service.create(dto as any);
       await expect(result).rejects.toThrow(BadRequestException);
-      await expect(result).rejects.toThrow('Quantity must be a whole number');
+      await expect(result).rejects.toThrow('productItems[0].totalSetQty: Quantity must be a whole number');
     });
 
     it('should accept ACM items with valid material name and quantity', async () => {
@@ -282,6 +282,254 @@ describe('PurchaseService - ACM Validation', () => {
           fail(`Should not throw BadRequestException for sales transType items: ${error.message}`);
         }
       }
+    });
+
+    it('should reject ACM items with unitPrice below 0.01', async () => {
+      const dto = {
+        poType: 'ACM' as const,
+        vendorId: '1',
+        productItems: [
+          {
+            transType: 'purchase',
+            materialName: 'Test Material',
+            unitPrice: 0.001,
+            totalSetQty: 10,
+          },
+        ],
+      };
+
+      const result = service.create(dto as any);
+      await expect(result).rejects.toThrow(BadRequestException);
+      await expect(result).rejects.toThrow('productItems[0].unitPrice: Unit price must be between 0.01 and 999,999.99');
+    });
+
+    it('should reject ACM items with unitPrice above 999999.99', async () => {
+      const dto = {
+        poType: 'ACM' as const,
+        vendorId: '1',
+        productItems: [
+          {
+            transType: 'purchase',
+            materialName: 'Test Material',
+            unitPrice: 1000000,
+            totalSetQty: 10,
+          },
+        ],
+      };
+
+      const result = service.create(dto as any);
+      await expect(result).rejects.toThrow(BadRequestException);
+      await expect(result).rejects.toThrow('productItems[0].unitPrice: Unit price must be between 0.01 and 999,999.99');
+    });
+
+    it('should reject ACM items with negative discountPrice', async () => {
+      const dto = {
+        poType: 'ACM' as const,
+        vendorId: '1',
+        productItems: [
+          {
+            transType: 'purchase',
+            materialName: 'Test Material',
+            unitPrice: 100,
+            discountPrice: -1,
+            totalSetQty: 10,
+          },
+        ],
+      };
+
+      const result = service.create(dto as any);
+      await expect(result).rejects.toThrow(BadRequestException);
+      await expect(result).rejects.toThrow('productItems[0].discountPrice: Discount price must be between 0 and 999,999.99');
+    });
+
+    it('should reject ACM items with discountPrice above 999999.99', async () => {
+      const dto = {
+        poType: 'ACM' as const,
+        vendorId: '1',
+        productItems: [
+          {
+            transType: 'purchase',
+            materialName: 'Test Material',
+            unitPrice: 100,
+            discountPrice: 1000000,
+            totalSetQty: 10,
+          },
+        ],
+      };
+
+      const result = service.create(dto as any);
+      await expect(result).rejects.toThrow(BadRequestException);
+      await expect(result).rejects.toThrow('productItems[0].discountPrice: Discount price must be between 0 and 999,999.99');
+    });
+
+    it('should reject ACM request without vendorId and without vendor.name', async () => {
+      const dto = {
+        poType: 'ACM' as const,
+        productItems: [
+          {
+            transType: 'purchase',
+            materialName: 'Test Material',
+            totalSetQty: 10,
+          },
+        ],
+      };
+
+      const result = service.create(dto as any);
+      await expect(result).rejects.toThrow(BadRequestException);
+      await expect(result).rejects.toThrow('vendorId or vendor.name: Vendor identification is required');
+    });
+
+    it('should reject ACM request with empty vendor name and no vendorId', async () => {
+      const dto = {
+        poType: 'ACM' as const,
+        vendor: { name: '   ' },
+        productItems: [
+          {
+            transType: 'purchase',
+            materialName: 'Test Material',
+            totalSetQty: 10,
+          },
+        ],
+      };
+
+      const result = service.create(dto as any);
+      await expect(result).rejects.toThrow(BadRequestException);
+      await expect(result).rejects.toThrow('vendorId or vendor.name: Vendor identification is required');
+    });
+
+    it('should reject ACM request with empty productItems array', async () => {
+      const dto = {
+        poType: 'ACM' as const,
+        vendorId: '1',
+        productItems: [],
+      };
+
+      const result = await service.create(dto as any);
+      expect(result).toEqual({ success: false, message: 'At least one product item is required' });
+    });
+
+    it('should accept ACM items with valid unitPrice at boundary 0.01', async () => {
+      mockDatabaseService.withTransaction.mockImplementation(async (fn) => {
+        const mockClient = {
+          query: jest.fn()
+            .mockResolvedValueOnce({ rows: [{ column_name: 'id' }, { column_name: 'name' }, { column_name: 'address' }, { column_name: 'contact_person' }, { column_name: 'contact_number' }, { column_name: 'created_at' }, { column_name: 'updated_at' }], rowCount: 7 })
+            .mockResolvedValueOnce({ rows: [{ id: '1' }], rowCount: 1 })
+            .mockResolvedValue({ rows: [], rowCount: 0 }),
+        };
+        return fn(mockClient);
+      });
+
+      const dto = {
+        poType: 'ACM' as const,
+        vendorId: '1',
+        productItems: [
+          {
+            transType: 'purchase',
+            materialName: 'Test Material',
+            unitPrice: 0.01,
+            totalSetQty: 1,
+          },
+        ],
+      };
+
+      try {
+        await service.create(dto as any);
+      } catch (error) {
+        if (error instanceof BadRequestException) {
+          fail(`Should not throw BadRequestException for unitPrice=0.01: ${error.message}`);
+        }
+      }
+    });
+
+    it('should accept ACM items with valid discountPrice at 0', async () => {
+      mockDatabaseService.withTransaction.mockImplementation(async (fn) => {
+        const mockClient = {
+          query: jest.fn()
+            .mockResolvedValueOnce({ rows: [{ column_name: 'id' }, { column_name: 'name' }, { column_name: 'address' }, { column_name: 'contact_person' }, { column_name: 'contact_number' }, { column_name: 'created_at' }, { column_name: 'updated_at' }], rowCount: 7 })
+            .mockResolvedValueOnce({ rows: [{ id: '1' }], rowCount: 1 })
+            .mockResolvedValue({ rows: [], rowCount: 0 }),
+        };
+        return fn(mockClient);
+      });
+
+      const dto = {
+        poType: 'ACM' as const,
+        vendorId: '1',
+        productItems: [
+          {
+            transType: 'purchase',
+            materialName: 'Test Material',
+            unitPrice: 100,
+            discountPrice: 0,
+            totalSetQty: 5,
+          },
+        ],
+      };
+
+      try {
+        await service.create(dto as any);
+      } catch (error) {
+        if (error instanceof BadRequestException) {
+          fail(`Should not throw BadRequestException for discountPrice=0: ${error.message}`);
+        }
+      }
+    });
+
+    it('should accept ACM request with vendor.name instead of vendorId', async () => {
+      mockDatabaseService.withTransaction.mockImplementation(async (fn) => {
+        const mockClient = {
+          query: jest.fn()
+            .mockResolvedValueOnce({ rows: [{ column_name: 'id' }, { column_name: 'name' }, { column_name: 'address' }, { column_name: 'contact_person' }, { column_name: 'contact_number' }, { column_name: 'created_at' }, { column_name: 'updated_at' }], rowCount: 7 })
+            .mockResolvedValueOnce({ rows: [], rowCount: 0 })
+            .mockResolvedValue({ rows: [{ id: 'new-uuid' }], rowCount: 1 }),
+        };
+        return fn(mockClient);
+      });
+
+      const dto = {
+        poType: 'ACM' as const,
+        vendor: { name: 'New Vendor Inc' },
+        productItems: [
+          {
+            transType: 'purchase',
+            materialName: 'Test Material',
+            totalSetQty: 5,
+          },
+        ],
+      };
+
+      try {
+        await service.create(dto as any);
+      } catch (error) {
+        if (error instanceof BadRequestException) {
+          fail(`Should not throw BadRequestException when vendor.name is provided: ${error.message}`);
+        }
+      }
+    });
+
+    it('should include field path of first invalid item in error response', async () => {
+      const dto = {
+        poType: 'ACM' as const,
+        vendorId: '1',
+        productItems: [
+          {
+            transType: 'purchase',
+            materialName: 'Valid Material',
+            unitPrice: 50,
+            totalSetQty: 5,
+          },
+          {
+            transType: 'purchase',
+            materialName: 'Invalid Material',
+            unitPrice: -5,
+            totalSetQty: 10,
+          },
+        ],
+      };
+
+      const result = service.create(dto as any);
+      await expect(result).rejects.toThrow(BadRequestException);
+      await expect(result).rejects.toThrow('productItems[1].unitPrice');
     });
   });
 });

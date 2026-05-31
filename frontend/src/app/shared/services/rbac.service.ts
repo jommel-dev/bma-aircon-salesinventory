@@ -18,6 +18,7 @@ export type MenuKey =
   | 'quotation'
   | 'today_schedule'
   | 'purchase_order'
+  | 'purchase_order_materials'
   | 'inventory'
   | 'accounting'
   | 'sales_order_materials'
@@ -61,6 +62,7 @@ export class RbacService {
     'today-schedule': 'today_schedule',
     'schedule-today-sales-order': 'today_schedule',
     'purchase-order': 'purchase_order',
+    'purchase-order-materials': 'purchase_order_materials',
     inventory: 'inventory',
     accounting: 'accounting',
     'sales-order-materials': 'sales_order_materials',

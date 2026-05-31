@@ -18,12 +18,12 @@ DECLARE
   v_prefix TEXT;
   v_next_value BIGINT;
 BEGIN
-  -- Get current sequence value
+  -- Lock the sequence row to prevent race conditions with concurrent inserts
   SELECT current_value, COALESCE(prefix, EXTRACT(YEAR FROM NOW())::TEXT)
   INTO v_current_value, v_prefix
   FROM public.tblsequences
   WHERE name = 'sales_order_number'
-  LIMIT 1;
+  FOR UPDATE;
 
   -- If no sequence exists, create one
   IF NOT FOUND THEN

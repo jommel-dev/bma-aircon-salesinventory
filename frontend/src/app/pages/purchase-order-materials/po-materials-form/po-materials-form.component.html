@@ -1,0 +1,731 @@
+<div class="rounded-2xl border border-gray-200 bg-white p-6 dark:border-gray-800 dark:bg-white/3">
+  <!-- Form Header -->
+  <div class="mb-6 flex items-center justify-between">
+    <div>
+      <h3 class="text-lg font-semibold text-gray-800 dark:text-white">
+        {{ orderId ? 'Edit Purchase Order' : 'Create Purchase Order' }}
+      </h3>
+      <p class="mt-0.5 text-sm text-gray-500 dark:text-gray-400">
+        PO No:
+        @if (poNumber) {
+          <span class="font-semibold text-gray-800 dark:text-gray-200">{{ poNumber }}</span>
+        } @else {
+          <span class="italic text-gray-400 dark:text-gray-500">Auto-generated on save</span>
+        }
+      </p>
+      <p class="mt-0.5 text-sm text-gray-500 dark:text-gray-400">
+        Type: <span class="font-medium text-brand-600 dark:text-brand-400">ACM (Aircon Materials)</span>
+        @if (orderId && orderStatus) {
+          · Status:
+          @switch (orderStatus) {
+            @case ('in-progress') {
+              <span class="inline-flex items-center rounded-full bg-gray-100 px-2 py-0.5 text-xs font-medium text-gray-700 dark:bg-gray-700 dark:text-gray-300">In Progress</span>
+            }
+            @case ('for_approval') {
+              <span class="inline-flex items-center rounded-full bg-amber-100 px-2 py-0.5 text-xs font-medium text-amber-700 dark:bg-amber-900/30 dark:text-amber-400">For Approval</span>
+            }
+            @case ('approved') {
+              <span class="inline-flex items-center rounded-full bg-blue-100 px-2 py-0.5 text-xs font-medium text-blue-700 dark:bg-blue-900/30 dark:text-blue-400">Approved</span>
+            }
+            @case ('received') {
+              <span class="inline-flex items-center rounded-full bg-indigo-100 px-2 py-0.5 text-xs font-medium text-indigo-700 dark:bg-indigo-900/30 dark:text-indigo-400">Received</span>
+            }
+            @case ('completed') {
+              <span class="inline-flex items-center rounded-full bg-green-100 px-2 py-0.5 text-xs font-medium text-green-700 dark:bg-green-900/30 dark:text-green-400">Completed</span>
+            }
+            @default {
+              <span class="inline-flex items-center rounded-full bg-gray-100 px-2 py-0.5 text-xs font-medium text-gray-700 dark:bg-gray-700 dark:text-gray-300">{{ orderStatus | titlecase }}</span>
+            }
+          }
+        }
+      </p>
+    </div>
+    <button
+      type="button"
+      (click)="cancel()"
+      class="text-sm text-gray-500 hover:text-gray-700 dark:text-gray-400 dark:hover:text-gray-200"
+    >
+      &times; Close
+    </button>
+  </div>
+
+  <form #orderForm="ngForm" (ngSubmit)="$event.preventDefault()">
+
+    <!-- Vendor Selector -->
+    <div class="mt-5">
+      <label class="mb-1 block text-xs font-medium text-gray-600 dark:text-gray-300">
+        Vendor <span class="text-red-500">*</span>
+      </label>
+
+      <!-- Vendor Mode Toggle -->
+      <div class="mb-2 flex items-center gap-3">
+        <button
+          type="button"
+          (click)="switchVendorMode('existing')"
+          [disabled]="isReadOnly"
+          [class]="vendorMode === 'existing'
+            ? 'rounded-md bg-brand-600 px-3 py-1 text-xs font-medium text-white'
+            : 'rounded-md border border-gray-300 bg-white px-3 py-1 text-xs font-medium text-gray-600 hover:bg-gray-50 dark:border-gray-600 dark:bg-gray-800 dark:text-gray-300 dark:hover:bg-gray-700'"
+        >
+          Existing Vendor
+        </button>
+        <button
+          type="button"
+          (click)="switchVendorMode('new')"
+          [disabled]="isReadOnly"
+          [class]="vendorMode === 'new'
+            ? 'rounded-md bg-brand-600 px-3 py-1 text-xs font-medium text-white'
+            : 'rounded-md border border-gray-300 bg-white px-3 py-1 text-xs font-medium text-gray-600 hover:bg-gray-50 dark:border-gray-600 dark:bg-gray-800 dark:text-gray-300 dark:hover:bg-gray-700'"
+        >
+          New Vendor
+        </button>
+      </div>
+
+      <!-- Existing Vendor Search -->
+      @if (vendorMode === 'existing') {
+        <div class="relative">
+          @if (selectedVendorId) {
+            <!-- Selected vendor display -->
+            <div class="flex items-center gap-2 rounded-lg border border-green-300 bg-green-50 px-3 py-2 dark:border-green-700 dark:bg-green-900/20">
+              <div class="flex-1">
+                <span class="text-sm font-medium text-gray-800 dark:text-gray-200">{{ vendorForm.name }}</span>
+                @if (vendorForm.address) {
+                  <span class="ml-2 text-xs text-gray-500 dark:text-gray-400">{{ vendorForm.address }}</span>
+                }
+              </div>
+              @if (!isReadOnly) {
+                <button
+                  type="button"
+                  (click)="clearVendorSelection()"
+                  class="text-sm text-red-500 hover:text-red-700 dark:text-red-400 dark:hover:text-red-300"
+                  title="Clear selection"
+                >
+                  &times;
+                </button>
+              }
+            </div>
+          } @else {
+            <!-- Vendor search input -->
+            <input
+              type="text"
+              [ngModel]="vendorSearch"
+              (ngModelChange)="onVendorSearchChange($event)"
+              name="vendorSearch"
+              placeholder="Search vendor by name..."
+              autocomplete="off"
+              maxlength="200"
+              [disabled]="isReadOnly"
+              (focus)="onVendorSearchFocus()"
+              (blur)="onVendorSearchBlur()"
+              class="w-full rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm dark:border-gray-700 dark:bg-gray-900 disabled:cursor-not-allowed disabled:opacity-50"
+            />
+
+            @if (isVendorSearching) {
+              <div class="absolute right-3 top-2.5">
+                <svg class="h-4 w-4 animate-spin text-gray-400" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
+                  <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
+                  <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z"></path>
+                </svg>
+              </div>
+            }
+
+            @if (isVendorDropdownOpen) {
+              <div class="absolute z-50 mt-1 max-h-56 w-full overflow-y-auto rounded-lg border border-gray-200 bg-white shadow-lg dark:border-gray-700 dark:bg-gray-900">
+                @if (vendorSearchNoResults) {
+                  <div class="px-3 py-3 text-center">
+                    <p class="text-sm text-gray-500 dark:text-gray-400">No vendors found.</p>
+                  </div>
+                } @else {
+                  @for (vendor of vendorSearchResults; track vendor.id) {
+                    <button
+                      type="button"
+                      (mousedown)="$event.preventDefault()"
+                      (click)="selectVendor(vendor)"
+                      class="flex w-full flex-col px-3 py-2 text-left hover:bg-gray-50 dark:hover:bg-gray-800"
+                    >
+                      <span class="text-sm font-medium text-gray-800 dark:text-gray-200">
+                        {{ vendor.name }}
+                      </span>
+                      <span class="text-xs text-gray-500 dark:text-gray-400">
+                        {{ vendor.address || 'No address' }}
+                        @if (vendor.contact_person) {
+                          · {{ vendor.contact_person }}
+                        }
+                      </span>
+                    </button>
+                  }
+                }
+              </div>
+            }
+          }
+        </div>
+
+        <!-- Vendor details (read-only display when selected) -->
+        @if (selectedVendorId && (vendorForm.contact_person || vendorForm.contact_number)) {
+          <div class="mt-2 grid grid-cols-2 gap-2 text-xs text-gray-500 dark:text-gray-400">
+            @if (vendorForm.contact_person) {
+              <div>
+                <span class="font-medium">Contact:</span> {{ vendorForm.contact_person }}
+              </div>
+            }
+            @if (vendorForm.contact_number) {
+              <div>
+                <span class="font-medium">Phone:</span> {{ vendorForm.contact_number }}
+              </div>
+            }
+          </div>
+        }
+      }
+
+      <!-- New Vendor Form -->
+      @if (vendorMode === 'new') {
+        <div class="space-y-3 rounded-lg border border-gray-200 bg-gray-50 p-3 dark:border-gray-700 dark:bg-gray-800/50">
+          <div>
+            <label class="mb-0.5 block text-xs text-gray-500 dark:text-gray-400">
+              Vendor Name <span class="text-red-500">*</span>
+            </label>
+            <input
+              type="text"
+              [(ngModel)]="vendorForm.name"
+              name="vendorName"
+              placeholder="Enter vendor name"
+              maxlength="200"
+              [disabled]="isReadOnly"
+              (ngModelChange)="vendorValidationError = ''"
+              class="w-full rounded-lg border border-gray-300 bg-white px-3 py-1.5 text-sm dark:border-gray-700 dark:bg-gray-900 disabled:cursor-not-allowed disabled:opacity-50"
+            />
+            <p class="mt-0.5 text-xs text-gray-400 dark:text-gray-500">
+              {{ vendorForm.name.length }}/200 characters
+            </p>
+          </div>
+          <div>
+            <label class="mb-0.5 block text-xs text-gray-500 dark:text-gray-400">Address</label>
+            <input
+              type="text"
+              [(ngModel)]="vendorForm.address"
+              name="vendorAddress"
+              placeholder="Enter address"
+              [disabled]="isReadOnly"
+              class="w-full rounded-lg border border-gray-300 bg-white px-3 py-1.5 text-sm dark:border-gray-700 dark:bg-gray-900 disabled:cursor-not-allowed disabled:opacity-50"
+            />
+          </div>
+          <div class="grid grid-cols-2 gap-3">
+            <div>
+              <label class="mb-0.5 block text-xs text-gray-500 dark:text-gray-400">Contact Person</label>
+              <input
+                type="text"
+                [(ngModel)]="vendorForm.contact_person"
+                name="vendorContactPerson"
+                placeholder="Contact person"
+                [disabled]="isReadOnly"
+                class="w-full rounded-lg border border-gray-300 bg-white px-3 py-1.5 text-sm dark:border-gray-700 dark:bg-gray-900 disabled:cursor-not-allowed disabled:opacity-50"
+              />
+            </div>
+            <div>
+              <label class="mb-0.5 block text-xs text-gray-500 dark:text-gray-400">Contact Number</label>
+              <input
+                type="text"
+                [(ngModel)]="vendorForm.contact_number"
+                name="vendorContactNumber"
+                placeholder="Contact number"
+                [disabled]="isReadOnly"
+                class="w-full rounded-lg border border-gray-300 bg-white px-3 py-1.5 text-sm dark:border-gray-700 dark:bg-gray-900 disabled:cursor-not-allowed disabled:opacity-50"
+              />
+            </div>
+          </div>
+        </div>
+      }
+
+      <!-- Vendor Validation Error -->
+      @if (vendorValidationError) {
+        <p class="mt-1 text-xs text-red-600 dark:text-red-400">{{ vendorValidationError }}</p>
+      }
+    </div>
+
+    <!-- Material Search Bar -->
+    <div class="mt-5">
+      <label class="mb-1 block text-xs font-medium text-gray-600 dark:text-gray-300">
+        Search Materials
+      </label>
+      <div class="relative">
+        <input
+          type="text"
+          [ngModel]="materialSearchQuery"
+          (ngModelChange)="onMaterialSearchChange($event)"
+          name="materialSearch"
+          placeholder="Search by product name, item code, product type, or brand..."
+          autocomplete="off"
+          maxlength="255"
+          [disabled]="isReadOnly"
+          (focus)="onMaterialSearchFocus()"
+          (blur)="onMaterialSearchBlur()"
+          class="w-full rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm dark:border-gray-700 dark:bg-gray-900 disabled:cursor-not-allowed disabled:opacity-50"
+        />
+
+        @if (isMaterialSearching) {
+          <div class="absolute right-3 top-2.5">
+            <svg class="h-4 w-4 animate-spin text-gray-400" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
+              <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
+              <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z"></path>
+            </svg>
+          </div>
+        }
+
+        @if (isMaterialDropdownOpen) {
+          <div class="absolute z-50 mt-1 max-h-64 w-full overflow-y-auto rounded-lg border border-gray-200 bg-white shadow-lg dark:border-gray-700 dark:bg-gray-900">
+            @if (materialSearchNoResults) {
+              <div class="px-3 py-3 text-center">
+                <p class="text-sm text-gray-500 dark:text-gray-400">No materials found.</p>
+              </div>
+            } @else {
+              @for (material of materialSearchResults; track material.id) {
+                <button
+                  type="button"
+                  (mousedown)="$event.preventDefault()"
+                  (click)="selectMaterial(material)"
+                  class="flex w-full flex-col px-3 py-2 text-left hover:bg-gray-50 dark:hover:bg-gray-800"
+                >
+                  <span class="text-sm font-medium text-gray-800 dark:text-gray-200">
+                    {{ material.material_name }}
+                  </span>
+                  <span class="text-xs text-gray-500 dark:text-gray-400">
+                    <span class="font-semibold text-brand-600 dark:text-brand-400">{{ material.material_code || '—' }}</span>
+                    · {{ material.brand_name || 'No brand' }}
+                    · {{ material.product_type || 'No type' }}
+                    · ₱{{ material.unit_price | number:'1.2-2' }}
+                  </span>
+                </button>
+              }
+            }
+          </div>
+        }
+      </div>
+      <p class="mt-1 text-xs text-gray-500 dark:text-gray-400">
+        Type at least 2 characters to search materials by name, code, type, or brand. Select to add to order.
+      </p>
+    </div>
+
+    <!-- Product Items Table -->
+    <div class="mt-5">
+      <label class="mb-1 block text-xs font-medium text-gray-600 dark:text-gray-300">Product Items</label>
+      @if (productItems.length === 0) {
+        <div class="rounded-lg border border-dashed border-gray-300 p-4 text-center text-sm text-gray-400 dark:border-gray-700 dark:text-gray-500">
+          <p>No product items added yet. Use the material search above to add items.</p>
+        </div>
+      } @else {
+        <app-po-items-table
+          [items]="productItems"
+          [isAdmin]="isAdmin"
+          [isReadOnly]="isReadOnly"
+          (itemRemoved)="onItemRemoved($event)"
+          (itemChanged)="onItemChanged($event)"
+        />
+      }
+    </div>
+
+    <!-- Payment Details Section -->
+    <div class="mt-5">
+      <div class="rounded-2xl border border-gray-200 bg-white p-5 dark:border-gray-800 dark:bg-white/3">
+        <div class="mb-4 flex items-center justify-between">
+          <h4 class="text-sm font-semibold text-gray-800 dark:text-white">Payment Details</h4>
+          @if (!isReadOnly) {
+            <button
+              type="button"
+              (click)="addPaymentDetail()"
+              class="inline-flex items-center rounded-lg border border-gray-300 bg-white px-3 py-1.5 text-xs font-medium text-gray-700 hover:bg-gray-50 dark:border-gray-600 dark:bg-gray-800 dark:text-gray-200 dark:hover:bg-gray-700"
+            >
+              + Add Payment
+            </button>
+          }
+        </div>
+
+        @for (payment of paymentDetails; track $index; let i = $index) {
+          <div class="mb-3 rounded-lg border border-gray-100 bg-gray-50/50 p-4 dark:border-gray-700 dark:bg-gray-800/50">
+            <!-- Payment Row Header -->
+            <div class="mb-3 flex items-center justify-between">
+              <div class="flex items-center gap-2">
+                <span class="text-xs font-medium text-gray-500 dark:text-gray-400">Payment {{ i + 1 }}</span>
+                <!-- Status Badge -->
+                @if (payment.status === 'paid') {
+                  <span class="inline-flex items-center rounded-full bg-green-100 px-2 py-0.5 text-xs font-medium text-green-700 dark:bg-green-900/30 dark:text-green-400">Paid</span>
+                } @else if (payment.status === 'unpaid') {
+                  <span class="inline-flex items-center rounded-full bg-amber-100 px-2 py-0.5 text-xs font-medium text-amber-700 dark:bg-amber-900/30 dark:text-amber-400">Unpaid</span>
+                } @else if (payment.status === 'overdue') {
+                  <span class="inline-flex items-center rounded-full bg-red-100 px-2 py-0.5 text-xs font-medium text-red-700 dark:bg-red-900/30 dark:text-red-400">Overdue</span>
+                }
+              </div>
+              @if (!isReadOnly && paymentDetails.length > 1) {
+                <button
+                  type="button"
+                  (click)="removePaymentDetail(i)"
+                  class="text-gray-400 hover:text-red-500 dark:text-gray-500 dark:hover:text-red-400"
+                  title="Remove payment"
+                >
+                  &times;
+                </button>
+              }
+            </div>
+
+            <!-- Payment Fields Grid -->
+            <div class="grid grid-cols-1 gap-3 md:grid-cols-2 lg:grid-cols-3">
+              <!-- Method (always shown) -->
+              <div>
+                <label class="mb-1 block text-xs font-medium text-gray-600 dark:text-gray-300">Method</label>
+                <select
+                  [(ngModel)]="payment.method"
+                  [name]="'payment_method_' + i"
+                  (ngModelChange)="onPaymentMethodChange(i)"
+                  [disabled]="isReadOnly"
+                  class="w-full rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm dark:border-gray-700 dark:bg-gray-900 dark:text-gray-200 disabled:cursor-not-allowed disabled:opacity-50"
+                >
+                  @for (method of paymentMethods; track method) {
+                    <option [value]="method">{{ method }}</option>
+                  }
+                </select>
+              </div>
+
+              <!-- Amount -->
+              @if (shouldShowPaymentField(payment.method, 'amount')) {
+                <div>
+                  <label class="mb-1 block text-xs font-medium text-gray-600 dark:text-gray-300">Amount</label>
+                  <input
+                    type="number"
+                    [(ngModel)]="payment.amount"
+                    [name]="'payment_amount_' + i"
+                    placeholder="0.00"
+                    step="0.01"
+                    min="0"
+                    max="999999999999.99"
+                    [disabled]="isReadOnly"
+                    class="w-full rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm dark:border-gray-700 dark:bg-gray-900 dark:text-gray-200 disabled:cursor-not-allowed disabled:opacity-50"
+                  />
+                </div>
+              }
+
+              <!-- Payment Date (Cash, Credit Card) -->
+              @if (shouldShowPaymentField(payment.method, 'paymentDate')) {
+                <div>
+                  <label class="mb-1 block text-xs font-medium text-gray-600 dark:text-gray-300">Payment Date</label>
+                  <input
+                    type="date"
+                    [(ngModel)]="payment.paymentDate"
+                    [name]="'payment_paymentDate_' + i"
+                    [disabled]="isReadOnly"
+                    class="w-full rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm dark:border-gray-700 dark:bg-gray-900 dark:text-gray-200 disabled:cursor-not-allowed disabled:opacity-50"
+                  />
+                </div>
+              }
+
+              <!-- Bank Name (Bank Transfer, Cheque) -->
+              @if (shouldShowPaymentField(payment.method, 'bankName')) {
+                <div>
+                  <label class="mb-1 block text-xs font-medium text-gray-600 dark:text-gray-300">Bank Name</label>
+                  <input
+                    type="text"
+                    [(ngModel)]="payment.bankName"
+                    [name]="'payment_bankName_' + i"
+                    placeholder="Enter bank name"
+                    [disabled]="isReadOnly"
+                    class="w-full rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm dark:border-gray-700 dark:bg-gray-900 dark:text-gray-200 disabled:cursor-not-allowed disabled:opacity-50"
+                  />
+                </div>
+              }
+
+              <!-- Reference No (Bank Transfer) -->
+              @if (shouldShowPaymentField(payment.method, 'referenceNo')) {
+                <div>
+                  <label class="mb-1 block text-xs font-medium text-gray-600 dark:text-gray-300">Reference No.</label>
+                  <input
+                    type="text"
+                    [(ngModel)]="payment.referenceNo"
+                    [name]="'payment_referenceNo_' + i"
+                    placeholder="Enter reference number"
+                    [disabled]="isReadOnly"
+                    class="w-full rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm dark:border-gray-700 dark:bg-gray-900 dark:text-gray-200 disabled:cursor-not-allowed disabled:opacity-50"
+                  />
+                </div>
+              }
+
+              <!-- Terms (Terms, Terms with DP, Installment) -->
+              @if (shouldShowPaymentField(payment.method, 'terms')) {
+                <div>
+                  <label class="mb-1 block text-xs font-medium text-gray-600 dark:text-gray-300">Terms (days)</label>
+                  <input
+                    type="text"
+                    [(ngModel)]="payment.terms"
+                    [name]="'payment_terms_' + i"
+                    placeholder="e.g. 30"
+                    [disabled]="isReadOnly"
+                    class="w-full rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm dark:border-gray-700 dark:bg-gray-900 dark:text-gray-200 disabled:cursor-not-allowed disabled:opacity-50"
+                  />
+                </div>
+              }
+
+              <!-- Terms Due Date (Terms, Terms with DP, Installment) -->
+              @if (shouldShowPaymentField(payment.method, 'termsDueDate')) {
+                <div>
+                  <label class="mb-1 block text-xs font-medium text-gray-600 dark:text-gray-300">Terms Due Date</label>
+                  <input
+                    type="date"
+                    [(ngModel)]="payment.termsDueDate"
+                    [name]="'payment_termsDueDate_' + i"
+                    (ngModelChange)="onPaymentDateChange(i)"
+                    [disabled]="isReadOnly"
+                    class="w-full rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm dark:border-gray-700 dark:bg-gray-900 dark:text-gray-200 disabled:cursor-not-allowed disabled:opacity-50"
+                  />
+                </div>
+              }
+
+              <!-- Down Payment (Terms with DP, Installment) -->
+              @if (shouldShowPaymentField(payment.method, 'downPayment')) {
+                <div>
+                  <label class="mb-1 block text-xs font-medium text-gray-600 dark:text-gray-300">Down Payment</label>
+                  <input
+                    type="number"
+                    [(ngModel)]="payment.downPayment"
+                    [name]="'payment_downPayment_' + i"
+                    placeholder="0.00"
+                    step="0.01"
+                    min="0"
+                    [disabled]="isReadOnly"
+                    class="w-full rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm dark:border-gray-700 dark:bg-gray-900 dark:text-gray-200 disabled:cursor-not-allowed disabled:opacity-50"
+                  />
+                </div>
+              }
+
+              <!-- Check No (Cheque) -->
+              @if (shouldShowPaymentField(payment.method, 'checkNo')) {
+                <div>
+                  <label class="mb-1 block text-xs font-medium text-gray-600 dark:text-gray-300">Check No.</label>
+                  <input
+                    type="text"
+                    [(ngModel)]="payment.checkNo"
+                    [name]="'payment_checkNo_' + i"
+                    placeholder="Enter check number"
+                    [disabled]="isReadOnly"
+                    class="w-full rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm dark:border-gray-700 dark:bg-gray-900 dark:text-gray-200 disabled:cursor-not-allowed disabled:opacity-50"
+                  />
+                </div>
+              }
+
+              <!-- Cheque Date (Cheque) -->
+              @if (shouldShowPaymentField(payment.method, 'chequeDate')) {
+                <div>
+                  <label class="mb-1 block text-xs font-medium text-gray-600 dark:text-gray-300">Cheque Date</label>
+                  <input
+                    type="date"
+                    [(ngModel)]="payment.chequeDate"
+                    [name]="'payment_chequeDate_' + i"
+                    (ngModelChange)="onPaymentDateChange(i)"
+                    [disabled]="isReadOnly"
+                    class="w-full rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm dark:border-gray-700 dark:bg-gray-900 dark:text-gray-200 disabled:cursor-not-allowed disabled:opacity-50"
+                  />
+                </div>
+              }
+
+              <!-- Issued By (Cheque) -->
+              @if (shouldShowPaymentField(payment.method, 'issuedBy')) {
+                <div>
+                  <label class="mb-1 block text-xs font-medium text-gray-600 dark:text-gray-300">Issued By</label>
+                  <input
+                    type="text"
+                    [(ngModel)]="payment.issuedBy"
+                    [name]="'payment_issuedBy_' + i"
+                    placeholder="Enter issuer name"
+                    [disabled]="isReadOnly"
+                    class="w-full rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm dark:border-gray-700 dark:bg-gray-900 dark:text-gray-200 disabled:cursor-not-allowed disabled:opacity-50"
+                  />
+                </div>
+              }
+            </div>
+          </div>
+        }
+
+        @if (paymentDetails.length === 0) {
+          <div class="rounded-lg border border-dashed border-gray-300 p-4 text-center text-sm text-gray-400 dark:border-gray-700 dark:text-gray-500">
+            <p>No payment entries. Click "Add Payment" to add one.</p>
+          </div>
+        }
+      </div>
+    </div>
+
+    <!-- Remarks -->
+    <div class="mt-5">
+      <label class="mb-1 block text-xs font-medium text-gray-600 dark:text-gray-300">
+        Remarks
+      </label>
+      <textarea
+        [ngModel]="remarks"
+        (ngModelChange)="onRemarksInput($event)"
+        name="remarks"
+        placeholder="Add any additional notes or instructions..."
+        [maxlength]="maxRemarksLength"
+        rows="3"
+        [disabled]="isReadOnly"
+        class="w-full rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm dark:border-gray-700 dark:bg-gray-900 dark:text-gray-200 disabled:cursor-not-allowed disabled:opacity-50"
+      ></textarea>
+      <p class="mt-0.5 text-xs text-gray-400 dark:text-gray-500">
+        {{ remarks.length }}/{{ maxRemarksLength }} characters
+      </p>
+    </div>
+
+    <!-- Validation Error -->
+    @if (validationError) {
+      <div class="mt-4 rounded-lg border border-red-200 bg-red-50 px-4 py-2 text-sm text-red-700 dark:border-red-800 dark:bg-red-900/20 dark:text-red-400">
+        {{ validationError }}
+      </div>
+    }
+
+    <!-- Action Buttons -->
+    <div class="mt-6 flex flex-wrap items-center gap-3">
+      <!-- Create/Edit mode buttons (when order is editable) -->
+      @if (!isReadOnly) {
+        <button
+          type="button"
+          (click)="submitOrder()"
+          [disabled]="isSubmitting || isTransitioning"
+          class="inline-flex items-center rounded-lg bg-brand-600 px-5 py-2 text-sm font-medium text-white hover:bg-brand-700 disabled:cursor-not-allowed disabled:opacity-50"
+        >
+          @if (isSubmitting) {
+            <svg class="mr-2 h-4 w-4 animate-spin" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
+              <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
+              <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z"></path>
+            </svg>
+            Saving...
+          } @else {
+            {{ mode === 'edit' ? 'Save Changes' : 'Submit Order' }}
+          }
+        </button>
+        <button
+          type="button"
+          (click)="cancel()"
+          [disabled]="isSubmitting || isTransitioning"
+          class="rounded-lg border border-gray-300 bg-white px-4 py-2 text-sm font-medium text-gray-700 hover:bg-gray-50 dark:border-gray-600 dark:bg-gray-800 dark:text-gray-200 dark:hover:bg-gray-700 disabled:cursor-not-allowed disabled:opacity-50"
+        >
+          Cancel
+        </button>
+      }
+
+      <!-- Status Transition Buttons (shown in edit mode based on status and permissions) -->
+      @if (orderId && mode === 'edit') {
+        <!-- Submit for Approval: in-progress → for_approval -->
+        @if (showSubmitForApproval) {
+          <button
+            type="button"
+            (click)="submitForApproval()"
+            [disabled]="isTransitioning || isSubmitting"
+            class="inline-flex items-center rounded-lg bg-blue-600 px-4 py-2 text-sm font-medium text-white hover:bg-blue-700 disabled:cursor-not-allowed disabled:opacity-50"
+          >
+            @if (isTransitioning) {
+              <svg class="mr-2 h-4 w-4 animate-spin" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
+                <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
+                <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z"></path>
+              </svg>
+              Processing...
+            } @else {
+              Submit for Approval
+            }
+          </button>
+        }
+
+        <!-- Approve: for_approval → approved -->
+        @if (showApprove) {
+          <button
+            type="button"
+            (click)="approveOrder()"
+            [disabled]="isTransitioning || isSubmitting"
+            class="inline-flex items-center rounded-lg border border-green-300 bg-white px-4 py-2 text-sm font-medium text-green-700 hover:bg-green-50 disabled:cursor-not-allowed disabled:opacity-50 dark:border-green-500/40 dark:bg-gray-800 dark:text-green-400 dark:hover:bg-green-500/10"
+          >
+            @if (isTransitioning) {
+              <svg class="mr-2 h-4 w-4 animate-spin" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
+                <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
+                <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z"></path>
+              </svg>
+              Processing...
+            } @else {
+              Approve
+            }
+          </button>
+        }
+
+        <!-- Revert to In Progress: for_approval → in-progress -->
+        @if (showRevert) {
+          <button
+            type="button"
+            (click)="revertToInProgress()"
+            [disabled]="isTransitioning || isSubmitting"
+            class="inline-flex items-center rounded-lg border border-orange-300 bg-white px-4 py-2 text-sm font-medium text-orange-700 hover:bg-orange-50 disabled:cursor-not-allowed disabled:opacity-50 dark:border-orange-500/40 dark:bg-gray-800 dark:text-orange-400 dark:hover:bg-orange-500/10"
+          >
+            @if (isTransitioning) {
+              <svg class="mr-2 h-4 w-4 animate-spin" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
+                <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
+                <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z"></path>
+              </svg>
+              Processing...
+            } @else {
+              Revert to In Progress
+            }
+          </button>
+        }
+
+        <!-- Receive: approved → received -->
+        @if (showReceive) {
+          <button
+            type="button"
+            (click)="receiveOrder()"
+            [disabled]="isTransitioning || isSubmitting"
+            class="inline-flex items-center rounded-lg bg-brand-600 px-4 py-2 text-sm font-medium text-white hover:bg-brand-700 disabled:cursor-not-allowed disabled:opacity-50"
+          >
+            @if (isTransitioning) {
+              <svg class="mr-2 h-4 w-4 animate-spin" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
+                <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
+                <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z"></path>
+              </svg>
+              Processing...
+            } @else {
+              Mark as Received
+            }
+          </button>
+        }
+
+        <!-- Complete: received → completed -->
+        @if (showComplete) {
+          <button
+            type="button"
+            (click)="completeOrder()"
+            [disabled]="isTransitioning || isSubmitting"
+            class="inline-flex items-center rounded-lg bg-green-600 px-4 py-2 text-sm font-medium text-white hover:bg-green-700 disabled:cursor-not-allowed disabled:opacity-50"
+          >
+            @if (isTransitioning) {
+              <svg class="mr-2 h-4 w-4 animate-spin" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
+                <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
+                <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z"></path>
+              </svg>
+              Processing...
+            } @else {
+              Complete
+            }
+          </button>
+        }
+      }
+
+      <!-- Read-only status message (when no transition buttons are available) -->
+      @if (isReadOnly && !showApprove && !showRevert && !showReceive && !showComplete) {
+        <p class="text-sm text-gray-500 dark:text-gray-400">
+          This order is {{ orderStatus | titlecase }}. No further changes allowed.
+        </p>
+      }
+
+      <!-- Back button (always shown in read-only mode) -->
+      @if (isReadOnly) {
+        <button
+          type="button"
+          (click)="cancel()"
+          class="rounded-lg border border-gray-300 bg-white px-4 py-2 text-sm font-medium text-gray-700 hover:bg-gray-50 dark:border-gray-600 dark:bg-gray-800 dark:text-gray-200 dark:hover:bg-gray-700"
+        >
+          Back
+        </button>
+      }
+    </div>
+  </form>
+</div>

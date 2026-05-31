@@ -574,6 +574,22 @@ export class PurchaseService {
         );
       }
 
+      // Unit price validation: must be between 0.01 and 999999.99
+      const unitPrice = this.toOptionalNumber(item.unitPrice);
+      if (unitPrice !== null && (unitPrice < 0.01 || unitPrice > 999999.99)) {
+        throw new BadRequestException(
+          `productItems[${index}].unitPrice: Unit price must be between 0.01 and 999,999.99`,
+        );
+      }
+
+      // Discount price validation: must be between 0 and 999999.99
+      const discountPrice = this.toOptionalNumber(item.discountPrice);
+      if (discountPrice !== null && (discountPrice < 0 || discountPrice > 999999.99)) {
+        throw new BadRequestException(
+          `productItems[${index}].discountPrice: Discount price must be between 0 and 999,999.99`,
+        );
+      }
+
       // Quantity validation: must be between 1 and 999999
       const quantity = this.toOptionalNumber(item.totalSetQty ?? item.quantity);
       const unitTypesQty = Array.isArray(item.unitTypesQty) ? item.unitTypesQty : [];
@@ -585,13 +601,13 @@ export class PurchaseService {
 
       if (effectiveQty < 1 || effectiveQty > 999999) {
         throw new BadRequestException(
-          `productItems[${index}]: Quantity is required and must be between 1 and 999,999`,
+          `productItems[${index}].totalSetQty: Quantity must be between 1 and 999,999`,
         );
       }
 
       if (!Number.isInteger(effectiveQty)) {
         throw new BadRequestException(
-          `productItems[${index}]: Quantity must be a whole number between 1 and 999,999`,
+          `productItems[${index}].totalSetQty: Quantity must be a whole number`,
         );
       }
     }
@@ -1164,7 +1180,7 @@ export class PurchaseService {
     auditActor?: AuditActorContext,
   ) {
     const poNumber = String(createPurchaseDto.poNumber ?? '').trim();
-    const status = String(createPurchaseDto.status ?? 'for_approval').trim().toLowerCase() || 'for_approval';
+    let status = String(createPurchaseDto.status ?? 'for_approval').trim().toLowerCase() || 'for_approval';
 
     const productItems = Array.isArray(createPurchaseDto.productItems)
       ? createPurchaseDto.productItems
@@ -1174,10 +1190,12 @@ export class PurchaseService {
       return { success: false, message: 'At least one product item is required' };
     }
 
-    // Validate ACM-specific fields before processing
+    // Validate ACM-specific fields before processing (DTO-level validation)
     const poType = String(createPurchaseDto.poType ?? 'ACU').trim().toUpperCase();
     if (poType === 'ACM') {
-      this.validateAcmProductItems(productItems as unknown as Array<Record<string, unknown>>);
+      // ACM type always starts with for_approval status
+      status = 'for_approval';
+      CreatePurchaseDto.validateAcm(createPurchaseDto);
     }
 
     try {
@@ -1273,20 +1291,54 @@ export class PurchaseService {
 
         const purchaseOrderId = purchaseInsertResult.rows[0].id;
 
-        const purchaseOrderPoNumberResult = await client.query<{ po_number: string | null }>(
-          `SELECT COALESCE(
-             to_jsonb(po)->>'po_number',
-             to_jsonb(po)->>'poNumber',
-             to_jsonb(po)->>'po_no'
-           ) AS po_number
-           FROM tblpurchase_orders po
-           WHERE po.id = $1
-           LIMIT 1`,
-          [purchaseOrderId],
-        );
+        // Auto-generate po_number for ACM type: 'PO-' + id padded to 6 digits
+        const normalizedPoType = String(createPurchaseDto.poType ?? 'ACU').trim().toUpperCase();
+        let resolvedPoNumber = poNumber;
 
-        const resolvedPoNumber =
-          purchaseOrderPoNumberResult.rows[0]?.po_number?.trim() || poNumber;
+        if (normalizedPoType === 'ACM' && poNumberColumn) {
+          // Format: YYYY-0001 (year + sequential number padded to 4 digits)
+          // Query the max PO number for the current year to get the next sequence
+          const year = new Date().getFullYear();
+          const yearPrefix = `${year}-`;
+
+          const seqResult = await client.query<{ next_seq: number }>(
+            `SELECT COALESCE(
+               MAX(
+                 CAST(SUBSTRING("${poNumberColumn}" FROM 6) AS INTEGER)
+               ), 0
+             ) + 1 AS next_seq
+             FROM tblpurchase_orders
+             WHERE "${poNumberColumn}" LIKE $1
+               AND COALESCE(po_type, 'ACU') = 'ACM'`,
+            [`${yearPrefix}%`],
+          );
+
+          const nextSeq = seqResult.rows[0]?.next_seq ?? 1;
+          const generatedPoNumber = `${year}-${nextSeq.toString().padStart(4, '0')}`;
+
+          await client.query(
+            `UPDATE tblpurchase_orders
+             SET "${poNumberColumn}" = $1
+             WHERE id = $2`,
+            [generatedPoNumber, purchaseOrderId],
+          );
+          resolvedPoNumber = generatedPoNumber;
+        } else {
+          const purchaseOrderPoNumberResult = await client.query<{ po_number: string | null }>(
+            `SELECT COALESCE(
+               to_jsonb(po)->>'po_number',
+               to_jsonb(po)->>'poNumber',
+               to_jsonb(po)->>'po_no'
+             ) AS po_number
+             FROM tblpurchase_orders po
+             WHERE po.id = $1
+             LIMIT 1`,
+            [purchaseOrderId],
+          );
+
+          resolvedPoNumber =
+            purchaseOrderPoNumberResult.rows[0]?.po_number?.trim() || poNumber;
+        }
         const paymentDetailsInput = createPurchaseDto.paymentDetails;
         const paymentDetailsList = Array.isArray(paymentDetailsInput)
           ? paymentDetailsInput
@@ -1888,7 +1940,9 @@ export class PurchaseService {
 
         const currentStatus = existingPurchaseResult.rows[0]?.status;
         if (shouldRequireApprovalStage && !this.isApprovalStageStatus(currentStatus)) {
-          throw new Error('Purchase order is not in approval stage');
+          throw new Error(
+            `Cannot perform this action from status '${currentStatus ?? 'unknown'}'. Purchase order must be in 'for_approval' status.`,
+          );
         }
 
         const purchaseColumns = await this.getTableColumns(client, 'tblpurchase_orders');
@@ -2056,32 +2110,30 @@ export class PurchaseService {
 
     try {
       const result = await this.databaseService.withTransaction(async (client) => {
-        // 1. Validate PO exists
-        const poResult = await client.query<{ status: string | null }>(
-          `SELECT status FROM tblpurchase_orders WHERE id = $1 LIMIT 1`,
+        // 1. Validate PO exists and check current status
+        const poResult = await client.query<{ status: string | null; po_type: string | null }>(
+          `SELECT status, COALESCE(po_type, 'ACU') AS po_type FROM tblpurchase_orders WHERE id = $1 LIMIT 1`,
           [id],
         );
         if (poResult.rowCount === 0) {
           throw new Error(`Purchase order ${id} not found`);
         }
 
-        const poTypeRes = await client.query(
-          `SELECT COALESCE(
-             po.po_type,
-             to_jsonb(po)->>'poType',
-             to_jsonb(po)->>'po_type',
-             'ACU'
-           ) AS po_type
-           FROM tblpurchase_orders po
-           WHERE po.id = $1`,
-          [id],
-        );
-        const poType = this.normalizePoType(poTypeRes.rows[0]?.po_type);
+        const currentStatus = String(poResult.rows[0]?.status ?? '').trim().toLowerCase();
+        const poType = this.normalizePoType(poResult.rows[0]?.po_type);
+
+        // Validate source status: must be 'approved' to transition to 'received'
+        if (currentStatus !== 'approved') {
+          throw new Error(
+            `Cannot mark as received from status '${currentStatus}'. Purchase order must be in 'approved' status.`,
+          );
+        }
+
         let itemsTable = 'tbltransaction_product_items';
         if (poType === 'ACP') itemsTable = 'tbltransaction_parts_items';
         else if (poType === 'ACM') itemsTable = 'tbltransaction_material_items';
 
-        // 2. Find originating salesId from transaction items
+        // 2. Check if this is a transfer PO (has linked sales order)
         const soResult = await client.query<{ salesId: number }>(
           `SELECT DISTINCT tpi."salesId" AS "salesId"
            FROM ${itemsTable} tpi
@@ -2089,9 +2141,17 @@ export class PurchaseService {
            LIMIT 1`,
           [id],
         );
+
+        // If no linked sales order, this is a regular PO — just transition to received
         if (soResult.rowCount === 0) {
-          throw new Error('No originating Sales Order found for this Transfer PO');
+          await client.query(
+            `UPDATE tblpurchase_orders SET status = 'received' WHERE id = $1`,
+            [id],
+          );
+          return { purchaseId: id, status: 'received', isTransfer: false };
         }
+
+        // Transfer PO flow: update receiving branch, SO status, and serial numbers
         const salesId = soResult.rows[0].salesId;
 
         // 3. Get the receiving branch (toBranchId) from tbltransfer_details
@@ -2167,7 +2227,7 @@ export class PurchaseService {
           }
         }
 
-        return { purchaseId: id, salesId, status: 'received', receivingBranchId };
+        return { purchaseId: id, salesId, status: 'received', receivingBranchId, isTransfer: true };
       });
 
       const afterSnapshot = await this.getPurchaseAuditSnapshot(id);
@@ -2176,39 +2236,54 @@ export class PurchaseService {
         entityType: 'purchase-order',
         entityId: id,
         actor: auditActor ?? { userId },
-        description: `Verified and received transfer purchase order ${String((afterSnapshot?.poNumber as string | undefined) ?? '').trim() || `#${id}`}`,
+        description: `Verified and received purchase order ${String((afterSnapshot?.poNumber as string | undefined) ?? '').trim() || `#${id}`}`,
         before: beforeSnapshot,
         after: afterSnapshot,
         metadata: {
           salesId: result.salesId,
           receivingBranchId: result.receivingBranchId,
+          isTransfer: result.isTransfer,
         },
       });
 
       return {
         success: true,
-        message: 'Transfer PO verified and received. Serials are now in-stock.',
+        message: result.isTransfer
+          ? 'Transfer PO verified and received. Serials are now in-stock.'
+          : 'Purchase order marked as received.',
         data: result,
       };
     } catch (error) {
       return {
         success: false,
-        message: error instanceof Error ? error.message : 'Failed to verify and receive transfer PO',
+        message: error instanceof Error ? error.message : 'Failed to verify and receive purchase order',
       };
     }
   }
 
   async approve(id: number, userId?: number, auditActor?: AuditActorContext) {
     const beforeSnapshot = await this.getPurchaseAuditSnapshot(id);
-    // Approve the PO and move it to awaiting delivery. Do NOT force serials to in-stock here;
-    // serials are marked in-stock when scanned during delivery/receiving.
-    const response = await this.transitionPurchaseStatus(id, 'in-progress', userId, {
+    // Approve the PO: transition from for_approval → approved.
+    // The approvalOnly flag ensures the current status is in the approval stage (for_approval).
+    const response = await this.transitionPurchaseStatus(id, 'approved', userId, {
       approvalOnly: true,
       updateSerialsToInStock: false,
-      successMessage: 'Purchase order approved and in-progress',
+      successMessage: 'Purchase order approved',
     });
 
     if (response.success) {
+      // Record approval metadata (approving user, date)
+      try {
+        await this.databaseService.query(
+          `UPDATE tblpurchase_orders
+           SET approve_by = $1, "approveDate" = NOW()
+           WHERE id = $2`,
+          [userId ?? null, id],
+        );
+      } catch {
+        // Non-critical: approval metadata columns may not exist in all environments
+      }
+
       const afterSnapshot = await this.getPurchaseAuditSnapshot(id);
       await this.auditLogService.logMutation({
         action: 'PURCHASE_APPROVE',
@@ -2258,6 +2333,18 @@ export class PurchaseService {
 
         // For ACM (Materials), skip serial validation, complete, and record stock movements
         if (poType === 'ACM') {
+          // Validate source status: must be 'received' to transition to 'completed'
+          const statusCheckResult = await client.query<{ status: string | null }>(
+            `SELECT status FROM tblpurchase_orders WHERE id = $1 LIMIT 1`,
+            [id],
+          );
+          const currentStatus = String(statusCheckResult.rows[0]?.status ?? '').trim().toLowerCase();
+          if (currentStatus !== 'received') {
+            throw new Error(
+              `Cannot complete purchase order from status '${currentStatus}'. Purchase order must be in 'received' status.`,
+            );
+          }
+
           const purchaseColumns = await this.getTableColumns(client, 'tblpurchase_orders');
           const statusColumn = this.pickColumn(purchaseColumns, ['status']);
           if (!statusColumn) {
@@ -2433,6 +2520,72 @@ export class PurchaseService {
       return { success: true, message: 'Purchase request completed', data: result };
     } catch (error) {
       return { success: false, message: error instanceof Error ? error.message : 'Failed to complete purchase request' };
+    }
+  }
+
+  async searchMaterials(query?: string) {
+    const normalizedQuery = String(query ?? '').trim();
+
+    if (!normalizedQuery) {
+      return { success: true, items: [] };
+    }
+
+    try {
+      const searchTerm = `%${normalizedQuery}%`;
+
+      const result = await this.databaseService.query<{
+        id: number;
+        material_name: string;
+        material_code: string | null;
+        unit: string | null;
+        unit_price: string | null;
+        sell_price: string | null;
+        brand_name: string | null;
+        product_type: string | null;
+      }>(
+        `SELECT
+           m.id,
+           m.material_name,
+           m.material_code,
+           m.unit,
+           m.unit_price::text AS unit_price,
+           m.sell_price::text AS sell_price,
+           b."brandName" AS brand_name,
+           pt.name AS product_type
+         FROM tblmaterials m
+         LEFT JOIN tblbrands b ON m.brand_id = b.id
+         LEFT JOIN tblproducttypes pt ON b.product_type_id = pt.id
+         WHERE m.deleted_at IS NULL
+           AND (
+             m.material_name ILIKE $1
+             OR m.material_code ILIKE $1
+             OR b."brandName" ILIKE $1
+             OR pt.name ILIKE $1
+           )
+         ORDER BY m.material_name ASC
+         LIMIT 50`,
+        [searchTerm],
+      );
+
+      return {
+        success: true,
+        items: result.rows.map((row) => ({
+          id: row.id,
+          material_name: row.material_name,
+          material_code: row.material_code ?? null,
+          unit: row.unit ?? '',
+          unit_price: this.toOptionalNumber(row.unit_price) ?? 0,
+          sell_price: this.toOptionalNumber(row.sell_price) ?? 0,
+          brand_name: row.brand_name ?? null,
+          product_type: row.product_type ?? null,
+        })),
+      };
+    } catch (error) {
+      return {
+        success: false,
+        message: error instanceof Error ? error.message : 'Failed to search materials',
+        items: [],
+      };
     }
   }
 
@@ -3063,13 +3216,15 @@ export class PurchaseService {
           po_number: string | null;
           total_amount: string | null;
           status: string | null;
+          po_type: string | null;
         }>(
           `SELECT
              po.id,
              po.vendor_id::text AS vendor_id,
              po.po_number::text AS po_number,
              po.total_amount::text AS total_amount,
-             po.status::text AS status
+             po.status::text AS status,
+             COALESCE(po.po_type, 'ACU')::text AS po_type
            FROM tblpurchase_orders po
            WHERE po.id = $1
            LIMIT 1`,
@@ -3081,6 +3236,37 @@ export class PurchaseService {
         }
 
         const existingPurchase = existingPurchaseResult.rows[0];
+
+        // Status guard: reject update if PO status is not 'in-progress' for ACM type
+        // Check both the requested poType and the existing PO's type
+        const requestedPoType = String(payload.poType ?? '').trim().toUpperCase();
+        const existingPoType = this.normalizePoType(existingPurchase.po_type);
+        const effectivePoType = requestedPoType || existingPoType;
+        const currentStatus = String(existingPurchase.status ?? '').trim().toLowerCase();
+        if (
+          effectivePoType === 'ACM' &&
+          currentStatus !== 'in-progress' &&
+          currentStatus !== 'in_progress'
+        ) {
+          throw new BadRequestException(
+            `Purchase order cannot be edited in its current status '${currentStatus}'. Only orders with status 'in-progress' can be updated.`,
+          );
+        }
+
+        // Status transition guard: if transitioning to 'for_approval', current status must be 'in-progress'
+        const requestedStatus = String(
+          payload.purchaseStatus ?? payload.status ?? '',
+        ).trim().toLowerCase();
+        if (
+          (requestedStatus === 'for_approval' || requestedStatus === 'for approval') &&
+          currentStatus !== 'in-progress' &&
+          currentStatus !== 'in_progress'
+        ) {
+          throw new BadRequestException(
+            `Cannot submit for approval from status '${currentStatus}'. Purchase order must be in 'in-progress' status.`,
+          );
+        }
+
         const vendorColumns = await this.getTableColumns(client, 'tblvendors');
         const resolvedVendorId = await this.resolvePurchaseVendor(client, vendorColumns, {
           vendorId: payload.vendorId ?? existingPurchase.vendor_id ?? '',
@@ -3098,10 +3284,10 @@ export class PurchaseService {
           ? payload.productItems
           : [];
 
-        // Validate ACM-specific fields during update
-        const updatePoType = String(payload.poType ?? 'ACU').trim().toUpperCase();
-        if (updatePoType === 'ACM' && productItems.length > 0) {
-          this.validateAcmProductItems(productItems as unknown as Array<Record<string, unknown>>);
+        // Validate ACM-specific fields during update (same rules as create DTO)
+        if (effectivePoType === 'ACM') {
+          // Use the same DTO-level validation as create
+          CreatePurchaseDto.validateAcm(payload as unknown as CreatePurchaseDto);
         }
 
         let computedTotalAmount = 0;
@@ -3117,8 +3303,9 @@ export class PurchaseService {
           this.toOptionalNumber(payload.totalAmount) ??
           this.toOptionalNumber(existingPurchase.total_amount) ??
           0;
+        // For ACM type, always use computed total when product items are provided
         const totalAmount =
-          productItems.length > 0 && computedTotalAmount > 0
+          productItems.length > 0
             ? computedTotalAmount
             : fallbackTotal;
 
@@ -3171,7 +3358,7 @@ export class PurchaseService {
 
         const poTypeColumn = this.pickColumn(purchaseColumns, ['po_type', 'poType', 'poType']);
         if (poTypeColumn) {
-          const poType = String(payload.poType ?? existingPurchase.poType ?? 'ACU').trim().toUpperCase();
+          const poType = String(payload.poType ?? existingPurchase.po_type ?? 'ACU').trim().toUpperCase();
           if (['ACU', 'ACP', 'ACM'].includes(poType)) {
             purchaseParams.push(poType);
             purchaseUpdates.push(`"${poTypeColumn}" = $${purchaseParams.length}`);

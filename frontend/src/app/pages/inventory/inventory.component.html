@@ -120,10 +120,22 @@
         <!-- Brand selected: show table area -->
         <div *ngIf="selectedBrandId !== null" class="h-full flex flex-col">
           <!-- Table header -->
-          <div class="mb-3">
+          <div class="mb-3 flex items-center justify-between gap-3">
             <h4 class="text-sm font-semibold text-gray-700 dark:text-gray-300">
               Materials — {{ selectedBrandName }}
             </h4>
+            <!-- Filter input -->
+            <div class="relative">
+              <svg class="absolute left-2.5 top-1/2 -translate-y-1/2 h-3.5 w-3.5 text-gray-400 dark:text-gray-500" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20" fill="currentColor">
+                <path fill-rule="evenodd" d="M9 3.5a5.5 5.5 0 100 11 5.5 5.5 0 000-11zM2 9a7 7 0 1112.452 4.391l3.328 3.329a.75.75 0 11-1.06 1.06l-3.329-3.328A7 7 0 012 9z" clip-rule="evenodd" />
+              </svg>
+              <input
+                type="text"
+                [(ngModel)]="materialFilter"
+                placeholder="Filter materials..."
+                class="w-48 rounded-md border border-gray-300 bg-white pl-8 pr-3 py-1.5 text-xs text-gray-900 placeholder-gray-400 focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500 dark:border-gray-600 dark:bg-gray-700 dark:text-gray-100 dark:placeholder-gray-500"
+              />
+            </div>
           </div>
 
           <!-- Loading state -->
@@ -147,8 +159,13 @@
             <p class="text-sm text-gray-400 dark:text-gray-500">No materials found for this brand.</p>
           </div>
 
+          <!-- No filter results state -->
+          <div *ngIf="!isMaterialsLoading && !materialsError && materials.length > 0 && filteredMaterials.length === 0" class="flex items-center justify-center flex-1">
+            <p class="text-sm text-gray-400 dark:text-gray-500">No materials match your filter.</p>
+          </div>
+
           <!-- Material table -->
-          <div *ngIf="!isMaterialsLoading && !materialsError && materials.length > 0" class="overflow-x-auto flex-1">
+          <div *ngIf="!isMaterialsLoading && !materialsError && filteredMaterials.length > 0" class="overflow-x-auto flex-1">
             <table class="w-full table-auto text-xs">
               <thead>
                 <tr class="border-b border-gray-200 dark:border-gray-800">
@@ -167,17 +184,70 @@
               </thead>
               <tbody>
                 <tr
-                  *ngFor="let row of materials"
+                  *ngFor="let row of filteredMaterials"
                   class="border-b border-gray-100 dark:border-gray-800 hover:bg-gray-50 dark:hover:bg-gray-800/30 transition-colors"
                 >
                   <td class="px-2 py-1.5 text-xs text-gray-700 dark:text-gray-300 whitespace-nowrap">{{ row.material_code || '—' }}</td>
-                  <td class="px-2 py-1.5 text-xs text-gray-700 dark:text-gray-300">{{ row.material_name }}</td>
+                  <!-- Inline editable: Name -->
+                  <td class="px-2 py-1.5 text-xs text-gray-700 dark:text-gray-300">
+                    <span
+                      *ngIf="!isInlineEditing(row.id, 'material_name')"
+                      class="cursor-pointer hover:text-blue-600 dark:hover:text-blue-400 border-b border-dashed border-transparent hover:border-blue-400"
+                      (dblclick)="startInlineEdit(row, 'material_name')"
+                      title="Double-click to edit"
+                    >{{ row.material_name }}</span>
+                    <input
+                      *ngIf="isInlineEditing(row.id, 'material_name')"
+                      type="text"
+                      [(ngModel)]="inlineEditValue"
+                      (blur)="saveInlineEdit(row)"
+                      (keydown)="onInlineEditKeydown($event, row)"
+                      class="w-full rounded border border-blue-400 bg-white px-1.5 py-0.5 text-xs text-gray-900 focus:outline-none focus:ring-1 focus:ring-blue-500 dark:border-blue-500 dark:bg-gray-700 dark:text-gray-100"
+                      #inlineInput
+                    />
+                  </td>
                   <td class="px-2 py-1.5">
                     <!-- Stock Notice Badge -->
                     <span [class]="getStockBadge(row).classes">{{ getStockBadge(row).label }}</span>
                   </td>
-                  <td class="px-2 py-1.5 text-xs text-right text-gray-700 dark:text-gray-300 whitespace-nowrap">{{ row.unit_price | number:'1.2-2' }}</td>
-                  <td class="px-2 py-1.5 text-xs text-right text-gray-700 dark:text-gray-300 whitespace-nowrap">{{ row.sell_price | number:'1.2-2' }}</td>
+                  <!-- Inline editable: Cost (unit_price) -->
+                  <td class="px-2 py-1.5 text-xs text-right text-gray-700 dark:text-gray-300 whitespace-nowrap">
+                    <span
+                      *ngIf="!isInlineEditing(row.id, 'unit_price')"
+                      class="cursor-pointer hover:text-blue-600 dark:hover:text-blue-400 border-b border-dashed border-transparent hover:border-blue-400"
+                      (dblclick)="startInlineEdit(row, 'unit_price')"
+                      title="Double-click to edit"
+                    >{{ row.unit_price | number:'1.2-2' }}</span>
+                    <input
+                      *ngIf="isInlineEditing(row.id, 'unit_price')"
+                      type="text"
+                      inputmode="decimal"
+                      [(ngModel)]="inlineEditValue"
+                      (blur)="saveInlineEdit(row)"
+                      (keydown)="onInlineEditKeydown($event, row)"
+                      class="w-20 rounded border border-blue-400 bg-white px-1.5 py-0.5 text-xs text-right text-gray-900 focus:outline-none focus:ring-1 focus:ring-blue-500 dark:border-blue-500 dark:bg-gray-700 dark:text-gray-100"
+                      #inlineInput
+                    />
+                  </td>
+                  <!-- Inline editable: Price (sell_price) -->
+                  <td class="px-2 py-1.5 text-xs text-right text-gray-700 dark:text-gray-300 whitespace-nowrap">
+                    <span
+                      *ngIf="!isInlineEditing(row.id, 'sell_price')"
+                      class="cursor-pointer hover:text-blue-600 dark:hover:text-blue-400 border-b border-dashed border-transparent hover:border-blue-400"
+                      (dblclick)="startInlineEdit(row, 'sell_price')"
+                      title="Double-click to edit"
+                    >{{ row.sell_price | number:'1.2-2' }}</span>
+                    <input
+                      *ngIf="isInlineEditing(row.id, 'sell_price')"
+                      type="text"
+                      inputmode="decimal"
+                      [(ngModel)]="inlineEditValue"
+                      (blur)="saveInlineEdit(row)"
+                      (keydown)="onInlineEditKeydown($event, row)"
+                      class="w-20 rounded border border-blue-400 bg-white px-1.5 py-0.5 text-xs text-right text-gray-900 focus:outline-none focus:ring-1 focus:ring-blue-500 dark:border-blue-500 dark:bg-gray-700 dark:text-gray-100"
+                      #inlineInput
+                    />
+                  </td>
                   <td class="px-2 py-1.5 text-xs text-right text-gray-700 dark:text-gray-300 whitespace-nowrap">{{ row.margin | number:'1.2-2' }}</td>
                   <td class="px-2 py-1.5 text-xs text-right text-gray-700 dark:text-gray-300 whitespace-nowrap">{{ row.on_hand_stock }}</td>
                   <td class="px-2 py-1.5 text-xs text-right text-gray-700 dark:text-gray-300 whitespace-nowrap">{{ row.overallCost | number:'1.2-2' }}</td>

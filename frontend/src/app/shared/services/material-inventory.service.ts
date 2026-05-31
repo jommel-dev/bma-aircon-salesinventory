@@ -98,8 +98,9 @@ export class MaterialInventoryService {
   async getMaterials(search?: string, brandId?: number): Promise<Material[]> {
     const params: any = {};
     if (search) params.search = search;
-    if (typeof brandId === 'number' && !isNaN(brandId)) {
-      params.brandId = brandId;
+    const parsedBrandId = Number(brandId);
+    if (parsedBrandId && !isNaN(parsedBrandId)) {
+      params.brandId = parsedBrandId;
     }
 
     const response = await apiClient.get(this.baseUrl, { params });
