@@ -125,6 +125,8 @@ export class SalesOrderController {
       page: query.page ? Number(query.page) : undefined,
       limit: query.limit ? Number(query.limit) : undefined,
       search: query.search,
+      dateFrom: query.dateFrom,
+      dateTo: query.dateTo,
     });
   }
 
@@ -147,6 +149,7 @@ export class SalesOrderController {
     return this.salesOrderService.migrateMaterialSalesOrders(
       body.rows ?? [],
       Number.isFinite(userId) ? userId : undefined,
+      body.targetStatus,
     );
   }
 

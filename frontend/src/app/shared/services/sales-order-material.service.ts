@@ -74,6 +74,8 @@ export interface MaterialSalesOrderListParams {
   page: number;
   limit: number;
   search?: string;
+  dateFrom?: string;
+  dateTo?: string;
 }
 
 // ─── Response Interfaces ────────────────────────────────────────────────────
@@ -89,6 +91,9 @@ export interface MaterialSalesOrderListItem {
   scheduleDate: string | null;
   deliveryDate: string | null;
   createdAt: string | null;
+  paymentMethod: string;
+  paymentStatus: string;
+  payments: Array<{ method: string; status: string; amount: number; terms: string }>;
 }
 
 export interface MaterialSalesOrderListMeta {
@@ -267,8 +272,8 @@ export class SalesOrderMaterialService {
   /**
    * Migrate material sales orders from CSV data.
    */
-  async migrateSalesOrders(rows: any[]): Promise<any> {
-    const response = await apiClient.post('/sales-order/materials/migrate', { rows });
+  async migrateSalesOrders(rows: any[], targetStatus?: string): Promise<any> {
+    const response = await apiClient.post('/sales-order/materials/migrate', { rows, targetStatus });
     return response.data;
   }
 

@@ -6886,10 +6886,27 @@ export class SalesOrderService {
     }
   }
 
-  async migrateMaterialSalesOrders(rows: Array<Record<string, unknown>>, userId?: number) {
+  async migrateMaterialSalesOrders(rows: Array<Record<string, unknown>>, userId?: number, targetStatus?: string) {
     if (!Array.isArray(rows) || rows.length === 0) {
       return { success: false, message: 'No rows provided', summary: { total: 0, created: 0, skipped: 0, failed: 0 } };
     }
+
+    // Validate and normalize targetStatus — must be one of the 4 canonical values
+    const validStatuses = ['draft', 'pending', 'complete', 'voided'];
+    const resolvedStatus = validStatuses.includes(String(targetStatus ?? '').trim().toLowerCase())
+      ? String(targetStatus).trim().toLowerCase()
+      : 'pending';
+
+    // Helper to normalize a per-row status from the CSV
+    const normalizeRowStatus = (raw: unknown): string => {
+      const s = String(raw ?? '').trim().toLowerCase();
+      if (['pending', 'approved', 'confirmed', 'for_delivery', 'for-delivery'].includes(s)) return 'pending';
+      if (['complete', 'completed', 'done', 'delivered', 'closed'].includes(s)) return 'complete';
+      if (['voided', 'void', 'cancelled', 'canceled', 'rejected'].includes(s)) return 'voided';
+      if (s === 'draft') return 'draft';
+      // Fall back to the global targetStatus if row has no recognizable status
+      return resolvedStatus;
+    };
 
     // Group rows by salesNo
     const grouped = new Map<string, Array<Record<string, unknown>>>();
@@ -6951,10 +6968,11 @@ export class SalesOrderService {
           }
           totalAmount = Math.round(totalAmount * 100) / 100;
 
-          // Insert into tblsales_order
+          // Insert into tblsales_order — use status from the CSV row
+          const rowStatus = normalizeRowStatus(firstRow['status'] ?? firstRow['salesStatus'] ?? '');
           const insertSoParams: unknown[] = [
             customerId,
-            'complete',
+            rowStatus,
             'sales',
             deliveryDate,
             totalAmount,
@@ -7083,6 +7101,8 @@ export class SalesOrderService {
     page?: number;
     limit?: number;
     search?: string;
+    dateFrom?: string;
+    dateTo?: string;
   }) {
     const page = this.normalizePage(query.page);
     const limit = this.normalizeLimit(query.limit);
@@ -7099,6 +7119,18 @@ export class SalesOrderService {
     // Filter by status
     params.push(status);
     whereParts.push(`LOWER(COALESCE(so.status, '')) = $${params.length}`);
+
+    // Date range filter (only applied when status = 'complete')
+    if (status === 'complete') {
+      if (query.dateFrom) {
+        params.push(query.dateFrom);
+        whereParts.push(`so.created_at >= $${params.length}::date`);
+      }
+      if (query.dateTo) {
+        params.push(query.dateTo);
+        whereParts.push(`so.created_at < ($${params.length}::date + INTERVAL '1 day')`);
+      }
+    }
 
     // Search filter
     if (search) {
@@ -7141,7 +7173,35 @@ export class SalesOrderService {
         COALESCE(so."salesType", '') AS "salesType",
         so."scheduleDate" AS "deliveryDate",
         so.created_at AS "createdAt",
-        so.remarks
+        so.remarks,
+        -- First payment method and status
+        (
+          SELECT sp.method
+          FROM tblsales_order_payments sp
+          WHERE sp.sales_order_id = so.id
+          ORDER BY sp.id ASC
+          LIMIT 1
+        ) AS "firstPaymentMethod",
+        (
+          SELECT sp.status
+          FROM tblsales_order_payments sp
+          WHERE sp.sales_order_id = so.id
+          ORDER BY sp.id ASC
+          LIMIT 1
+        ) AS "firstPaymentStatus",
+        -- All payments as JSON array
+        (
+          SELECT json_agg(
+            json_build_object(
+              'method', COALESCE(sp.method, ''),
+              'status', COALESCE(sp.status, ''),
+              'amount', COALESCE(sp.amount, 0),
+              'terms', COALESCE(sp.terms::text, '')
+            ) ORDER BY sp.id ASC
+          )
+          FROM tblsales_order_payments sp
+          WHERE sp.sales_order_id = so.id
+        ) AS "payments"
       FROM tblsales_order so
       LEFT JOIN tblcustomer c ON c.id::text = COALESCE(to_jsonb(so)->>'customer_id', to_jsonb(so)->>'customerId')
       ${whereSql}
@@ -7161,6 +7221,9 @@ export class SalesOrderService {
       deliveryDate: string | null;
       createdAt: string | null;
       remarks: string | null;
+      firstPaymentMethod: string | null;
+      firstPaymentStatus: string | null;
+      payments: Array<{ method: string; status: string; amount: number; terms: string }> | null;
     }>(listSql, params);
 
     return {
@@ -7176,6 +7239,9 @@ export class SalesOrderService {
         deliveryDate: row.deliveryDate,
         createdAt: row.createdAt,
         remarks: row.remarks ?? '',
+        paymentMethod: row.firstPaymentMethod ?? '',
+        paymentStatus: row.firstPaymentStatus ?? '',
+        payments: row.payments ?? [],
       })),
       meta: {
         page,

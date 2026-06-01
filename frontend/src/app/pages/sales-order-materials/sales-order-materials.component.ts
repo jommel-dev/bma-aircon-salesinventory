@@ -26,6 +26,7 @@ interface MigrationPreviewGroup {
   paymentMethod: string;
   paymentStatus: string;
   deliveryDate: string;
+  salesStatus: string;
 }
 
 @Component({
@@ -58,6 +59,10 @@ export class SalesOrderMaterialsComponent implements OnInit {
   private searchDebounceTimer: ReturnType<typeof setTimeout> | null = null;
   private readonly searchDebounceMs = 300;
 
+  // Date filter (only active on Complete tab, defaults to current month)
+  dateFrom: string = this.getFirstDayOfMonth();
+  dateTo: string = this.getLastDayOfMonth();
+
   // Print modal state
   isPrintModalOpen = false;
   printPdfUrl: SafeResourceUrl | null = null;
@@ -72,6 +77,7 @@ export class SalesOrderMaterialsComponent implements OnInit {
   migrateRows: any[] = [];
   migratePreview: MigrationPreviewGroup[] = [];
   migrateResults: { summary: { total: number; created: number; skipped: number; failed: number }; details: any[] } | null = null;
+  migrateTargetStatus: 'draft' | 'pending' | 'complete' | 'voided' = 'pending';
 
   constructor(
     private salesOrderMaterialService: SalesOrderMaterialService,
@@ -128,6 +134,9 @@ export class SalesOrderMaterialsComponent implements OnInit {
         page: this.meta.page,
         limit: this.meta.limit,
         search: this.search.trim() || undefined,
+        // Only send date filter on the Complete tab
+        dateFrom: this.activeTab === 'complete' ? this.dateFrom : undefined,
+        dateTo: this.activeTab === 'complete' ? this.dateTo : undefined,
       };
 
       const result = await this.salesOrderMaterialService.getMaterialSalesOrders(params);
@@ -139,6 +148,48 @@ export class SalesOrderMaterialsComponent implements OnInit {
       this.orders = [];
     } finally {
       this.isLoading = false;
+    }
+  }
+
+  onDateFilterChange(): void {
+    this.meta.page = 1;
+    void this.loadOrders();
+  }
+
+  private getFirstDayOfMonth(): string {
+    const now = new Date();
+    return `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-01`;
+  }
+
+  private getLastDayOfMonth(): string {
+    const now = new Date();
+    const last = new Date(now.getFullYear(), now.getMonth() + 1, 0);
+    return `${last.getFullYear()}-${String(last.getMonth() + 1).padStart(2, '0')}-${String(last.getDate()).padStart(2, '0')}`;
+  }
+
+  getPaymentMethodChipClass(method: string): string {
+    const m = (method || '').toLowerCase().replace(/\s+/g, '');
+    switch (m) {
+      case 'cash': return 'border-green-300 bg-green-50 text-green-700 dark:border-green-600 dark:bg-green-900/20 dark:text-green-300';
+      case 'gcash': return 'border-blue-300 bg-blue-50 text-blue-700 dark:border-blue-600 dark:bg-blue-900/20 dark:text-blue-300';
+      case 'banktransfer': return 'border-indigo-300 bg-indigo-50 text-indigo-700 dark:border-indigo-600 dark:bg-indigo-900/20 dark:text-indigo-300';
+      case 'cheque': return 'border-amber-300 bg-amber-50 text-amber-700 dark:border-amber-600 dark:bg-amber-900/20 dark:text-amber-300';
+      case 'terms':
+      case 'termswithdp': return 'border-purple-300 bg-purple-50 text-purple-700 dark:border-purple-600 dark:bg-purple-900/20 dark:text-purple-300';
+      case 'creditcard': return 'border-pink-300 bg-pink-50 text-pink-700 dark:border-pink-600 dark:bg-pink-900/20 dark:text-pink-300';
+      case 'installment': return 'border-orange-300 bg-orange-50 text-orange-700 dark:border-orange-600 dark:bg-orange-900/20 dark:text-orange-300';
+      default: return 'border-gray-300 bg-gray-50 text-gray-700 dark:border-gray-600 dark:bg-gray-800 dark:text-gray-300';
+    }
+  }
+
+  getPaymentStatusClass(status: string): string {
+    const s = (status || '').toLowerCase();
+    switch (s) {
+      case 'paid': return 'bg-green-100 text-green-800 dark:bg-green-900/30 dark:text-green-300';
+      case 'unpaid': return 'bg-amber-100 text-amber-800 dark:bg-amber-900/30 dark:text-amber-300';
+      case 'overdue': return 'bg-red-100 text-red-800 dark:bg-red-900/30 dark:text-red-300';
+      case 'partial': return 'bg-blue-100 text-blue-800 dark:bg-blue-900/30 dark:text-blue-300';
+      default: return 'bg-gray-100 text-gray-700 dark:bg-gray-700 dark:text-gray-300';
     }
   }
 
@@ -246,6 +297,7 @@ export class SalesOrderMaterialsComponent implements OnInit {
     this.migratePreview = [];
     this.migrateResults = null;
     this.isMigrating = false;
+    this.migrateTargetStatus = 'pending';
     this.isMigrateModalOpen = true;
   }
 
@@ -388,6 +440,14 @@ export class SalesOrderMaterialsComponent implements OnInit {
     return result;
   }
 
+  private normalizeSalesStatus(raw: string): string {
+    const s = String(raw ?? '').trim().toLowerCase();
+    if (['pending', 'approved', 'confirmed', 'for_delivery', 'for-delivery'].includes(s)) return 'pending';
+    if (['complete', 'completed', 'done', 'delivered', 'closed'].includes(s)) return 'complete';
+    if (['voided', 'void', 'cancelled', 'canceled', 'rejected'].includes(s)) return 'voided';
+    return 'draft'; // default
+  }
+
   private buildMigratePreview(): void {
     const grouped = new Map<string, any[]>();
     for (const row of this.migrateRows) {
@@ -412,6 +472,7 @@ export class SalesOrderMaterialsComponent implements OnInit {
         paymentMethod: firstRow['paymentTerm'] ?? '—',
         paymentStatus: firstRow['paymentStatus'] ?? '—',
         deliveryDate: firstRow['deliveryDate'] ?? '—',
+        salesStatus: this.normalizeSalesStatus(firstRow['status'] ?? firstRow['salesStatus'] ?? ''),
       };
     });
   }
