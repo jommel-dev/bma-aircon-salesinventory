@@ -357,7 +357,7 @@ CREATE TABLE IF NOT EXISTS public.tblproduct_capacity_material_map (
 -- 3.9 Material stock balance
 CREATE TABLE IF NOT EXISTS public.tblmaterial_stock_balance (
   id BIGSERIAL PRIMARY KEY,
-  material_id BIGINT NOT NULL REFERENCES public.tblmaterial_items(id),
+  material_id BIGINT NOT NULL REFERENCES public.tblmaterials(id),
   on_hand NUMERIC(14, 2) NOT NULL DEFAULT 0,
   reserved NUMERIC(14, 2) NOT NULL DEFAULT 0,
   available NUMERIC(14, 2) GENERATED ALWAYS AS (on_hand - reserved) STORED,
@@ -368,7 +368,7 @@ CREATE TABLE IF NOT EXISTS public.tblmaterial_stock_balance (
 -- 3.10 Material stock movement ledger
 CREATE TABLE IF NOT EXISTS public.tblmaterial_stock_movement (
   id BIGSERIAL PRIMARY KEY,
-  material_id BIGINT NOT NULL REFERENCES public.tblmaterial_items(id),
+  material_id BIGINT NOT NULL REFERENCES public.tblmaterials(id),
   movement_type TEXT NOT NULL CHECK (movement_type IN ('IN', 'OUT', 'RESERVE', 'RELEASE', 'RETURN', 'ADJUST')),
   qty NUMERIC(14, 2) NOT NULL CHECK (qty > 0),
   source_type TEXT NOT NULL CHECK (source_type IN ('PO', 'SO', 'MANUAL')),

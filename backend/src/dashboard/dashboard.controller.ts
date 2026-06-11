@@ -119,11 +119,14 @@ export class DashboardController {
       request.user?.branchId ?? request.user?.branch_id ?? request.user?.branch,
     );
 
+    const userId = Number(request.user?.sub);
+
     return this.dashboardService.verifySalesReceivable(
       body,
       Number.isFinite(effectiveBranchId) && effectiveBranchId > 0
         ? effectiveBranchId
         : undefined,
+      Number.isFinite(userId) ? userId : undefined,
     );
   }
 }

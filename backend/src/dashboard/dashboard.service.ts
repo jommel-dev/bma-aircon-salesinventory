@@ -521,18 +521,18 @@ export class DashboardService {
   }
 
   private getRecordedSalesPredicate(alias: string): string {
-    // Only include cheque payments if their status is paid/posted/cleared/complete/completed/remitted
-    // Exclude all other cheques from collected sales
+    // Only include cheque/credit-card payments if their status is paid/posted/cleared/complete/completed/remitted
+    // Exclude all other cheques/cards from collected sales
     // All other payment methods remain included as before
     return `(
       ${this.getRecordedSalesAmountExpression(alias)} > 0
       AND ${alias}.normalized_status IN ('remitted', 'complete', 'completed')
       AND (
-        POSITION('cheque' IN COALESCE(${alias}.payment_methods, '')) = 0
+        (POSITION('cheque' IN COALESCE(${alias}.payment_methods, '')) = 0 AND POSITION('credit-card' IN COALESCE(${alias}.payment_methods, '')) = 0)
         OR EXISTS (
           SELECT 1 FROM payment_scope ps
           WHERE ps.so_id = ${alias}.so_id
-            AND ps.normalized_method = 'cheque'
+            AND ps.normalized_method IN ('cheque', 'credit-card')
             AND COALESCE(NULLIF(ps.normalized_status, ''), 'unpaid') IN ('paid', 'posted', 'cleared', 'complete', 'completed', 'remitted')
         )
       )
@@ -1276,6 +1276,27 @@ export class DashboardService {
       }
 
       if (mode === 'cheques') {
+        // First check if tblsales_order_payments exists
+        const tableCheck = await this.databaseService.query(
+          `SELECT EXISTS (SELECT 1 FROM information_schema.tables WHERE table_schema = 'public' AND table_name = 'tblsales_order_payments') AS exists`,
+        );
+        const hasSalesOrderPayments = tableCheck.rows[0]?.exists === true;
+
+        const sopUnion = hasSalesOrderPayments
+          ? `UNION ALL
+             SELECT
+               sop.id::text AS payment_id,
+               sop.sales_order_id::text AS so_id,
+               COALESCE(sop.amount, 0) AS amount,
+               REPLACE(REPLACE(LOWER(TRIM(COALESCE(sop.method, ''))), '_', '-'), ' ', '-') AS normalized_method,
+               REPLACE(REPLACE(LOWER(TRIM(COALESCE(sop.status, ''))), '_', '-'), ' ', '-') AS normalized_status,
+               COALESCE(sop.reference_no, '-') AS reference_no,
+               COALESCE(sop.check_no, '-') AS check_no,
+               COALESCE(sop.bank_name, '-') AS bank_name,
+               sop.post_dated::text AS post_dated
+             FROM tblsales_order_payments sop`
+          : '';
+
         const result = await this.databaseService.query<{
           paymentId: string;
           soNumber: string;
@@ -1289,6 +1310,7 @@ export class DashboardService {
           status: string;
         }>(
           `WITH payment_scope AS (
+             -- Legacy payments from tblso_payments
              SELECT
                sp.id::text AS payment_id,
                COALESCE(to_jsonb(sp)->>'so_id', to_jsonb(sp)->>'soId') AS so_id,
@@ -1304,6 +1326,8 @@ export class DashboardService {
                COALESCE(to_jsonb(sp)->>'bank_name', to_jsonb(sp)->>'bankName', '-') AS bank_name,
                COALESCE(to_jsonb(sp)->>'post_dated', to_jsonb(sp)->>'postDated', null) AS post_dated
              FROM tblso_payments sp
+
+             ${sopUnion}
            )
            SELECT
              ps.payment_id::text AS "paymentId",
@@ -1321,8 +1345,8 @@ export class DashboardService {
            LEFT JOIN tblcustomer c ON c.id::text = COALESCE(to_jsonb(so)->>'customer_id', to_jsonb(so)->>'customerId', '')
            WHERE ps.normalized_method IN ('cheque', 'credit-card')
              AND COALESCE(NULLIF(ps.normalized_status, ''), 'unpaid') NOT IN ('paid', 'posted', 'cleared', 'complete', 'completed', 'remitted')
-             AND REPLACE(REPLACE(LOWER(TRIM(COALESCE(to_jsonb(so)->>'status', 'pending'))), '_', '-'), ' ', '-') IN ('remitted', 'complete', 'completed')
-             AND ($1::text IS NULL OR COALESCE(to_jsonb(so)->>'branchId', to_jsonb(so)->>'branch_id', '') = $1::text)
+             AND REPLACE(REPLACE(LOWER(TRIM(COALESCE(so.status, 'pending'))), '_', '-'), ' ', '-') NOT IN ('voided', 'cancelled', 'draft')
+             AND ($1::text IS NULL OR COALESCE(so."branchId"::text, '') = $1::text)
            ORDER BY so.id DESC
            LIMIT 100`,
           [branchParam],
@@ -1474,6 +1498,7 @@ export class DashboardService {
   async verifySalesReceivable(
     payload: { paymentId?: number; method?: DashboardReceivableVerificationMode },
     branchId?: number,
+    userId?: number,
   ): Promise<{ success: boolean; message: string }> {
     const paymentId = Number(payload.paymentId);
     if (!Number.isFinite(paymentId) || paymentId <= 0) {
@@ -1481,24 +1506,50 @@ export class DashboardService {
     }
 
     await this.databaseService.withTransaction(async (client) => {
-      const result = await client.query<{
+      // Try tblso_payments first (UUID id)
+      let result = await client.query<{
         paymentId: string;
         salesOrderId: string;
         method: string;
         branchId: string | null;
+        source: string;
       }>(
         `SELECT
            sp.id::text AS "paymentId",
            COALESCE(to_jsonb(sp)->>'so_id', to_jsonb(sp)->>'soId') AS "salesOrderId",
            REPLACE(REPLACE(LOWER(TRIM(COALESCE(to_jsonb(sp)->>'method', ''))), '_', '-'), ' ', '-') AS method,
-           NULLIF(COALESCE(to_jsonb(so)->>'branchId', to_jsonb(so)->>'branch_id', ''), '') AS "branchId"
+           NULLIF(COALESCE(to_jsonb(so)->>'branchId', to_jsonb(so)->>'branch_id', ''), '') AS "branchId",
+           'tblso_payments' AS source
          FROM tblso_payments sp
          LEFT JOIN tblsales_order so
            ON so.id::text = COALESCE(to_jsonb(sp)->>'so_id', to_jsonb(sp)->>'soId')
-         WHERE sp.id = $1
+         WHERE sp.id::text = $1
          LIMIT 1`,
-        [paymentId],
+        [String(paymentId)],
       );
+
+      // If not found, try tblsales_order_payments (BIGSERIAL id)
+      if (result.rowCount === 0) {
+        result = await client.query<{
+          paymentId: string;
+          salesOrderId: string;
+          method: string;
+          branchId: string | null;
+          source: string;
+        }>(
+          `SELECT
+             sop.id::text AS "paymentId",
+             sop.sales_order_id::text AS "salesOrderId",
+             REPLACE(REPLACE(LOWER(TRIM(COALESCE(sop.method, ''))), '_', '-'), ' ', '-') AS method,
+             NULLIF(COALESCE(so."branchId"::text, ''), '') AS "branchId",
+             'tblsales_order_payments' AS source
+           FROM tblsales_order_payments sop
+           LEFT JOIN tblsales_order so ON so.id = sop.sales_order_id
+           WHERE sop.id = $1
+           LIMIT 1`,
+          [paymentId],
+        );
+      }
 
       if (result.rowCount === 0) {
         throw new NotFoundException('Receivable payment not found');
@@ -1512,29 +1563,59 @@ export class DashboardService {
         throw new NotFoundException('Receivable payment not found in the current branch');
       }
 
-      const paymentColumns = await this.getTableColumns(client, 'tblso_payments');
-      const statusColumn = this.pickColumn(paymentColumns, ['status']);
-      const paymentDateColumn = this.pickColumn(paymentColumns, ['payment_date', 'paymentDate']);
-      if (!statusColumn) {
-        throw new BadRequestException('Sales payment status column is not configured as expected');
-      }
-
-      const updateParams: unknown[] = ['paid'];
-      const updates = [`"${statusColumn}" = $1`];
-      if (paymentDateColumn) {
+      // Update the correct table based on where the payment was found
+      if (payment.source === 'tblsales_order_payments') {
+        const updateParams: unknown[] = ['paid'];
+        const updates = [`status = $1`];
         updateParams.push(new Date().toISOString());
-        updates.push(`"${paymentDateColumn}" = $${updateParams.length}`);
-      }
-      updateParams.push(paymentId);
+        updates.push(`payment_date = $${updateParams.length}`);
+        updateParams.push(paymentId);
 
-      await client.query(
-        `UPDATE tblso_payments
-         SET ${updates.join(', ')}
-         WHERE id = $${updateParams.length}`,
-        updateParams,
-      );
+        await client.query(
+          `UPDATE tblsales_order_payments
+           SET ${updates.join(', ')}
+           WHERE id = $${updateParams.length}`,
+          updateParams,
+        );
+      } else {
+        const paymentColumns = await this.getTableColumns(client, 'tblso_payments');
+        const statusColumn = this.pickColumn(paymentColumns, ['status']);
+        const paymentDateColumn = this.pickColumn(paymentColumns, ['payment_date', 'paymentDate']);
+        if (!statusColumn) {
+          throw new BadRequestException('Sales payment status column is not configured as expected');
+        }
+
+        const updateParams: unknown[] = ['paid'];
+        const updates = [`"${statusColumn}" = $1`];
+        if (paymentDateColumn) {
+          updateParams.push(new Date().toISOString());
+          updates.push(`"${paymentDateColumn}" = $${updateParams.length}`);
+        }
+        updateParams.push(paymentId);
+
+        await client.query(
+          `UPDATE tblso_payments
+           SET ${updates.join(', ')}
+           WHERE id = $${updateParams.length}`,
+          updateParams,
+        );
+      }
 
       await this.updateSalesOrderStatusForSettlement(client, Number(payment.salesOrderId), branchId);
+    });
+
+    // Log the verification in audit log
+    await this.auditLogService.logMutation({
+      action: 'DASHBOARD_VERIFY_RECEIVABLE',
+      entityType: 'sales-payment',
+      entityId: paymentId,
+      actor: { userId },
+      description: `Verified ${payload.method ?? 'cheque'} receivable payment #${paymentId} as paid`,
+      metadata: {
+        paymentId,
+        method: payload.method,
+        branchId,
+      },
     });
 
     return {

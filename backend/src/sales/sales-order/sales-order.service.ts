@@ -7426,6 +7426,58 @@ export class SalesOrderService {
           }
         }
 
+        // 9. Stock deduction: when status transitions to 'complete', deduct material stock
+        const previousStatus = String(existingOrder.status ?? '').trim().toLowerCase();
+        const newStatus = String(dto.status ?? '').trim().toLowerCase();
+        if (
+          newStatus === 'complete' &&
+          previousStatus !== 'complete' &&
+          previousStatus !== 'completed'
+        ) {
+          for (const item of productItems) {
+            const materialId = Number(item.materialId);
+            const qty = Number(item.qty ?? 0);
+            const isNonInventory = Boolean(item.isNonInventory);
+
+            // Only deduct stock for inventory items with a valid materialId
+            if (!materialId || materialId <= 0 || qty <= 0 || isNonInventory) {
+              continue;
+            }
+
+            // Record OUT movement in tblmaterial_stock_movement
+            try {
+              await this.materialStockService.recordMovement(
+                {
+                  materialId,
+                  movementType: 'OUT',
+                  qty,
+                  sourceType: 'SO',
+                  sourceId: id,
+                  sourceLineKey: `SO-${id}-MAT-${materialId}`,
+                  statusSnapshot: 'complete',
+                  remarks: `Stock deducted for Material SO #${id}`,
+                },
+                { client },
+              );
+            } catch (moveErr: any) {
+              // Log but don't block the transaction if movement fails (e.g., duplicate)
+              if (moveErr?.message?.includes('unique') || moveErr?.message?.includes('duplicate')) {
+                // Already recorded — idempotent, skip
+              } else {
+                throw moveErr;
+              }
+            }
+
+            // Also deduct from tblmaterials.on_hand_stock for consistency
+            await client.query(
+              `UPDATE tblmaterials
+               SET on_hand_stock = GREATEST(COALESCE(on_hand_stock, 0) - $1, 0)
+               WHERE id = $2`,
+              [qty, materialId],
+            );
+          }
+        }
+
         return {
           salesOrderId: id,
           customerId,
