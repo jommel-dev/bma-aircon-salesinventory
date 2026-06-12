@@ -164,7 +164,7 @@ export class UserManagementService {
 
   async getUserEffectivePermissions(userId: number): Promise<ApiListResponse<UserEffectivePermissionApiItem>> {
     const response = await apiClient.get<ApiListResponse<UserEffectivePermissionApiItem>>(`/users/${userId}/effective-permissions`);
-    return response.data;
+    return response.data ?? { success: false, data: [] };
   }
 
   async createUser(payload: CreateUserPayload): Promise<ApiCreateResponse> {

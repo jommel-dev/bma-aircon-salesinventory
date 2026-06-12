@@ -657,7 +657,9 @@ export class MaterialsService {
         b."brandName" AS brand_name,
         m.unit,
         m.unit_price,
-        m.sell_price
+        m.sell_price,
+        m.on_hand_stock,
+        m.reorder_level
       FROM tblmaterials m
       LEFT JOIN tblbrands b ON m.brand_id = b.id
       WHERE m.deleted_at IS NULL

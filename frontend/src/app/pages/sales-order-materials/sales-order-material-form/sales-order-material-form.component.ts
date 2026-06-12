@@ -72,6 +72,12 @@ export class SalesOrderMaterialFormComponent implements OnInit {
   orderStatus: string = '';
   isCancelDialogOpen = false;
 
+  // ─── Stock Validation Modal ─────────────────────────────────────────────────
+  isValidationModalOpen = false;
+  validationWarnings: string[] = [];
+  validationErrors: string[] = [];
+  pendingSubmissionStatus: string = '';
+
   // ─── SO Number Display ──────────────────────────────────────────────────────
   nextSoNumber: string = '';
   currentSoNumber: string = '';
@@ -260,6 +266,8 @@ export class SalesOrderMaterialFormComponent implements OnInit {
       total: material.sell_price * 1,
       materialId: material.id,
       isNonInventory: false,
+      onHandStock: material.on_hand_stock,
+      reorderLevel: material.reorder_level,
     };
 
     this.productItems.push(newItem);
@@ -469,8 +477,84 @@ export class SalesOrderMaterialFormComponent implements OnInit {
     return true;
   }
 
+  /**
+   * Validates stock availability for inventory items.
+   * Returns { warnings: [], errors: [] }
+   */
+  private validateStockAvailability(): { warnings: string[]; errors: string[] } {
+    const warnings: string[] = [];
+    const errors: string[] = [];
+
+    this.productItems.forEach((item) => {
+      // Skip non-inventory items
+      if (item.isNonInventory) {
+        return;
+      }
+
+      const stock = item.onHandStock ?? 0;
+      const qty = item.qty;
+      const description = item.description;
+
+      // Zero stock - Warning
+      if (stock === 0) {
+        warnings.push(`⚠️ ${description}: No stock on hand. Can be considered to buy from other supplier (negative stock).`);
+      }
+      // Quantity greater than stock - Error
+      else if (qty > stock) {
+        errors.push(`❌ ${description}: Quantity (${qty}) is greater than stock on hand (${stock}).`);
+      }
+    });
+
+    return { warnings, errors };
+  }
+
+  /**
+   * Validates payment setup - only one payment method should be used.
+   * Returns { errors: [] }
+   */
+  private validatePaymentSetup(): { errors: string[] } {
+    const errors: string[] = [];
+
+    // Check that at least one payment method is configured
+    const validPayments = this.paymentDetails.filter((p) => p.method && p.amount > 0);
+
+    if (validPayments.length === 0) {
+      errors.push('At least one payment method with amount greater than 0 is required.');
+    }
+
+    // Check that only one payment method is selected
+    if (validPayments.length > 1) {
+      errors.push('Only one payment method should be selected per sales order.');
+    }
+
+    return { errors };
+  }
+
   cancel(): void {
     this.cancelled.emit();
+  }
+
+  /**
+   * Opens validation modal with warnings and errors.
+   * User can proceed despite warnings, but must fix errors.
+   */
+  private openValidationModal(status: string, warnings: string[], errors: string[]): void {
+    this.validationWarnings = warnings;
+    this.validationErrors = errors;
+    this.pendingSubmissionStatus = status;
+    this.isValidationModalOpen = true;
+  }
+
+  closeValidationModal(): void {
+    this.isValidationModalOpen = false;
+    this.validationWarnings = [];
+    this.validationErrors = [];
+    this.pendingSubmissionStatus = '';
+  }
+
+  async proceedWithSubmission(): Promise<void> {
+    this.isValidationModalOpen = false;
+    await this.performSubmission(this.pendingSubmissionStatus);
   }
 
   async submitForm(status: string): Promise<void> {
@@ -479,6 +563,37 @@ export class SalesOrderMaterialFormComponent implements OnInit {
     this.isSubmitting = true;
     this.validationError = '';
 
+    try {
+      // Validate non-inventory items
+      if (!this.validateNonInventoryItems()) {
+        this.isSubmitting = false;
+        return;
+      }
+
+      // Validate stock availability
+      const { warnings: stockWarnings, errors: stockErrors } = this.validateStockAvailability();
+
+      // Validate payment setup
+      const { errors: paymentErrors } = this.validatePaymentSetup();
+
+      // Combine all errors
+      const allErrors = [...stockErrors, ...paymentErrors];
+
+      // If there are warnings or errors, show modal
+      if (allErrors.length > 0 || stockWarnings.length > 0) {
+        this.isSubmitting = false;
+        this.openValidationModal(status, stockWarnings, allErrors);
+        return;
+      }
+
+      // No issues, proceed with submission
+      await this.performSubmission(status);
+    } finally {
+      this.isSubmitting = false;
+    }
+  }
+
+  private async performSubmission(status: string): Promise<void> {
     try {
       const payload = this.buildPayload(status);
 
@@ -495,7 +610,6 @@ export class SalesOrderMaterialFormComponent implements OnInit {
       const message =
         error?.response?.data?.message ?? error?.message ?? 'An unexpected error occurred. Please try again later.';
       this.notificationService.error('Error', message);
-    } finally {
       this.isSubmitting = false;
     }
   }

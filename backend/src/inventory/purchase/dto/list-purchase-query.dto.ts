@@ -4,4 +4,5 @@ export class ListPurchaseQueryDto {
   search?: string;
   branchId?: number;
   createdBy?: number;
+  po_type?: string;
 }

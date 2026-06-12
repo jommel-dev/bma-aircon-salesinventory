@@ -1316,13 +1316,30 @@ export class PurchaseService {
           const nextSeq = seqResult.rows[0]?.next_seq ?? 1;
           const generatedPoNumber = `${year}-${nextSeq.toString().padStart(4, '0')}`;
 
-          await client.query(
-            `UPDATE tblpurchase_orders
-             SET "${poNumberColumn}" = $1
-             WHERE id = $2`,
-            [generatedPoNumber, purchaseOrderId],
-          );
-          resolvedPoNumber = generatedPoNumber;
+          try {
+            await client.query(
+              `UPDATE tblpurchase_orders
+               SET "${poNumberColumn}" = $1
+               WHERE id = $2`,
+              [generatedPoNumber, purchaseOrderId],
+            );
+            resolvedPoNumber = generatedPoNumber;
+          } catch (poNumErr: any) {
+            // If po_number is a GENERATED ALWAYS column, it can't be updated directly.
+            // Fall back to reading the auto-generated value.
+            if (
+              poNumErr?.message?.includes('can only be updated to DEFAULT') ||
+              poNumErr?.message?.includes('generated column')
+            ) {
+              const fallbackResult = await client.query<{ po_number: string | null }>(
+                `SELECT "${poNumberColumn}" AS po_number FROM tblpurchase_orders WHERE id = $1`,
+                [purchaseOrderId],
+              );
+              resolvedPoNumber = fallbackResult.rows[0]?.po_number ?? `PO-${purchaseOrderId.toString().padStart(6, '0')}`;
+            } else {
+              throw poNumErr;
+            }
+          }
         } else {
           const purchaseOrderPoNumberResult = await client.query<{ po_number: string | null }>(
             `SELECT COALESCE(
@@ -2148,6 +2165,55 @@ export class PurchaseService {
             `UPDATE tblpurchase_orders SET status = 'received' WHERE id = $1`,
             [id],
           );
+
+          // For ACM type: record inbound stock movements on received
+          if (poType === 'ACM') {
+            const materialItemColumns = await this.getTableColumns(client, 'tbltransaction_material_items');
+            const materialIdCol = this.pickColumn(materialItemColumns, ['material_id', 'productId', 'product_id']);
+            const quantityCol = this.pickColumn(materialItemColumns, ['quantity', 'totalSetQty', 'total_set_qty']);
+            const purchaseIdCol = this.pickColumn(materialItemColumns, ['purchase_id', 'purchaseId']);
+            const transTypeCol = this.pickColumn(materialItemColumns, ['trans_type', 'transType']);
+
+            if (materialIdCol && quantityCol && purchaseIdCol) {
+              const materialItemsResult = await client.query<{ material_id: string; quantity: string; item_id: string }>(
+                `SELECT "${materialIdCol}" AS material_id, "${quantityCol}" AS quantity, id AS item_id
+                 FROM tbltransaction_material_items
+                 WHERE "${purchaseIdCol}" = $1
+                 ${transTypeCol ? `AND LOWER(COALESCE("${transTypeCol}", 'purchase')) = 'purchase'` : ''}`,
+                [id],
+              );
+
+              for (const row of materialItemsResult.rows) {
+                const materialId = this.toOptionalNumber(row.material_id);
+                const qty = this.toOptionalNumber(row.quantity) ?? 0;
+
+                if (materialId && qty > 0) {
+                  // Update on_hand_stock in tblmaterials
+                  await client.query(
+                    `UPDATE tblmaterials SET on_hand_stock = COALESCE(on_hand_stock, 0) + $1, updated_at = NOW() WHERE id = $2`,
+                    [qty, materialId],
+                  );
+
+                  // Record stock movement (type IN) via MaterialStockService
+                  await this.materialStockService.recordMovement(
+                    {
+                      materialId,
+                      movementType: 'IN',
+                      qty,
+                      sourceType: 'PO',
+                      sourceId: id,
+                      sourceLineKey: `po-${id}-item-${row.item_id}`,
+                      statusSnapshot: 'received',
+                      remarks: `Inbound from ACM purchase order #${id} (received)`,
+                      createdBy: userId,
+                    },
+                    { client },
+                  );
+                }
+              }
+            }
+          }
+
           return { purchaseId: id, status: 'received', isTransfer: false };
         }
 
@@ -2356,51 +2422,8 @@ export class PurchaseService {
             ['completed', id],
           );
 
-          // Record inbound stock movements for each ACM line item
-          const materialItemColumns = await this.getTableColumns(client, 'tbltransaction_material_items');
-          const materialIdCol = this.pickColumn(materialItemColumns, ['material_id', 'productId', 'product_id']);
-          const quantityCol = this.pickColumn(materialItemColumns, ['quantity', 'totalSetQty', 'total_set_qty']);
-          const purchaseIdCol = this.pickColumn(materialItemColumns, ['purchase_id', 'purchaseId']);
-          const transTypeCol = this.pickColumn(materialItemColumns, ['trans_type', 'transType']);
-
-          if (materialIdCol && quantityCol && purchaseIdCol) {
-            const materialItemsResult = await client.query<{ material_id: string; quantity: string; item_id: string }>(
-              `SELECT "${materialIdCol}" AS material_id, "${quantityCol}" AS quantity, id AS item_id
-               FROM tbltransaction_material_items
-               WHERE "${purchaseIdCol}" = $1
-               ${transTypeCol ? `AND LOWER(COALESCE("${transTypeCol}", 'purchase')) = 'purchase'` : ''}`,
-              [id],
-            );
-
-            for (const row of materialItemsResult.rows) {
-              const materialId = this.toOptionalNumber(row.material_id);
-              const qty = this.toOptionalNumber(row.quantity) ?? 0;
-
-              if (materialId && qty > 0) {
-                // Update on_hand_stock in tblmaterials
-                await client.query(
-                  `UPDATE tblmaterials SET on_hand_stock = COALESCE(on_hand_stock, 0) + $1, updated_at = NOW() WHERE id = $2`,
-                  [qty, materialId],
-                );
-
-                // Record stock movement (type IN) via MaterialStockService
-                await this.materialStockService.recordMovement(
-                  {
-                    materialId,
-                    movementType: 'IN',
-                    qty,
-                    sourceType: 'PO',
-                    sourceId: id,
-                    sourceLineKey: `po-${id}-item-${row.item_id}`,
-                    statusSnapshot: 'completed',
-                    remarks: `Inbound from ACM purchase order #${id}`,
-                    createdBy: userId,
-                  },
-                  { client },
-                );
-              }
-            }
-          }
+          // Stock movements already recorded on 'received' transition.
+          // completeRequest just finalizes the status.
 
           return { purchaseId: id, status: 'completed' };
         }
@@ -4259,13 +4282,20 @@ export class PurchaseService {
     const search = (query.search ?? '').trim().toLowerCase();
     const branchId = Number(query.branchId);
     const createdBy = Number(query.createdBy);
+    const poType = String(query.po_type ?? '').trim().toUpperCase();
 
     const params: unknown[] = [];
     const whereParts: string[] = [];
 
+    // Filter by po_type if provided (e.g. 'ACM')
+    if (poType && ['ACU', 'ACP', 'ACM'].includes(poType)) {
+      params.push(poType);
+      whereParts.push(`UPPER(COALESCE(base.po_type, 'ACU')) = $${params.length}`);
+    }
+
     if (mode === 'deliveries') {
       whereParts.push(`LOWER(COALESCE(base.original_status, '')) NOT IN (
-        'for_approval', 'for approval', 'approval', 'approved', 'completed', 'cancelled', 'rejected', 'received', 'transfer_received'
+        'for_approval', 'for approval', 'approval', 'completed', 'cancelled', 'rejected', 'transfer_received'
       )`);
     } else if (mode === 'approvals') {
       whereParts.push(`LOWER(COALESCE(base.original_status, '')) IN (

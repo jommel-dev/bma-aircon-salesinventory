@@ -8,6 +8,7 @@ import {
   Delete,
   Put,
   Query,
+  Header,
 } from '@nestjs/common';
 import { UsersService } from './users.service';
 import { CreateUserDto } from './dto/create-user.dto';
@@ -63,6 +64,9 @@ export class UsersController {
   }
 
   @Get(':id/permission-overrides')
+  @Header('Cache-Control', 'no-cache, no-store, must-revalidate')
+  @Header('Pragma', 'no-cache')
+  @Header('Expires', '0')
   findUserPermissionOverrides(@Param('id') id: string) {
     return this.usersService.findUserPermissionOverrides(+id);
   }
@@ -76,6 +80,9 @@ export class UsersController {
   }
 
   @Get(':id/effective-permissions')
+  @Header('Cache-Control', 'no-cache, no-store, must-revalidate')
+  @Header('Pragma', 'no-cache')
+  @Header('Expires', '0')
   findUserEffectivePermissions(@Param('id') id: string) {
     return this.usersService.findUserEffectivePermissions(+id);
   }

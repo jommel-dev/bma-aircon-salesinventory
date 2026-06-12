@@ -33,6 +33,10 @@ export const apiClient = axios.create({
   headers: {
     'Content-Type': 'application/json',
   },
+  validateStatus: (status) => {
+    // Treat 2xx and 304 (Not Modified) as valid responses
+    return (status >= 200 && status < 300) || status === 304;
+  },
 });
 
 let isRefreshing = false;
@@ -87,6 +91,11 @@ async function syncEffectivePermissionKeysWithToken(accessToken: string): Promis
     }>(`${API_BASE_URL}/users/${userId}/effective-permissions`, {
       headers: {
         Authorization: `Bearer ${accessToken}`,
+        'Cache-Control': 'no-cache, no-store, must-revalidate',
+      },
+      validateStatus: (status) => {
+        // Treat 2xx as valid responses (avoid 304 caching issues)
+        return status >= 200 && status < 300;
       },
     });
 

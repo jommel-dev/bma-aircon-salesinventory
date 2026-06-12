@@ -528,3 +528,59 @@
     </div>
   </div>
 }
+
+<!-- Stock & Payment Validation Modal -->
+@if (isValidationModalOpen) {
+  <div class="fixed inset-0 z-100 flex items-center justify-center">
+    <div class="absolute inset-0 bg-black/50" (click)="closeValidationModal()"></div>
+    <div class="relative z-10 w-full max-w-md rounded-2xl bg-white p-6 shadow-xl dark:bg-gray-900">
+      <h3 class="text-lg font-semibold text-gray-800 dark:text-white">Order Validation</h3>
+      
+      <div class="mt-4 max-h-96 space-y-3 overflow-y-auto">
+        <!-- Errors Section -->
+        @if (validationErrors.length > 0) {
+          <div class="rounded-lg bg-red-50 p-3 dark:bg-red-900/20">
+            <p class="text-sm font-semibold text-red-700 dark:text-red-400">Issues Found:</p>
+            <ul class="mt-2 space-y-1">
+              @for (error of validationErrors; track error) {
+                <li class="text-sm text-red-600 dark:text-red-300">{{ error }}</li>
+              }
+            </ul>
+          </div>
+        }
+
+        <!-- Warnings Section -->
+        @if (validationWarnings.length > 0) {
+          <div class="rounded-lg bg-amber-50 p-3 dark:bg-amber-900/20">
+            <p class="text-sm font-semibold text-amber-700 dark:text-amber-400">Warnings:</p>
+            <ul class="mt-2 space-y-1">
+              @for (warning of validationWarnings; track warning) {
+                <li class="text-sm text-amber-600 dark:text-amber-300">{{ warning }}</li>
+              }
+            </ul>
+          </div>
+        }
+      </div>
+
+      <div class="mt-5 flex items-center justify-end gap-3">
+        <button
+          type="button"
+          (click)="closeValidationModal()"
+          class="rounded-lg border border-gray-300 bg-white px-4 py-2 text-sm font-medium text-gray-700 hover:bg-gray-50 dark:border-gray-600 dark:bg-gray-800 dark:text-gray-200 dark:hover:bg-gray-700"
+        >
+          Back
+        </button>
+        <!-- Only show Proceed button if there are no errors -->
+        @if (validationErrors.length === 0) {
+          <button
+            type="button"
+            (click)="proceedWithSubmission()"
+            class="rounded-lg bg-amber-600 px-4 py-2 text-sm font-medium text-white hover:bg-amber-700"
+          >
+            Proceed Anyway
+          </button>
+        }
+      </div>
+    </div>
+  </div>
+}

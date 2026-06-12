@@ -253,7 +253,7 @@ export class RbacService {
         data?: Array<{ permissionKey: string; isAllowed: boolean }>;
       }>(`/users/${userId}/effective-permissions`);
 
-      if (!response.data?.success) {
+      if (!response.data || !response.data.success) {
         return false;
       }
 

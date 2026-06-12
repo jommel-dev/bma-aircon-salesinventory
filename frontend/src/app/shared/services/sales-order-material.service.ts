@@ -31,6 +31,8 @@ export interface MaterialSearchResult {
   unit: string;
   unit_price: number;  // cost
   sell_price: number;  // rate
+  on_hand_stock: number;  // stock on hand
+  reorder_level: number;  // reorder level
 }
 
 export interface LineItem {
@@ -46,6 +48,8 @@ export interface LineItem {
   total: number;        // computed: (rate - discount) * qty
   materialId?: number | null;
   isNonInventory: boolean;
+  onHandStock?: number;  // stock on hand for validation
+  reorderLevel?: number; // reorder level
 }
 
 export interface CreateMaterialSalesOrderPayload {
