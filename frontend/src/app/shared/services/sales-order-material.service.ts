@@ -95,6 +95,8 @@ export interface MaterialSalesOrderListItem {
   scheduleDate: string | null;
   deliveryDate: string | null;
   createdAt: string | null;
+  createdBy: number | null;
+  createdByName: string | null;
   paymentMethod: string;
   paymentStatus: string;
   payments: Array<{ method: string; status: string; amount: number; terms: string }>;

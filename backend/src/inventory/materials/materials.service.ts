@@ -217,6 +217,137 @@ export class MaterialsService {
 
   /**
    * =====================================================
+   * MIGRATE STOCK
+   * =====================================================
+   * Bulk update stock levels for existing materials.
+   * Records IN movements for full audit trail.
+   * 
+   * Steps:
+   * 1. For each row: lookup material by code
+   * 2. Record IN stock movement
+   * 3. Update material on_hand_stock
+   * 4. Return results with success/failure count
+   * =====================================================
+   */
+  async migrateStock(
+    rows: any[],
+    userId: number,
+  ): Promise<{ success: boolean; summary: { total: number; updated: number; failed: number }; results: any[] }> {
+    const results: any[] = [];
+    let updated = 0;
+    let failed = 0;
+
+    for (let i = 0; i < rows.length; i++) {
+      const row = rows[i];
+      const rowNum = i + 1;
+
+      try {
+        // Validate required fields
+        const materialCode = (row.material_code ?? '').toString().trim();
+        const quantity = Number(row.quantity ?? 0);
+
+        if (!materialCode) {
+          results.push({ row: rowNum, status: 'failed', message: 'material_code is required' });
+          failed++;
+          continue;
+        }
+
+        if (quantity <= 0) {
+          results.push({ row: rowNum, status: 'failed', message: 'quantity must be greater than 0' });
+          failed++;
+          continue;
+        }
+
+        // Find material by code
+        const materialResult = await this.db.query(
+          `SELECT id, material_name, on_hand_stock FROM tblmaterials 
+           WHERE material_code = $1 AND deleted_at IS NULL LIMIT 1`,
+          [materialCode],
+        );
+
+        if (materialResult.rows.length === 0) {
+          results.push({ row: rowNum, status: 'failed', message: `Material with code "${materialCode}" not found` });
+          failed++;
+          continue;
+        }
+
+        const material = materialResult.rows[0];
+        const materialId = material.id;
+        const previousStock = material.on_hand_stock || 0;
+        const newStock = previousStock + quantity;
+
+        // Use transaction to ensure atomicity
+        await this.db.query('BEGIN');
+
+        try {
+          // Record IN movement for audit trail
+          await this.db.query(
+            `INSERT INTO tblmaterial_stock_movement 
+             (material_id, movement_type, qty, source_type, source_id, source_line_key, status_snapshot, remarks, created_by)
+             VALUES ($1, 'IN', $2, 'STOCK_MIGRATION', 0, $3, 'migration', $4, $5)`,
+            [
+              materialId,
+              quantity,
+              `stock_migration_${materialId}_${Date.now()}`,
+              `Stock migration: Added ${quantity} units (${previousStock} → ${newStock})`,
+              userId,
+            ],
+          );
+
+          // Update on_hand_stock in tblmaterials
+          await this.db.query(
+            `UPDATE tblmaterials SET on_hand_stock = $1 WHERE id = $2`,
+            [newStock, materialId],
+          );
+
+          // Update or create stock balance
+          const balanceCheckResult = await this.db.query(
+            `SELECT id FROM tblmaterial_stock_balance WHERE material_id = $1`,
+            [materialId],
+          );
+
+          if (balanceCheckResult.rows.length > 0) {
+            // Update existing balance
+            await this.db.query(
+              `UPDATE tblmaterial_stock_balance SET on_hand = $1 WHERE material_id = $2`,
+              [newStock, materialId],
+            );
+          } else {
+            // Create new balance record
+            await this.db.query(
+              `INSERT INTO tblmaterial_stock_balance (material_id, on_hand, reserved) VALUES ($1, $2, 0)`,
+              [materialId, newStock],
+            );
+          }
+
+          await this.db.query('COMMIT');
+
+          results.push({
+            row: rowNum,
+            material_code: materialCode,
+            status: 'updated',
+            message: `Stock updated from ${previousStock} to ${newStock}`,
+          });
+          updated++;
+        } catch (innerErr: any) {
+          await this.db.query('ROLLBACK');
+          throw innerErr;
+        }
+      } catch (err: any) {
+        results.push({ row: rowNum, status: 'failed', message: err?.message || 'Unknown error' });
+        failed++;
+      }
+    }
+
+    return {
+      success: true,
+      summary: { total: rows.length, updated, failed },
+      results,
+    };
+  }
+
+  /**
+   * =====================================================
    * CREATE MATERIAL
    * =====================================================
    * Creates a new material in the inventory

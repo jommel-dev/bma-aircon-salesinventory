@@ -247,6 +247,26 @@ export class InventoryComponent implements OnInit, AfterViewChecked {
   /** Upload results after submission */
   bulkUploadResults: { success: boolean; summary: { total: number; created: number; skipped: number; failed: number }; results: any[] } | null = null;
 
+  // --- Stock Migration State ---
+
+  /** Whether the stock migration modal is visible */
+  isStockMigrationModalOpen = false;
+
+  /** Whether the stock migration is currently submitting */
+  isStockMigrating = false;
+
+  /** Error message from stock migration */
+  stockMigrationError = '';
+
+  /** Parsed rows from the stock migration file */
+  stockMigrationRows: any[] = [];
+
+  /** File name of the stock migration file */
+  stockMigrationFileName = '';
+
+  /** Stock migration results after submission */
+  stockMigrationResults: { success: boolean; summary: { total: number; updated: number; failed: number }; results: any[] } | null = null;
+
   constructor(
     private readonly materialInventoryService: MaterialInventoryService,
     private readonly elementRef: ElementRef
@@ -1254,39 +1274,64 @@ export class InventoryComponent implements OnInit, AfterViewChecked {
   /**
    * Parse a CSV file into rows.
    */
-  private async parseCsvFile(file: File): Promise<void> {
+  private async parseCsvFile(file: File, type: 'bulk-upload' | 'stock-migration' = 'bulk-upload'): Promise<void> {
     const text = await file.text();
     const lines = text.split(/\r?\n/).filter(line => line.trim());
     if (lines.length < 2) {
-      this.bulkUploadError = 'CSV file must have a header row and at least one data row.';
+      const errorMsg = 'CSV file must have a header row and at least one data row.';
+      if (type === 'bulk-upload') {
+        this.bulkUploadError = errorMsg;
+      } else {
+        this.stockMigrationError = errorMsg;
+      }
       return;
     }
 
     const headers = this.parseCsvLine(lines[0]).map(h => h.trim().toLowerCase());
-    const expectedHeaders = ['product_type', 'brand', 'material_name', 'material_code', 'unit', 'unit_price', 'sell_price', 'on_hand_stock', 'reorder_level'];
 
-    // Validate that at least material_name exists
-    if (!headers.includes('material_name')) {
-      this.bulkUploadError = 'CSV must contain a "material_name" column.';
-      return;
-    }
-
-    const rows: any[] = [];
-    for (let i = 1; i < lines.length; i++) {
-      const values = this.parseCsvLine(lines[i]);
-      const row: any = {};
-      for (let j = 0; j < headers.length; j++) {
-        const key = expectedHeaders.includes(headers[j]) ? headers[j] : headers[j];
-        row[key] = values[j]?.trim() ?? '';
+    if (type === 'stock-migration') {
+      // Stock migration: material_code and quantity required
+      if (!headers.includes('material_code') || !headers.includes('quantity')) {
+        this.stockMigrationError = 'CSV must contain "material_code" and "quantity" columns.';
+        return;
       }
-      // Only add rows that have at least a material_name
-      if (row.material_name?.trim()) {
-        rows.push(row);
-      }
-    }
 
-    this.bulkUploadRows = rows;
-    this.inferBrandsFromMaterialNames();
+      const rows: any[] = [];
+      for (let i = 1; i < lines.length; i++) {
+        const values = this.parseCsvLine(lines[i]);
+        const row: any = {};
+        for (let j = 0; j < headers.length; j++) {
+          row[headers[j]] = values[j]?.trim() ?? '';
+        }
+        if (row.material_code?.trim() && row.quantity?.trim()) {
+          rows.push(row);
+        }
+      }
+      this.stockMigrationRows = rows;
+    } else {
+      // Bulk upload: material_name required
+      const expectedHeaders = ['product_type', 'brand', 'material_name', 'material_code', 'unit', 'unit_price', 'sell_price', 'on_hand_stock', 'reorder_level'];
+      if (!headers.includes('material_name')) {
+        this.bulkUploadError = 'CSV must contain a "material_name" column.';
+        return;
+      }
+
+      const rows: any[] = [];
+      for (let i = 1; i < lines.length; i++) {
+        const values = this.parseCsvLine(lines[i]);
+        const row: any = {};
+        for (let j = 0; j < headers.length; j++) {
+          const key = expectedHeaders.includes(headers[j]) ? headers[j] : headers[j];
+          row[key] = values[j]?.trim() ?? '';
+        }
+        if (row.material_name?.trim()) {
+          rows.push(row);
+        }
+      }
+
+      this.bulkUploadRows = rows;
+      this.inferBrandsFromMaterialNames();
+    }
   }
 
   /**
@@ -1320,7 +1365,7 @@ export class InventoryComponent implements OnInit, AfterViewChecked {
   /**
    * Parse an Excel file (.xlsx/.xls) into rows using exceljs.
    */
-  private async parseExcelFile(file: File): Promise<void> {
+  private async parseExcelFile(file: File, type: 'bulk-upload' | 'stock-migration' = 'bulk-upload'): Promise<void> {
     const ExcelJS = await import('exceljs');
     const workbook = new ExcelJS.Workbook();
     const arrayBuffer = await file.arrayBuffer();
@@ -1328,7 +1373,12 @@ export class InventoryComponent implements OnInit, AfterViewChecked {
 
     const worksheet = workbook.worksheets[0];
     if (!worksheet || worksheet.rowCount < 2) {
-      this.bulkUploadError = 'Excel file must have a header row and at least one data row.';
+      const errorMsg = 'Excel file must have a header row and at least one data row.';
+      if (type === 'bulk-upload') {
+        this.bulkUploadError = errorMsg;
+      } else {
+        this.stockMigrationError = errorMsg;
+      }
       return;
     }
 
@@ -1339,33 +1389,63 @@ export class InventoryComponent implements OnInit, AfterViewChecked {
       headers[colNumber - 1] = (cell.value?.toString() ?? '').trim().toLowerCase();
     });
 
-    if (!headers.includes('material_name')) {
-      this.bulkUploadError = 'Excel file must contain a "material_name" column.';
-      return;
-    }
-
-    const rows: any[] = [];
-    for (let i = 2; i <= worksheet.rowCount; i++) {
-      const row = worksheet.getRow(i);
-      const rowObj: any = {};
-      let hasData = false;
-
-      row.eachCell({ includeEmpty: true }, (cell, colNumber) => {
-        const key = headers[colNumber - 1];
-        if (key) {
-          const val = cell.value?.toString()?.trim() ?? '';
-          rowObj[key] = val;
-          if (val) hasData = true;
-        }
-      });
-
-      if (hasData && rowObj.material_name?.trim()) {
-        rows.push(rowObj);
+    if (type === 'stock-migration') {
+      // Stock migration: material_code and quantity required
+      if (!headers.includes('material_code') || !headers.includes('quantity')) {
+        this.stockMigrationError = 'Excel file must contain "material_code" and "quantity" columns.';
+        return;
       }
-    }
 
-    this.bulkUploadRows = rows;
-    this.inferBrandsFromMaterialNames();
+      const rows: any[] = [];
+      for (let i = 2; i <= worksheet.rowCount; i++) {
+        const row = worksheet.getRow(i);
+        const rowObj: any = {};
+        let hasData = false;
+
+        row.eachCell({ includeEmpty: true }, (cell, colNumber) => {
+          const key = headers[colNumber - 1];
+          if (key) {
+            const val = cell.value?.toString()?.trim() ?? '';
+            rowObj[key] = val;
+            if (val) hasData = true;
+          }
+        });
+
+        if (hasData && rowObj.material_code?.trim() && rowObj.quantity?.trim()) {
+          rows.push(rowObj);
+        }
+      }
+      this.stockMigrationRows = rows;
+    } else {
+      // Bulk upload: material_name required
+      if (!headers.includes('material_name')) {
+        this.bulkUploadError = 'Excel file must contain a "material_name" column.';
+        return;
+      }
+
+      const rows: any[] = [];
+      for (let i = 2; i <= worksheet.rowCount; i++) {
+        const row = worksheet.getRow(i);
+        const rowObj: any = {};
+        let hasData = false;
+
+        row.eachCell({ includeEmpty: true }, (cell, colNumber) => {
+          const key = headers[colNumber - 1];
+          if (key) {
+            const val = cell.value?.toString()?.trim() ?? '';
+            rowObj[key] = val;
+            if (val) hasData = true;
+          }
+        });
+
+        if (hasData && rowObj.material_name?.trim()) {
+          rows.push(rowObj);
+        }
+      }
+
+      this.bulkUploadRows = rows;
+      this.inferBrandsFromMaterialNames();
+    }
   }
 
   /**
@@ -1441,6 +1521,109 @@ export class InventoryComponent implements OnInit, AfterViewChecked {
         'Failed to upload materials.';
     } finally {
       this.isBulkUploading = false;
+    }
+  }
+
+  // --- Stock Migration Methods ---
+
+  /**
+   * Open the stock migration modal.
+   */
+  openStockMigrationModal(): void {
+    this.stockMigrationError = '';
+    this.stockMigrationRows = [];
+    this.stockMigrationFileName = '';
+    this.stockMigrationResults = null;
+    this.isStockMigrating = false;
+    this.isStockMigrationModalOpen = true;
+  }
+
+  /**
+   * Close the stock migration modal.
+   */
+  closeStockMigrationModal(): void {
+    this.isStockMigrationModalOpen = false;
+    this.stockMigrationError = '';
+    this.stockMigrationRows = [];
+    this.stockMigrationFileName = '';
+    this.stockMigrationResults = null;
+  }
+
+  /**
+   * Download a CSV template for stock migration.
+   */
+  downloadStockMigrationTemplate(): void {
+    const headers = 'material_code,quantity';
+    const sampleRow = 'SPRING-001,50';
+    const csv = `${headers}\n${sampleRow}\n`;
+    const blob = new Blob([csv], { type: 'text/csv' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = 'stock_migration_template.csv';
+    a.click();
+    URL.revokeObjectURL(url);
+  }
+
+  /**
+   * Handle file selection for stock migration.
+   */
+  async onStockMigrationFileSelected(event: Event): Promise<void> {
+    const input = event.target as HTMLInputElement;
+    if (!input.files || input.files.length === 0) return;
+
+    const file = input.files[0];
+    this.stockMigrationFileName = file.name;
+    this.stockMigrationError = '';
+    this.stockMigrationRows = [];
+    this.stockMigrationResults = null;
+
+    const ext = file.name.split('.').pop()?.toLowerCase();
+
+    try {
+      if (ext === 'csv') {
+        await this.parseCsvFile(file, 'stock-migration');
+      } else if (ext === 'xlsx' || ext === 'xls') {
+        await this.parseExcelFile(file, 'stock-migration');
+      } else {
+        this.stockMigrationError = 'Unsupported file type. Please upload a .csv, .xlsx, or .xls file.';
+      }
+    } catch (err: any) {
+      this.stockMigrationError = err?.message || 'Failed to parse file.';
+    }
+
+    // Reset input so the same file can be re-selected
+    input.value = '';
+  }
+
+  /**
+   * Submit stock migration.
+   */
+  async submitStockMigration(): Promise<void> {
+    if (this.stockMigrationRows.length === 0) {
+      this.stockMigrationError = 'No rows to migrate.';
+      return;
+    }
+
+    this.isStockMigrating = true;
+    this.stockMigrationError = '';
+    this.stockMigrationResults = null;
+
+    try {
+      this.stockMigrationResults = await this.materialInventoryService.migrateStock(this.stockMigrationRows);
+
+      // Refresh tree and table after successful migration
+      await this.loadTree();
+      if (this.selectedBrandId !== null) {
+        await this.loadMaterials(this.selectedBrandId);
+      }
+    } catch (err: any) {
+      this.stockMigrationError =
+        err?.response?.data?.message ||
+        err?.message ||
+        'Failed to migrate stock.';
+    } finally {
+      this.isStockMigrating = false;
     }
   }
 

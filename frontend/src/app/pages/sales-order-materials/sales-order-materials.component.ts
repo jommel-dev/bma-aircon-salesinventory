@@ -40,13 +40,13 @@ export class SalesOrderMaterialsComponent implements OnInit {
 
   // Tab definitions
   tabs: TabDefinition[] = [
-    { key: 'draft', label: 'Draft' },
     { key: 'pending', label: 'Pending' },
+    { key: 'draft', label: 'Draft' },
     { key: 'complete', label: 'Complete' },
     { key: 'voided', label: 'Voided' },
   ];
 
-  activeTab: SalesOrderStatus = 'draft';
+  activeTab: SalesOrderStatus = 'pending';
 
   // List state
   orders: MaterialSalesOrderListItem[] = [];

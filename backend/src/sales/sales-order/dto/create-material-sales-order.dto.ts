@@ -76,7 +76,7 @@ export class MaterialSalesOrderProductItemDto {
 
 export class MaterialSalesOrderPaymentDetailDto {
   @IsString()
-  @IsIn(['Cash', 'Bank Transfer', 'Terms', 'Terms with DP', 'Cheque', 'Credit Card', 'Installment'])
+  @IsIn(['Cash', 'GCash', 'Bank Transfer', 'Terms', 'Terms with DP', 'Cheque', 'Credit Card', 'Installment'])
   method: string;
 
   @IsNumber({ maxDecimalPlaces: 2 })

@@ -77,6 +77,44 @@ export class MaterialsController {
 
   /**
    * =====================================================
+   * MIGRATE/UPDATE STOCK
+   * =====================================================
+   * POST /inventory/materials/migrate-stock
+   * 
+   * Bulk update stock levels for existing materials.
+   * Records IN movements for full audit trail.
+   * 
+   * Request Body:
+   * {
+   *   "rows": [
+   *     { "material_code": "CU-1/4", "quantity": 50 },
+   *     { "material_code": "BOLT-A100", "quantity": 200 }
+   *   ]
+   * }
+   * 
+   * Response:
+   * {
+   *   "success": true,
+   *   "summary": {
+   *     "total": 2,
+   *     "updated": 2,
+   *     "failed": 0
+   *   },
+   *   "results": [
+   *     { "row": 1, "material_code": "CU-1/4", "status": "updated", "message": "Stock updated from 10 to 60" },
+   *     { "row": 2, "material_code": "BOLT-A100", "status": "updated", "message": "Stock updated from 100 to 300" }
+   *   ]
+   * }
+   * =====================================================
+   */
+  @Post('migrate-stock')
+  async migrateStock(@Body() body: { rows: any[] }, @Request() req: any) {
+    const userId = req.user?.id || 1;
+    return this.materialsService.migrateStock(body.rows, userId);
+  }
+
+  /**
+   * =====================================================
    * CREATE MATERIAL
    * =====================================================
    * POST /inventory/materials

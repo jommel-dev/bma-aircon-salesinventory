@@ -72,6 +72,7 @@ export class ProductItemsTableComponent {
   /**
    * Validates and applies a new QTY value for a line item.
    * QTY must be an integer, 1–99999.
+   * If it exceeds stock on hand, a warning message is displayed but the value is still accepted.
    */
   onQtyChange(index: number, value: string): void {
     const parsed = parseInt(value, 10);
@@ -85,6 +86,9 @@ export class ProductItemsTableComponent {
     }
 
     const item = this.items[index];
+
+    // Update qty and recalculate total
+    // Note: We allow qty to exceed stock but show a warning in the template
     item.qty = parsed;
     item.total = this.calculateTotal(item.rate, item.discount ?? 0, parsed);
     this.itemChanged.emit({ index, item: { ...item } });
@@ -95,6 +99,30 @@ export class ProductItemsTableComponent {
    */
   removeItem(index: number): void {
     this.itemRemoved.emit(index);
+  }
+
+  /**
+   * Handles rate change from input element (for spinner arrows support).
+   */
+  onRateChangeEvent(index: number, event: Event): void {
+    const value = (event.target as HTMLInputElement).value;
+    this.onRateChange(index, value);
+  }
+
+  /**
+   * Handles discount change from input element (for spinner arrows support).
+   */
+  onDiscountChangeEvent(index: number, event: Event): void {
+    const value = (event.target as HTMLInputElement).value;
+    this.onDiscountChange(index, value);
+  }
+
+  /**
+   * Handles qty change from input element (for spinner arrows support).
+   */
+  onQtyChangeEvent(index: number, event: Event): void {
+    const value = (event.target as HTMLInputElement).value;
+    this.onQtyChange(index, value);
   }
 
   // ─── Computed Values ────────────────────────────────────────────────────────

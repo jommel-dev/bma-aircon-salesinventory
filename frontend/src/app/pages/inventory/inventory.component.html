@@ -1,4 +1,4 @@
-ï»¿<div>
+<div>
   <div class="flex items-center justify-between mb-4">
     <app-page-breadcrumb pageTitle="Material Inventory" />
     <div class="flex items-center gap-2">
@@ -7,7 +7,14 @@
         class="rounded-md border border-gray-300 bg-white px-4 py-2 text-sm font-medium text-gray-700 hover:bg-gray-50 dark:border-gray-600 dark:bg-gray-700 dark:text-gray-300 dark:hover:bg-gray-600 transition-colors shadow-sm"
         (click)="openBulkUploadModal()"
       >
-        â¬† Bulk Upload CSV
+        ? Bulk Upload CSV
+      </button>
+      <button
+        type="button"
+        class="rounded-md border border-gray-300 bg-white px-4 py-2 text-sm font-medium text-gray-700 hover:bg-gray-50 dark:border-gray-600 dark:bg-gray-700 dark:text-gray-300 dark:hover:bg-gray-600 transition-colors shadow-sm"
+        (click)="openStockMigrationModal()"
+      >
+        ?? Migrate Stock
       </button>
       <button
         type="button"
@@ -122,7 +129,7 @@
           <!-- Table header -->
           <div class="mb-3 flex items-center justify-between gap-3">
             <h4 class="text-sm font-semibold text-gray-700 dark:text-gray-300">
-              Materials â€” {{ selectedBrandName }}
+              Materials — {{ selectedBrandName }}
             </h4>
             <!-- Filter input -->
             <div class="relative">
@@ -187,7 +194,7 @@
                   *ngFor="let row of filteredMaterials"
                   class="border-b border-gray-100 dark:border-gray-800 hover:bg-gray-50 dark:hover:bg-gray-800/30 transition-colors"
                 >
-                  <td class="px-2 py-1.5 text-xs text-gray-700 dark:text-gray-300 whitespace-nowrap">{{ row.material_code || 'â€”' }}</td>
+                  <td class="px-2 py-1.5 text-xs text-gray-700 dark:text-gray-300 whitespace-nowrap">{{ row.material_code || '—' }}</td>
                   <!-- Inline editable: Name -->
                   <td class="px-2 py-1.5 text-xs text-gray-700 dark:text-gray-300">
                     <span
@@ -391,7 +398,7 @@
     <!-- Header -->
     <div class="flex items-center justify-between border-b border-gray-200 dark:border-gray-700 px-6 py-4 shrink-0">
       <h3 class="text-lg font-semibold text-gray-900 dark:text-gray-100">
-        History â€” {{ historyMaterialName }}
+        History — {{ historyMaterialName }}
       </h3>
       <button
         type="button"
@@ -517,9 +524,9 @@
                   <td class="px-3 py-2 text-sm text-right text-gray-700 dark:text-gray-300">{{ movement.qty }}</td>
                   <td class="px-3 py-2 text-sm text-gray-700 dark:text-gray-300">{{ movement.source_type }}</td>
                   <td class="px-3 py-2 text-sm text-gray-700 dark:text-gray-300">{{ movement.source_id }}</td>
-                  <td class="px-3 py-2 text-sm text-gray-700 dark:text-gray-300">{{ movement.source_line_key || 'â€”' }}</td>
+                  <td class="px-3 py-2 text-sm text-gray-700 dark:text-gray-300">{{ movement.source_line_key || '—' }}</td>
                   <td class="px-3 py-2 text-sm text-gray-700 dark:text-gray-300">
-                    <span *ngIf="!movement.remarks">â€”</span>
+                    <span *ngIf="!movement.remarks">—</span>
                     <span
                       *ngIf="movement.remarks"
                       [class.font-medium]="isDeficitRecord(movement)"
@@ -1251,7 +1258,7 @@
             class="rounded-md border border-gray-300 bg-white px-3 py-2 text-sm font-medium text-gray-700 hover:bg-gray-50 dark:border-gray-600 dark:bg-gray-700 dark:text-gray-300 dark:hover:bg-gray-600 transition-colors whitespace-nowrap"
             (click)="downloadBulkTemplate()"
           >
-            â¬‡ Download Template
+            ? Download Template
           </button>
         </div>
 
@@ -1324,13 +1331,13 @@
               <tbody>
                 <tr *ngFor="let row of bulkUploadRows; let i = index" class="border-b border-gray-100 dark:border-gray-800">
                   <td class="px-2 py-1 text-gray-500">{{ i + 1 }}</td>
-                  <td class="px-2 py-1 text-gray-700 dark:text-gray-300">{{ row.product_type || 'â€”' }}</td>
+                  <td class="px-2 py-1 text-gray-700 dark:text-gray-300">{{ row.product_type || '—' }}</td>
                   <td class="px-2 py-1 text-gray-700 dark:text-gray-300">
-                    {{ row.brand || 'â€”' }}
+                    {{ row.brand || '—' }}
                     <span *ngIf="row._brandInferred" class="ml-1 text-[10px] text-amber-600 dark:text-amber-400 bg-amber-50 dark:bg-amber-900/30 rounded px-1">(auto)</span>
                   </td>
                   <td class="px-2 py-1 text-gray-700 dark:text-gray-300 font-medium">{{ row.material_name }}</td>
-                  <td class="px-2 py-1 text-gray-700 dark:text-gray-300">{{ row.material_code || 'â€”' }}</td>
+                  <td class="px-2 py-1 text-gray-700 dark:text-gray-300">{{ row.material_code || '—' }}</td>
                   <td class="px-2 py-1 text-gray-700 dark:text-gray-300">{{ row.unit || 'pcs' }}</td>
                   <td class="px-2 py-1 text-right text-gray-700 dark:text-gray-300">{{ row.unit_price || 0 }}</td>
                   <td class="px-2 py-1 text-right text-gray-700 dark:text-gray-300">{{ row.sell_price || 0 }}</td>
@@ -1371,6 +1378,176 @@
           </span>
         </button>
       </div>
+    </div>
+  </div>
+</div>
+
+<!-- Stock Migration Modal -->
+<div
+  *ngIf="isStockMigrationModalOpen"
+  class="fixed inset-0 z-[100011] flex items-center justify-center"
+>
+  <!-- Backdrop -->
+  <div
+    class="absolute inset-0 bg-black/50"
+    (click)="closeStockMigrationModal()"
+  ></div>
+
+  <!-- Modal -->
+  <div class="relative z-10 w-full max-w-4xl max-h-[85vh] rounded-lg border border-gray-200 bg-white shadow-xl dark:border-gray-700 dark:bg-gray-800 flex flex-col">
+    <!-- Header -->
+    <div class="flex items-center justify-between border-b border-gray-200 dark:border-gray-700 px-6 py-4 shrink-0">
+      <h3 class="text-lg font-semibold text-gray-900 dark:text-gray-100">
+        Migrate Stock Levels
+      </h3>
+      <button
+        type="button"
+        class="rounded-md p-1.5 text-gray-400 hover:text-gray-600 hover:bg-gray-100 dark:hover:text-gray-300 dark:hover:bg-gray-700 transition-colors"
+        (click)="closeStockMigrationModal()"
+        aria-label="Close stock migration modal"
+      >
+        <svg class="h-5 w-5" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20" fill="currentColor">
+          <path d="M6.28 5.22a.75.75 0 00-1.06 1.06L8.94 10l-3.72 3.72a.75.75 0 101.06 1.06L10 11.06l3.72 3.72a.75.75 0 101.06-1.06L11.06 10l3.72-3.72a.75.75 0 00-1.06-1.06L10 8.94 6.28 5.22z" />
+        </svg>
+      </button>
+    </div>
+
+    <!-- Body (scrollable) -->
+    <div class="flex-1 overflow-y-auto px-6 py-4">
+      <!-- Upload Section -->
+      <div class="space-y-4">
+        <!-- Instructions -->
+        <div class="rounded-md bg-blue-50 dark:bg-blue-900/20 p-3">
+          <p class="text-sm text-blue-700 dark:text-blue-300">
+            Upload a CSV or Excel file to update stock levels for existing materials. The file must have a header row with the following columns:
+            <span class="font-medium">material_code, quantity</span> (required).
+          </p>
+        </div>
+
+        <!-- File Input & Template Download -->
+        <div class="flex items-center gap-3">
+          <label
+            class="flex-1 flex items-center justify-center gap-2 rounded-md border-2 border-dashed border-gray-300 dark:border-gray-600 px-4 py-3 cursor-pointer hover:border-brand-400 hover:bg-gray-50 dark:hover:bg-gray-700/30 transition-colors"
+          >
+            <svg class="h-5 w-5 text-gray-400" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20" fill="currentColor">
+              <path fill-rule="evenodd" d="M3 17a1 1 0 011-1h12a1 1 0 110 2H4a1 1 0 01-1-1zM6.293 6.707a1 1 0 010-1.414l3-3a1 1 0 011.414 0l3 3a1 1 0 01-1.414 1.414L11 5.414V13a1 1 0 11-2 0V5.414L7.707 6.707a1 1 0 01-1.414 0z" clip-rule="evenodd" />
+            </svg>
+            <span class="text-sm text-gray-600 dark:text-gray-400">
+              <span *ngIf="!stockMigrationFileName">Choose CSV or Excel file...</span>
+              <span *ngIf="stockMigrationFileName" class="font-medium text-gray-800 dark:text-gray-200">{{ stockMigrationFileName }}</span>
+            </span>
+            <input
+              type="file"
+              accept=".csv,.xlsx,.xls"
+              class="hidden"
+              (change)="onStockMigrationFileSelected($event)"
+            />
+          </label>
+          <button
+            type="button"
+            class="rounded-md border border-gray-300 bg-white px-3 py-2 text-sm font-medium text-gray-700 hover:bg-gray-50 dark:border-gray-600 dark:bg-gray-700 dark:text-gray-300 dark:hover:bg-gray-600 transition-colors whitespace-nowrap"
+            (click)="downloadStockMigrationTemplate()"
+          >
+            ? Download Template
+          </button>
+        </div>
+
+        <!-- Error message -->
+        <p *ngIf="stockMigrationError" class="text-sm text-red-600 dark:text-red-400 bg-red-50 dark:bg-red-900/20 rounded-md px-3 py-2">
+          {{ stockMigrationError }}
+        </p>
+
+        <!-- Results Summary -->
+        <div *ngIf="stockMigrationResults" class="rounded-md border border-gray-200 dark:border-gray-700 p-4 space-y-3">
+          <h4 class="text-sm font-semibold text-gray-700 dark:text-gray-300">Migration Results</h4>
+          <div class="flex items-center gap-4 text-sm">
+            <span class="text-gray-600 dark:text-gray-400">Total: <span class="font-medium">{{ stockMigrationResults.summary.total }}</span></span>
+            <span class="text-green-600 dark:text-green-400">Updated: <span class="font-medium">{{ stockMigrationResults.summary.updated }}</span></span>
+            <span class="text-red-600 dark:text-red-400">Failed: <span class="font-medium">{{ stockMigrationResults.summary.failed }}</span></span>
+          </div>
+          <!-- Per-row results (show only non-updated) -->
+          <div *ngIf="stockMigrationResults.results.length > 0" class="max-h-40 overflow-y-auto">
+            <table class="w-full table-auto text-xs">
+              <thead>
+                <tr class="border-b border-gray-200 dark:border-gray-700">
+                  <th class="px-2 py-1 text-left text-gray-600 dark:text-gray-400">Row</th>
+                  <th class="px-2 py-1 text-left text-gray-600 dark:text-gray-400">Material Code</th>
+                  <th class="px-2 py-1 text-left text-gray-600 dark:text-gray-400">Status</th>
+                  <th class="px-2 py-1 text-left text-gray-600 dark:text-gray-400">Message</th>
+                </tr>
+              </thead>
+              <tbody>
+                <tr *ngFor="let r of stockMigrationResults.results" class="border-b border-gray-100 dark:border-gray-800">
+                  <td class="px-2 py-1 text-gray-700 dark:text-gray-300">{{ r.row }}</td>
+                  <td class="px-2 py-1 text-gray-700 dark:text-gray-300 font-medium">{{ r.material_code }}</td>
+                  <td class="px-2 py-1">
+                    <span
+                      class="inline-flex items-center rounded px-1.5 py-0.5 text-xs font-medium"
+                      [class.bg-green-100]="r.status === 'updated'"
+                      [class.text-green-700]="r.status === 'updated'"
+                      [class.bg-red-100]="r.status === 'failed'"
+                      [class.text-red-700]="r.status === 'failed'"
+                    >{{ r.status }}</span>
+                  </td>
+                  <td class="px-2 py-1 text-gray-600 dark:text-gray-400">{{ r.message }}</td>
+                </tr>
+              </tbody>
+            </table>
+          </div>
+        </div>
+
+        <!-- Preview Table -->
+        <div *ngIf="stockMigrationRows.length > 0 && !stockMigrationResults" class="space-y-2">
+          <h4 class="text-sm font-semibold text-gray-700 dark:text-gray-300">
+            Preview ({{ stockMigrationRows.length }} rows)
+          </h4>
+          <div class="overflow-x-auto max-h-64 rounded-md border border-gray-200 dark:border-gray-700">
+            <table class="w-full table-auto text-xs">
+              <thead class="sticky top-0 bg-gray-50 dark:bg-gray-800">
+                <tr class="border-b border-gray-200 dark:border-gray-700">
+                  <th class="px-2 py-1.5 text-left text-gray-600 dark:text-gray-400">#</th>
+                  <th class="px-2 py-1.5 text-left text-gray-600 dark:text-gray-400">Material Code</th>
+                  <th class="px-2 py-1.5 text-right text-gray-600 dark:text-gray-400">Quantity</th>
+                </tr>
+              </thead>
+              <tbody>
+                <tr *ngFor="let row of stockMigrationRows; let i = index" class="border-b border-gray-100 dark:border-gray-800">
+                  <td class="px-2 py-1 text-gray-500">{{ i + 1 }}</td>
+                  <td class="px-2 py-1 text-gray-700 dark:text-gray-300 font-medium">{{ row.material_code }}</td>
+                  <td class="px-2 py-1 text-right text-gray-700 dark:text-gray-300">{{ row.quantity }}</td>
+                </tr>
+              </tbody>
+            </table>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Footer -->
+    <div class="border-t border-gray-200 dark:border-gray-700 px-6 py-4 flex items-center justify-end gap-3 shrink-0">
+      <button
+        type="button"
+        class="rounded-md border border-gray-300 bg-white px-4 py-2 text-sm font-medium text-gray-700 hover:bg-gray-50 dark:border-gray-600 dark:bg-gray-700 dark:text-gray-300 dark:hover:bg-gray-600 transition-colors"
+        (click)="closeStockMigrationModal()"
+        [disabled]="isStockMigrating"
+      >
+        Close
+      </button>
+      <button
+        type="button"
+        class="rounded-md bg-brand-500 px-4 py-2 text-sm font-medium text-white hover:bg-brand-600 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
+        (click)="submitStockMigration()"
+        [disabled]="isStockMigrating || stockMigrationRows.length === 0 || !!stockMigrationResults"
+      >
+        <span *ngIf="!isStockMigrating">Migrate {{ stockMigrationRows.length }} Row(s)</span>
+        <span *ngIf="isStockMigrating" class="flex items-center gap-2">
+          <svg class="animate-spin h-4 w-4" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
+            <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
+            <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z"></path>
+          </svg>
+          Migrating...
+        </span>
+      </button>
     </div>
   </div>
 </div>

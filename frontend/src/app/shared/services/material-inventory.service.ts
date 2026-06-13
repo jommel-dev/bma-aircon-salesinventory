@@ -233,6 +233,11 @@ export class MaterialInventoryService {
     const response = await apiClient.post(`${this.baseUrl}/bulk-upload`, { rows });
     return response.data;
   }
+
+  async migrateStock(rows: any[]): Promise<{ success: boolean; summary: { total: number; updated: number; failed: number }; results: any[] }> {
+    const response = await apiClient.post(`${this.baseUrl}/migrate-stock`, { rows });
+    return response.data;
+  }
 }
 
 // Stock Adjustment DTO

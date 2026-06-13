@@ -327,6 +327,25 @@ export class SalesOrderMaterialFormComponent implements OnInit {
     }, 200);
   }
 
+  /**
+   * Determines the stock status of a material.
+   * Returns 'out-of-stock', 'low-stock', or 'in-stock'
+   */
+  getStockStatus(material: MaterialSearchResult): 'out-of-stock' | 'low-stock' | 'in-stock' {
+    // Always check for out of stock first (0 or negative)
+    if (material.on_hand_stock <= 0) {
+      return 'out-of-stock';
+    }
+
+    // Check if stock is low (below or equal to reorder level)
+    const reorderLevel = material.reorder_level ?? 0;
+    if (reorderLevel > 0 && material.on_hand_stock <= reorderLevel) {
+      return 'low-stock';
+    }
+
+    return 'in-stock';
+  }
+
   // ─── Product Items Table Events ─────────────────────────────────────────────
 
   onItemRemoved(index: number): void {
@@ -479,6 +498,8 @@ export class SalesOrderMaterialFormComponent implements OnInit {
 
   /**
    * Validates stock availability for inventory items.
+   * Note: With backorder system enabled, quantities exceeding stock are treated as warnings.
+   * The backorder system will automatically create negative stock records when order is pending.
    * Returns { warnings: [], errors: [] }
    */
   private validateStockAvailability(): { warnings: string[]; errors: string[] } {
@@ -495,13 +516,16 @@ export class SalesOrderMaterialFormComponent implements OnInit {
       const qty = item.qty;
       const description = item.description;
 
-      // Zero stock - Warning
+      // Zero stock - Warning (backorder will be created automatically)
       if (stock === 0) {
-        warnings.push(`⚠️ ${description}: No stock on hand. Can be considered to buy from other supplier (negative stock).`);
+        warnings.push(`⚠️ ${description}: No stock on hand. Will be recorded as backorder (negative stock).`);
       }
-      // Quantity greater than stock - Error
+      // Quantity greater than stock - Warning (backorder will be created automatically)
       else if (qty > stock) {
-        errors.push(`❌ ${description}: Quantity (${qty}) is greater than stock on hand (${stock}).`);
+        const excessQty = qty - stock;
+        warnings.push(
+          `⚠️ ${description}: Quantity (${qty}) exceeds stock (${stock}). ${excessQty} unit(s) will be recorded as backorder.`,
+        );
       }
     });
 
@@ -509,7 +533,8 @@ export class SalesOrderMaterialFormComponent implements OnInit {
   }
 
   /**
-   * Validates payment setup - only one payment method should be used.
+   * Validates payment setup - ensures at least one payment method is configured.
+   * Multiple payment methods are now supported (e.g., Cash + Terms, Cash + Credit Card, etc.).
    * Returns { errors: [] }
    */
   private validatePaymentSetup(): { errors: string[] } {
@@ -520,11 +545,6 @@ export class SalesOrderMaterialFormComponent implements OnInit {
 
     if (validPayments.length === 0) {
       errors.push('At least one payment method with amount greater than 0 is required.');
-    }
-
-    // Check that only one payment method is selected
-    if (validPayments.length > 1) {
-      errors.push('Only one payment method should be selected per sales order.');
     }
 
     return { errors };

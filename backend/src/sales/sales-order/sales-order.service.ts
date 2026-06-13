@@ -15,6 +15,7 @@ import { MaterialTransactionsService } from 'src/inventory/material-transactions
 import { MaterialsService } from 'src/inventory/materials/materials.service';
 import { PurchaseService } from 'src/inventory/purchase/purchase.service';
 import { AuditActorContext, AuditLogService } from 'src/audit-log/audit-log.service';
+import { BackorderService } from '../backorder/backorder.service';
 
 type SalesMode =
   | 'deliveries'
@@ -68,6 +69,7 @@ export class SalesOrderService {
     private readonly materialsService: MaterialsService,
     private readonly purchaseService: PurchaseService,
     private readonly auditLogService: AuditLogService,
+    private readonly backorderService: BackorderService,
   ) {}
 
   private async getSalesOrderAuditSnapshot(id: number): Promise<Record<string, unknown> | null> {
@@ -6871,11 +6873,26 @@ export class SalesOrderService {
         return { salesOrderId };
       });
 
-      return {
+      // Process backorders if status is pending
+      const responseData: any = {
         success: true,
         message: 'Material sales order created successfully',
         id: result.salesOrderId,
       };
+
+      if (status === 'pending') {
+        try {
+          const backorderInfo = await this.backorderService.processBackordersForSalesOrder(result.salesOrderId, userId);
+          if (backorderInfo.backorderCount > 0) {
+            responseData.backorders = backorderInfo;
+          }
+        } catch (error) {
+          // Log backorder processing error but don't fail the order creation
+          console.error('Backorder processing error:', error);
+        }
+      }
+
+      return responseData;
     } catch (error) {
       if (error instanceof BadRequestException) {
         throw error;
@@ -7173,6 +7190,8 @@ export class SalesOrderService {
         COALESCE(so."salesType", '') AS "salesType",
         so."scheduleDate" AS "deliveryDate",
         so.created_at AS "createdAt",
+        so.created_by AS "createdBy",
+        COALESCE(u.username, '') AS "createdByName",
         so.remarks,
         -- First payment method and status
         (
@@ -7204,6 +7223,7 @@ export class SalesOrderService {
         ) AS "payments"
       FROM tblsales_order so
       LEFT JOIN tblcustomer c ON c.id::text = COALESCE(to_jsonb(so)->>'customer_id', to_jsonb(so)->>'customerId')
+      LEFT JOIN tblusers u ON u.id = so.created_by
       ${whereSql}
       ORDER BY so.id DESC
       LIMIT $${limitIndex}
@@ -7220,6 +7240,8 @@ export class SalesOrderService {
       salesType: string | null;
       deliveryDate: string | null;
       createdAt: string | null;
+      createdBy: number | null;
+      createdByName: string | null;
       remarks: string | null;
       firstPaymentMethod: string | null;
       firstPaymentStatus: string | null;
@@ -7238,6 +7260,8 @@ export class SalesOrderService {
         salesType: row.salesType ?? '',
         deliveryDate: row.deliveryDate,
         createdAt: row.createdAt,
+        createdBy: row.createdBy,
+        createdByName: row.createdByName,
         remarks: row.remarks ?? '',
         paymentMethod: row.firstPaymentMethod ?? '',
         paymentStatus: row.firstPaymentStatus ?? '',
@@ -7436,45 +7460,59 @@ export class SalesOrderService {
         ) {
           for (const item of productItems) {
             const materialId = Number(item.materialId);
-            const qty = Number(item.qty ?? 0);
+            const orderedQty = Number(item.qty ?? 0);
             const isNonInventory = Boolean(item.isNonInventory);
 
             // Only deduct stock for inventory items with a valid materialId
-            if (!materialId || materialId <= 0 || qty <= 0 || isNonInventory) {
+            if (!materialId || materialId <= 0 || orderedQty <= 0 || isNonInventory) {
               continue;
             }
 
-            // Record OUT movement in tblmaterial_stock_movement
-            try {
-              await this.materialStockService.recordMovement(
-                {
-                  materialId,
-                  movementType: 'OUT',
-                  qty,
-                  sourceType: 'SO',
-                  sourceId: id,
-                  sourceLineKey: `SO-${id}-MAT-${materialId}`,
-                  statusSnapshot: 'complete',
-                  remarks: `Stock deducted for Material SO #${id}`,
-                },
-                { client },
-              );
-            } catch (moveErr: any) {
-              // Log but don't block the transaction if movement fails (e.g., duplicate)
-              if (moveErr?.message?.includes('unique') || moveErr?.message?.includes('duplicate')) {
-                // Already recorded — idempotent, skip
-              } else {
-                throw moveErr;
-              }
-            }
-
-            // Also deduct from tblmaterials.on_hand_stock for consistency
-            await client.query(
-              `UPDATE tblmaterials
-               SET on_hand_stock = GREATEST(COALESCE(on_hand_stock, 0) - $1, 0)
-               WHERE id = $2`,
-              [qty, materialId],
+            // Calculate available stock from tblmaterials (source of truth)
+            const stockResult = await client.query(
+              `SELECT COALESCE(on_hand_stock, 0) as available_stock
+               FROM tblmaterials
+               WHERE id = $1`,
+              [materialId],
             );
+            const availableStock = Number(stockResult.rows[0]?.available_stock ?? 0);
+
+            // Only deduct what's actually available (not backorder quantity)
+            const deductQty = Math.max(0, Math.min(orderedQty, availableStock));
+
+            if (deductQty > 0) {
+              // Record OUT movement in tblmaterial_stock_movement
+              try {
+                await this.materialStockService.recordMovement(
+                  {
+                    materialId,
+                    movementType: 'OUT',
+                    qty: deductQty,
+                    sourceType: 'SO',
+                    sourceId: id,
+                    sourceLineKey: `SO-${id}-MAT-${materialId}`,
+                    statusSnapshot: 'complete',
+                    remarks: `Stock deducted for Material SO #${id}`,
+                  },
+                  { client },
+                );
+              } catch (moveErr: any) {
+                // Log but don't block the transaction if movement fails (e.g., duplicate)
+                if (moveErr?.message?.includes('unique') || moveErr?.message?.includes('duplicate')) {
+                  // Already recorded — idempotent, skip
+                } else {
+                  throw moveErr;
+                }
+              }
+
+              // Also deduct from tblmaterials.on_hand_stock for consistency
+              await client.query(
+                `UPDATE tblmaterials
+                 SET on_hand_stock = GREATEST(COALESCE(on_hand_stock, 0) - $1, 0)
+                 WHERE id = $2`,
+                [deductQty, materialId],
+              );
+            }
           }
         }
 
@@ -7484,13 +7522,41 @@ export class SalesOrderService {
           totalAmount: computedTotal,
           status: dto.status ?? existingOrder.status,
           salesType: salesTypeToUse,
+          previousStatus: String(existingOrder.status ?? '').trim().toLowerCase(),
+          newStatus: String(dto.status ?? '').trim().toLowerCase(),
         };
       });
+
+      // Process backorders if status is transitioning to pending
+      const previousStatus = result.previousStatus;
+      const newStatus = result.newStatus;
+      let backorderInfo: any = null;
+
+      if (newStatus === 'pending' && previousStatus !== 'pending') {
+        try {
+          backorderInfo = await this.backorderService.processBackordersForSalesOrder(id);
+        } catch (error) {
+          // Log backorder processing error but don't fail the update
+          console.error('Backorder processing error:', error);
+        }
+      }
+
+      const responseData: any = {
+        salesOrderId: result.salesOrderId,
+        customerId: result.customerId,
+        totalAmount: result.totalAmount,
+        status: result.status,
+        salesType: result.salesType,
+      };
+
+      if (backorderInfo && backorderInfo.backorderCount > 0) {
+        responseData.backorders = backorderInfo;
+      }
 
       return {
         success: true,
         message: 'Material sales order updated successfully',
-        data: result,
+        data: responseData,
       };
     } catch (error) {
       if (error instanceof NotFoundException) {
