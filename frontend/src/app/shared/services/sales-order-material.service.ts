@@ -127,6 +127,7 @@ export interface MaterialSalesOrderDetail {
   status: string;
   salesType: string;
   scheduleDate: string | null;
+  deliveryDate?: string | null;
   remarks: string | null;
   createdAt: string | null;
   productItems: Array<{

@@ -58,6 +58,9 @@ export class InventoryComponent implements OnInit, AfterViewChecked {
   /** Error message for tree loading */
   treeError = '';
 
+  /** Search filter text for the tree (Product Types & Brands) */
+  treeSearchFilter = '';
+
   /** Materials for the selected brand (with computed columns) */
   materials: ComputedMaterialRow[] = [];
 
@@ -372,11 +375,50 @@ export class InventoryComponent implements OnInit, AfterViewChecked {
    */
   get filteredMaterials(): ComputedMaterialRow[] {
     const filter = this.materialFilter.trim().toLowerCase();
-    if (!filter) return this.materials;
-    return this.materials.filter(m =>
+    let filtered = !filter ? this.materials : this.materials.filter(m =>
       m.material_name.toLowerCase().includes(filter) ||
       (m.material_code ?? '').toLowerCase().includes(filter)
     );
+    // Sort by material_code
+    return filtered.sort((a, b) => {
+      const codeA = (a.material_code ?? '').toLowerCase();
+      const codeB = (b.material_code ?? '').toLowerCase();
+      return codeA.localeCompare(codeB);
+    });
+  }
+
+  /**
+   * Get tree nodes filtered by the search text.
+   * Matches against product type names and brand names.
+   * Automatically expands nodes that have matching children.
+   */
+  get filteredTreeNodes(): ProductTypeNode[] {
+    const filter = this.treeSearchFilter.trim().toLowerCase();
+    if (!filter) return this.treeNodes;
+
+    const filtered = this.treeNodes
+      .map(node => ({
+        ...node,
+        // Filter children (brands) that match the search term
+        children: node.children.filter(child =>
+          child.name.toLowerCase().includes(filter)
+        ),
+      }))
+      .filter(node =>
+        // Keep the node if:
+        // 1. The product type name matches, OR
+        // 2. The node has matching children (brands)
+        node.name.toLowerCase().includes(filter) || node.children.length > 0
+      );
+
+    // Auto-expand nodes that have search results
+    filtered.forEach(node => {
+      if (node.children.length > 0) {
+        this.expandedNodes.add(node.id);
+      }
+    });
+
+    return filtered;
   }
 
   // --- Inline Editing Methods ---

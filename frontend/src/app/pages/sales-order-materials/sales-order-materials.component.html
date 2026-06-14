@@ -55,16 +55,33 @@
         </div>
       }
       <div class="flex items-center gap-3">
-        <span class="text-sm text-gray-500 dark:text-gray-400">
+        <!-- <span class="text-sm text-gray-500 dark:text-gray-400">
           Showing {{ orders.length }} of {{ meta.total }}
-        </span>
-        <button
+        </span> -->
+        @if (activeTab === 'complete') {
+          <button
+            type="button"
+            (click)="generateDailySalesExcel()"
+            [disabled]="isGeneratingExcel"
+            class="rounded-lg border border-green-300 bg-green-50 px-4 py-2 text-sm font-medium text-green-700 transition hover:bg-green-100 disabled:cursor-not-allowed disabled:opacity-50 dark:border-green-500/40 dark:bg-green-900/20 dark:text-green-300 dark:hover:bg-green-900/40"
+          >
+            @if (isGeneratingExcel) {
+              <span class="flex items-center gap-2">
+                <div class="h-3.5 w-3.5 animate-spin rounded-full border-2 border-green-600 border-t-transparent"></div>
+                Generating...
+              </span>
+            } @else {
+              📊 Daily Sales Excel
+            }
+          </button>
+        }
+        <!-- <button
           type="button"
           (click)="openMigrateModal()"
           class="rounded-lg border border-gray-300 bg-white px-4 py-2 text-sm font-medium text-gray-700 transition hover:bg-gray-50 dark:border-gray-700 dark:bg-gray-900 dark:text-gray-300 dark:hover:bg-gray-800"
         >
           ⬆ Migrate CSV
-        </button>
+        </button> -->
         <button
           type="button"
           (click)="onCreateOrder()"
@@ -128,14 +145,75 @@
                 <td class="px-4 py-3 text-sm text-gray-600 dark:text-gray-300">{{ order.createdByName || '—' }}</td>
                 <td class="px-4 py-3">
                   <div class="flex items-center gap-2">
-                    <button
-                      type="button"
-                      (click)="onEditOrder(order.id)"
-                      class="inline-flex items-center rounded-lg border border-gray-300 bg-white px-3 py-1.5 text-xs font-medium text-gray-700 transition hover:bg-gray-50 dark:border-gray-700 dark:bg-gray-900 dark:text-gray-300 dark:hover:bg-gray-800"
-                    >
-                      Edit
-                    </button>
-                    @if (canPrint(order.status)) {
+                    @if (activeTab === 'pending') {
+                      <button
+                        type="button"
+                        (click)="onViewOrder(order.id)"
+                        class="inline-flex items-center rounded-lg border border-teal-300 bg-teal-50 px-3 py-1.5 text-xs font-medium text-teal-700 transition hover:bg-teal-100 dark:border-teal-500/40 dark:bg-teal-900/20 dark:text-teal-300 dark:hover:bg-teal-900/40"
+                      >
+                        View
+                      </button>
+                    }
+                    @if (activeTab === 'complete') {
+                      <button
+                        type="button"
+                        (click)="onViewOrder(order.id)"
+                        class="inline-flex items-center rounded-lg border border-teal-300 bg-teal-50 px-3 py-1.5 text-xs font-medium text-teal-700 transition hover:bg-teal-100 dark:border-teal-500/40 dark:bg-teal-900/20 dark:text-teal-300 dark:hover:bg-teal-900/40"
+                      >
+                        View
+                      </button>
+                      <button
+                        type="button"
+                        (click)="onPrintOrder(order.id, order.soNumber)"
+                        class="inline-flex items-center rounded-lg border border-brand-300 bg-brand-50 px-3 py-1.5 text-xs font-medium text-brand-700 transition hover:bg-brand-100 dark:border-brand-500/40 dark:bg-brand-900/20 dark:text-brand-300 dark:hover:bg-brand-900/40"
+                      >
+                        Print
+                      </button>
+                      @if (isAdmin) {
+                        <button
+                          type="button"
+                          (click)="onEditOrder(order.id)"
+                          class="inline-flex items-center rounded-lg border border-gray-300 bg-white px-3 py-1.5 text-xs font-medium text-gray-700 transition hover:bg-gray-50 dark:border-gray-700 dark:bg-gray-900 dark:text-gray-300 dark:hover:bg-gray-800"
+                        >
+                          Edit
+                        </button>
+                        <button
+                          type="button"
+                          (click)="openVoidOrderDialog(order.id)"
+                          class="inline-flex items-center rounded-lg border border-red-300 bg-red-50 px-3 py-1.5 text-xs font-medium text-red-700 transition hover:bg-red-100 dark:border-red-500/40 dark:bg-red-900/20 dark:text-red-300 dark:hover:bg-red-900/40"
+                        >
+                          Void
+                        </button>
+                      }
+                    }
+                    @if (activeTab !== 'complete') {
+                      <button
+                        type="button"
+                        (click)="onEditOrder(order.id)"
+                        class="inline-flex items-center rounded-lg border border-gray-300 bg-white px-3 py-1.5 text-xs font-medium text-gray-700 transition hover:bg-gray-50 dark:border-gray-700 dark:bg-gray-900 dark:text-gray-300 dark:hover:bg-gray-800"
+                      >
+                        Edit
+                      </button>
+                    }
+                    @if (canPrintQuotation(order.status)) {
+                      <button
+                        type="button"
+                        (click)="onPrintQuotation(order.id, order.soNumber)"
+                        class="inline-flex items-center rounded-lg border border-amber-300 bg-amber-50 px-3 py-1.5 text-xs font-medium text-amber-700 transition hover:bg-amber-100 dark:border-amber-500/40 dark:bg-amber-900/20 dark:text-amber-300 dark:hover:bg-amber-900/40"
+                      >
+                        Print Quotation
+                      </button>
+                    }
+                    @if (activeTab === 'draft') {
+                      <button
+                        type="button"
+                        (click)="onLineUpOrder(order.id)"
+                        class="inline-flex items-center rounded-lg border border-brand-300 bg-brand-50 px-3 py-1.5 text-xs font-medium text-brand-700 transition hover:bg-brand-100 dark:border-brand-500/40 dark:bg-brand-900/20 dark:text-brand-300 dark:hover:bg-brand-900/40"
+                      >
+                        Line up Order
+                      </button>
+                    }
+                    @if (canPrint(order.status) && activeTab !== 'complete') {
                       <button
                         type="button"
                         (click)="onPrintOrder(order.id, order.soNumber)"
@@ -197,7 +275,7 @@
       <div class="flex h-full w-full flex-col" (click)="$event.stopPropagation()">
         <!-- Modal Header -->
         <div class="flex items-center justify-between bg-white px-6 py-3 shadow dark:bg-gray-900">
-          <h2 class="text-lg font-semibold text-gray-900 dark:text-white">Print Preview</h2>
+          <h2 class="text-lg font-semibold text-gray-900 dark:text-white">{{ printModalTitle }}</h2>
           <button
             type="button"
             (click)="closePrintModal()"
@@ -226,6 +304,219 @@
               title="Sales Order Print Preview"
             ></iframe>
           }
+        </div>
+      </div>
+    </div>
+  }
+
+  <!-- View Order Summary Modal -->
+  @if (isViewModalOpen) {
+    <div class="fixed inset-0 z-[100012] flex items-center justify-center bg-black/50" (click)="closeViewModal()">
+      <div class="w-full max-w-3xl max-h-[90vh] overflow-y-auto rounded-2xl bg-white p-6 shadow-xl dark:bg-gray-900" (click)="$event.stopPropagation()">
+        <!-- Modal Header -->
+        <div class="mb-5 flex items-center justify-between">
+          <h2 class="text-lg font-semibold text-gray-900 dark:text-white">Order Summary</h2>
+          <button type="button" (click)="closeViewModal()" class="text-gray-400 hover:text-gray-600 dark:hover:text-gray-200">
+            <svg class="h-5 w-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"/></svg>
+          </button>
+        </div>
+
+        @if (isViewLoading) {
+          <div class="py-10 text-center text-sm text-gray-500 dark:text-gray-400">Loading order details...</div>
+        } @else if (viewOrder) {
+          <!-- Order Info -->
+          <div class="mb-5 grid grid-cols-2 gap-4 rounded-lg border border-gray-200 bg-gray-50 p-4 dark:border-gray-700 dark:bg-gray-800">
+            <div>
+              <p class="text-xs font-medium text-gray-500 dark:text-gray-400">SO Number</p>
+              <p class="text-sm font-semibold text-gray-900 dark:text-white">{{ viewOrder.soNumber || '—' }}</p>
+            </div>
+            <div>
+              <p class="text-xs font-medium text-gray-500 dark:text-gray-400">Status</p>
+              <span class="inline-flex rounded-full px-2.5 py-0.5 text-xs font-semibold" [ngClass]="getStatusClass(viewOrder.status)">
+                {{ viewOrder.status }}
+              </span>
+            </div>
+            <div>
+              <p class="text-xs font-medium text-gray-500 dark:text-gray-400">Customer</p>
+              <p class="text-sm text-gray-900 dark:text-white">{{ viewOrder.customerName || '—' }}</p>
+            </div>
+            <div>
+              <p class="text-xs font-medium text-gray-500 dark:text-gray-400">Delivery Date</p>
+              <p class="text-sm text-gray-900 dark:text-white">{{ (viewOrder.deliveryDate || viewOrder.scheduleDate) ? ((viewOrder.deliveryDate || viewOrder.scheduleDate) | date: 'MMM dd, yyyy') : '—' }}</p>
+            </div>
+            <div>
+              <p class="text-xs font-medium text-gray-500 dark:text-gray-400">Address</p>
+              <p class="text-sm text-gray-900 dark:text-white">{{ viewOrder.customerAddress || '—' }}</p>
+            </div>
+            <div>
+              <p class="text-xs font-medium text-gray-500 dark:text-gray-400">Contact Person</p>
+              <p class="text-sm text-gray-900 dark:text-white">{{ viewOrder.customerContactPerson || '—' }}</p>
+            </div>
+          </div>
+
+          <!-- Product Items Table -->
+          <div class="mb-5">
+            <h3 class="mb-2 text-sm font-semibold text-gray-700 dark:text-gray-300">Product Items</h3>
+            <div class="overflow-x-auto rounded-lg border border-gray-200 dark:border-gray-700">
+              <table class="w-full text-sm">
+                <thead class="bg-gray-50 dark:bg-gray-800">
+                  <tr>
+                    <th class="px-3 py-2 text-left text-xs font-medium text-gray-500 dark:text-gray-400">#</th>
+                    <th class="px-3 py-2 text-left text-xs font-medium text-gray-500 dark:text-gray-400">Description</th>
+                    <th class="px-3 py-2 text-left text-xs font-medium text-gray-500 dark:text-gray-400">Brand</th>
+                    <th class="px-3 py-2 text-right text-xs font-medium text-gray-500 dark:text-gray-400">Rate</th>
+                    <th class="px-3 py-2 text-right text-xs font-medium text-gray-500 dark:text-gray-400">Disc</th>
+                    <th class="px-3 py-2 text-center text-xs font-medium text-gray-500 dark:text-gray-400">Qty</th>
+                    <th class="px-3 py-2 text-right text-xs font-medium text-gray-500 dark:text-gray-400">Total</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  @for (item of viewOrder.productItems; track item.id) {
+                    <tr class="border-t border-gray-100 dark:border-gray-800">
+                      <td class="px-3 py-2 text-gray-600 dark:text-gray-300">{{ $index + 1 }}</td>
+                      <td class="px-3 py-2 font-medium text-gray-900 dark:text-white">
+                        {{ item.description }}
+                        @if (item.isNonInventory) {
+                          <span class="ml-1 text-xs text-orange-500">(non-inv)</span>
+                        }
+                      </td>
+                      <td class="px-3 py-2 text-gray-600 dark:text-gray-300">{{ item.brand || '—' }}</td>
+                      <td class="px-3 py-2 text-right text-gray-600 dark:text-gray-300">{{ formatCurrency(item.rate) }}</td>
+                      <td class="px-3 py-2 text-right text-gray-600 dark:text-gray-300">{{ formatCurrency(item.discount) }}</td>
+                      <td class="px-3 py-2 text-center text-gray-600 dark:text-gray-300">{{ item.qty }}</td>
+                      <td class="px-3 py-2 text-right font-medium text-gray-900 dark:text-white">{{ formatCurrency(item.total) }}</td>
+                    </tr>
+                  }
+                </tbody>
+                <tfoot>
+                  <tr class="border-t-2 border-gray-300 dark:border-gray-600">
+                    <td colspan="6" class="px-3 py-2 text-right text-sm font-semibold text-gray-700 dark:text-gray-300">Grand Total</td>
+                    <td class="px-3 py-2 text-right text-sm font-bold text-gray-900 dark:text-white">{{ formatCurrency(getViewOrderTotal()) }}</td>
+                  </tr>
+                </tfoot>
+              </table>
+            </div>
+          </div>
+
+          <!-- Payment Details -->
+          @if (viewOrder.paymentDetails && viewOrder.paymentDetails.length > 0) {
+            <div class="mb-5">
+              <h3 class="mb-2 text-sm font-semibold text-gray-700 dark:text-gray-300">Payment Details</h3>
+              <div class="space-y-2">
+                @for (payment of viewOrder.paymentDetails; track $index) {
+                  <div class="flex items-center gap-3 rounded-lg border border-gray-200 bg-gray-50 px-4 py-2 dark:border-gray-700 dark:bg-gray-800">
+                    <span class="inline-flex items-center rounded-full border px-2.5 py-0.5 text-xs font-medium"
+                      [ngClass]="getPaymentMethodChipClass(payment.method)">
+                      {{ payment.method }}
+                    </span>
+                    <span class="text-sm font-medium text-gray-900 dark:text-white">{{ formatCurrency(payment.amount) }}</span>
+                    @if (payment.terms) {
+                      <span class="text-xs text-gray-500 dark:text-gray-400">{{ payment.terms }} days</span>
+                    }
+                    @if (payment.referenceNo) {
+                      <span class="text-xs text-gray-500 dark:text-gray-400">Ref: {{ payment.referenceNo }}</span>
+                    }
+                  </div>
+                }
+              </div>
+            </div>
+          }
+
+          <!-- Remarks -->
+          @if (viewOrder.remarks) {
+            <div class="mb-5">
+              <h3 class="mb-1 text-sm font-semibold text-gray-700 dark:text-gray-300">Remarks</h3>
+              <p class="text-sm text-gray-600 dark:text-gray-400">{{ viewOrder.remarks }}</p>
+            </div>
+          }
+
+          <!-- Actions -->
+          <div class="flex items-center justify-end gap-3 border-t border-gray-200 pt-4 dark:border-gray-700">
+            <button
+              type="button"
+              (click)="closeViewModal()"
+              class="rounded-lg border border-gray-300 px-4 py-2 text-sm font-medium text-gray-700 transition hover:bg-gray-50 dark:border-gray-700 dark:text-gray-300 dark:hover:bg-gray-800"
+            >
+              Close
+            </button>
+            @if (viewOrder.status === 'pending') {
+              <button
+                type="button"
+                (click)="completeOrderFromView()"
+                [disabled]="isCompletingOrder"
+                class="rounded-lg bg-green-600 px-4 py-2 text-sm font-medium text-white transition hover:bg-green-700 disabled:cursor-not-allowed disabled:opacity-50"
+              >
+                @if (isCompletingOrder) {
+                  <span class="flex items-center gap-2">
+                    <svg class="h-4 w-4 animate-spin" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
+                      <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
+                      <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z"></path>
+                    </svg>
+                    Completing...
+                  </span>
+                } @else {
+                  ✓ Complete Order
+                }
+              </button>
+            }
+          </div>
+        }
+      </div>
+    </div>
+  }
+
+  <!-- Void Order Dialog (Password Required) -->
+  @if (isVoidDialogOpen) {
+    <div class="fixed inset-0 z-[100014] flex items-center justify-center">
+      <div class="absolute inset-0 bg-black/50" (click)="closeVoidDialog()"></div>
+      <div class="relative z-10 w-full max-w-md rounded-2xl bg-white p-6 shadow-xl dark:bg-gray-900">
+        <div class="mb-4 flex items-center gap-3">
+          <div class="flex h-10 w-10 items-center justify-center rounded-full bg-red-100 dark:bg-red-900/30">
+            <svg class="h-5 w-5 text-red-600 dark:text-red-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-2.5L13.732 4c-.77-.833-1.964-.833-2.732 0L3.34 16.5c-.77.833.192 2.5 1.732 2.5z"/>
+            </svg>
+          </div>
+          <div>
+            <h3 class="text-lg font-semibold text-gray-800 dark:text-white">Void Completed Order</h3>
+            <p class="text-xs text-gray-500 dark:text-gray-400">This action cannot be undone. Stock will be returned.</p>
+          </div>
+        </div>
+        <p class="text-sm text-gray-600 dark:text-gray-300">
+          Please enter your password to confirm voiding this order.
+        </p>
+        <div class="mt-4">
+          <label class="mb-1 block text-xs font-medium text-gray-600 dark:text-gray-300">Password</label>
+          <input
+            type="password"
+            [(ngModel)]="voidPassword"
+            name="voidPassword"
+            placeholder="Enter your password"
+            (keydown.enter)="confirmVoidOrder()"
+            class="w-full rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm dark:border-gray-700 dark:bg-gray-900 dark:text-gray-200"
+          />
+        </div>
+        @if (voidError) {
+          <p class="mt-2 text-xs text-red-600 dark:text-red-400">{{ voidError }}</p>
+        }
+        <div class="mt-5 flex items-center justify-end gap-3">
+          <button
+            type="button"
+            (click)="closeVoidDialog()"
+            class="rounded-lg border border-gray-300 bg-white px-4 py-2 text-sm font-medium text-gray-700 transition hover:bg-gray-50 dark:border-gray-600 dark:bg-gray-800 dark:text-gray-200 dark:hover:bg-gray-700"
+          >
+            Cancel
+          </button>
+          <button
+            type="button"
+            (click)="confirmVoidOrder()"
+            [disabled]="isVoiding || !voidPassword"
+            class="rounded-lg bg-red-600 px-4 py-2 text-sm font-medium text-white transition hover:bg-red-700 disabled:cursor-not-allowed disabled:opacity-50 flex items-center gap-2"
+          >
+            @if (isVoiding) {
+              <div class="h-4 w-4 animate-spin rounded-full border-2 border-white border-t-transparent"></div>
+            }
+            {{ isVoiding ? 'Voiding...' : 'Confirm Void' }}
+          </button>
         </div>
       </div>
     </div>

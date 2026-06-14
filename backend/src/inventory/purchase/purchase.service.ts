@@ -1193,8 +1193,8 @@ export class PurchaseService {
     // Validate ACM-specific fields before processing (DTO-level validation)
     const poType = String(createPurchaseDto.poType ?? 'ACU').trim().toUpperCase();
     if (poType === 'ACM') {
-      // ACM type always starts with for_approval status
-      status = 'for_approval';
+      // ACM type: Automatically complete on creation (skip approval)
+      status = 'complete';
       CreatePurchaseDto.validateAcm(createPurchaseDto);
     }
 
@@ -1853,6 +1853,52 @@ export class PurchaseService {
           }
         }
 
+        // For ACM type with 'complete' status: automatically add materials to stock
+        if (poType === 'ACM' && status === 'complete') {
+          const materialItemColumns = await this.getTableColumns(client, 'tbltransaction_material_items');
+          const materialIdCol = this.pickColumn(materialItemColumns, ['material_id', 'productId', 'product_id']);
+          const quantityCol = this.pickColumn(materialItemColumns, ['quantity', 'totalSetQty', 'total_set_qty']);
+          const purchaseIdCol = this.pickColumn(materialItemColumns, ['purchase_id', 'purchaseId']);
+
+          if (materialIdCol && quantityCol && purchaseIdCol) {
+            const materialItemsResult = await client.query<{ material_id: string; quantity: string; item_id: string }>(
+              `SELECT "${materialIdCol}" AS material_id, "${quantityCol}" AS quantity, id AS item_id
+               FROM tbltransaction_material_items
+               WHERE "${purchaseIdCol}" = $1`,
+              [purchaseOrderId],
+            );
+
+            for (const row of materialItemsResult.rows) {
+              const materialId = this.toOptionalNumber(row.material_id);
+              const qty = this.toOptionalNumber(row.quantity) ?? 0;
+
+              if (materialId && qty > 0) {
+                // Update on_hand_stock in tblmaterials
+                await client.query(
+                  `UPDATE tblmaterials SET on_hand_stock = COALESCE(on_hand_stock, 0) + $1, updated_at = NOW(), updated_by = $2 WHERE id = $3`,
+                  [qty, userId ?? null, materialId],
+                );
+
+                // Record stock movement (type IN) via MaterialStockService
+                await this.materialStockService.recordMovement(
+                  {
+                    materialId,
+                    movementType: 'IN',
+                    qty,
+                    sourceType: 'PO',
+                    sourceId: purchaseOrderId,
+                    sourceLineKey: `po-${purchaseOrderId}-item-${row.item_id}`,
+                    statusSnapshot: 'complete',
+                    remarks: `Inbound from PO #${result.poNumber || purchaseOrderId} (auto-completed)`,
+                    createdBy: userId,
+                  },
+                  { client },
+                );
+              }
+            }
+          }
+        }
+
         return {
           purchaseOrderId,
           poNumber: resolvedPoNumber,
@@ -1874,7 +1920,7 @@ export class PurchaseService {
 
       return {
         success: true,
-        message: 'Purchase request created successfully',
+        message: poType === 'ACM' ? 'Purchase order created successfully and materials added to stock' : 'Purchase request created successfully',
         data: result,
       };
     } catch (error) {

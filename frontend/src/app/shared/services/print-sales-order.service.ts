@@ -1,5 +1,5 @@
 import { Injectable } from '@angular/core';
-import { PDFDocument, StandardFonts, rgb, PDFFont, PDFPage } from 'pdf-lib';
+import { PDFDocument, StandardFonts, rgb, PDFFont, PDFPage, degrees } from 'pdf-lib';
 
 export interface PrintSalesOrderData {
   dealer: string;
@@ -18,11 +18,16 @@ export interface PrintSalesOrderData {
   }>;
 }
 
+export interface PrintSalesOrderOptions {
+  /** When set, draws this text as a diagonal watermark on every page (e.g. draft quotations). */
+  watermark?: string;
+}
+
 @Injectable({ providedIn: 'root' })
 export class PrintSalesOrderService {
   private readonly ITEMS_PER_PAGE = 30;
 
-  async generatePdf(data: PrintSalesOrderData): Promise<string> {
+  async generatePdf(data: PrintSalesOrderData, options?: PrintSalesOrderOptions): Promise<string> {
     const isHighSales = data.totalAmount >= 2000;
 
     // Load the appropriate template for the first page
@@ -79,11 +84,35 @@ export class PrintSalesOrderService {
           color: rgb(0, 0, 0),
         });
       }
+
+      if (options?.watermark) {
+        this.drawWatermark(page, boldFont, options.watermark, width, height);
+      }
     }
 
     const pdfBytes = await pdfDoc.save();
     const base64 = this.uint8ArrayToBase64(pdfBytes);
     return `data:application/pdf;base64,${base64}`;
+  }
+
+  private drawWatermark(
+    page: PDFPage,
+    font: PDFFont,
+    text: string,
+    width: number,
+    height: number,
+  ): void {
+    const fontSize = 52;
+    const textWidth = font.widthOfTextAtSize(text, fontSize);
+    page.drawText(text, {
+      x: width / 2 - textWidth / 2,
+      y: height / 2,
+      size: fontSize,
+      font,
+      color: rgb(0.82, 0.82, 0.82),
+      rotate: degrees(-35),
+      opacity: 0.45,
+    });
   }
 
   private drawHeader(

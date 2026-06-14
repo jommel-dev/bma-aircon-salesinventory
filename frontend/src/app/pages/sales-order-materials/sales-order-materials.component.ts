@@ -9,8 +9,14 @@ import {
   MaterialSalesOrderListItem,
   MaterialSalesOrderListMeta,
   MaterialSalesOrderListParams,
+  MaterialSalesOrderDetail,
 } from '../../shared/services/sales-order-material.service';
 import { PrintSalesOrderService, PrintSalesOrderData } from '../../shared/services/print-sales-order.service';
+import { QuotationPdfService } from '../../shared/services/quotation-pdf.service';
+import { BusinessSettingsService } from '../../shared/services/business-settings.service';
+import { NotificationService } from '../../shared/services/notification.service';
+import { RbacService } from '../../shared/services/rbac.service';
+import { AuthService } from '../../shared/services/auth.service';
 import { PageBreadcrumbComponent } from '../../shared/components/common/page-breadcrumb/page-breadcrumb.component';
 
 interface TabDefinition {
@@ -67,6 +73,7 @@ export class SalesOrderMaterialsComponent implements OnInit {
   isPrintModalOpen = false;
   printPdfUrl: SafeResourceUrl | null = null;
   isPrintLoading = false;
+  printModalTitle = 'Print Preview';
 
   // Migration modal state
   isMigrateModalOpen = false;
@@ -79,14 +86,39 @@ export class SalesOrderMaterialsComponent implements OnInit {
   migrateResults: { summary: { total: number; created: number; skipped: number; failed: number }; details: any[] } | null = null;
   migrateTargetStatus: 'draft' | 'pending' | 'complete' | 'voided' = 'pending';
 
+  // View modal state
+  isViewModalOpen = false;
+  isViewLoading = false;
+  viewOrder: MaterialSalesOrderDetail | null = null;
+  isCompletingOrder = false;
+
+  // Admin state
+  isAdmin = false;
+
+  // Void dialog state (for complete tab)
+  isVoidDialogOpen = false;
+  isVoiding = false;
+  voidPassword = '';
+  voidError = '';
+  voidOrderId: number | null = null;
+
+  // Excel generation state
+  isGeneratingExcel = false;
+
   constructor(
     private salesOrderMaterialService: SalesOrderMaterialService,
     private printSalesOrderService: PrintSalesOrderService,
+    private quotationPdfService: QuotationPdfService,
+    private businessSettingsService: BusinessSettingsService,
+    private notificationService: NotificationService,
+    private rbacService: RbacService,
+    private authService: AuthService,
     private sanitizer: DomSanitizer,
     private router: Router,
   ) {}
 
   ngOnInit(): void {
+    this.isAdmin = this.rbacService.isAdminOrSuperAdmin();
     void this.loadOrders();
   }
 
@@ -223,46 +255,46 @@ export class SalesOrderMaterialsComponent implements OnInit {
     return s === 'pending' || s === 'complete';
   }
 
+  canPrintQuotation(status: string): boolean {
+    return (status || '').toLowerCase() === 'draft';
+  }
+
   async onPrintOrder(orderId: number, soNumber: string | null): Promise<void> {
+    await this.generatePrintPreview(orderId, soNumber);
+  }
+
+  async onPrintQuotation(orderId: number, soNumber: string | null): Promise<void> {
     this.isPrintLoading = true;
     this.isPrintModalOpen = true;
     this.printPdfUrl = null;
+    this.printModalTitle = 'Quotation Preview';
 
     try {
       const order = await this.salesOrderMaterialService.getMaterialSalesOrderById(orderId);
+      const businessProfile = await this.businessSettingsService.getBusinessProfile();
+      const dataUri = await this.quotationPdfService.generateQuotationPdf(order, businessProfile);
+      this.printPdfUrl = this.sanitizer.bypassSecurityTrustResourceUrl(dataUri);
+    } catch (err) {
+      console.error('Failed to generate quotation PDF:', err);
+      this.isPrintModalOpen = false;
+      this.printPdfUrl = null;
+    } finally {
+      this.isPrintLoading = false;
+    }
+  }
 
-      // Build payment term label
-      let paymentTerm = '';
-      if (order.paymentDetails && order.paymentDetails.length > 0) {
-        const payment = order.paymentDetails[0];
-        if (payment.method === 'Terms') {
-          paymentTerm = `TERMS ${payment.terms || ''} Day(s)`;
-        } else {
-          paymentTerm = payment.method || '';
-        }
-      }
+  private async generatePrintPreview(
+    orderId: number,
+    soNumber: string | null,
+  ): Promise<void> {
+    this.isPrintLoading = true;
+    this.isPrintModalOpen = true;
+    this.printPdfUrl = null;
+    this.printModalTitle = 'Print Preview';
 
-      // Format delivery date
-      const deliveryDate = order.scheduleDate
-        ? new Date(order.scheduleDate).toLocaleDateString('en-US', { month: '2-digit', day: '2-digit', year: 'numeric' })
-        : '';
-
-      const printData: PrintSalesOrderData = {
-        dealer: order.customerName || '',
-        address: order.customerAddress || '',
-        deliveryDate,
-        soNumber: order.soNumber || '',
-        paymentTerm,
-        terms: order.paymentDetails?.[0]?.terms || '',
-        totalAmount: order.totalAmount || 0,
-        items: (order.productItems || []).map(item => ({
-          quantity: item.qty,
-          unit: 'pcs',
-          description: item.description || '',
-          unitPrice: item.rate,
-          amount: item.total,
-        })),
-      };
+    try {
+      const order = await this.salesOrderMaterialService.getMaterialSalesOrderById(orderId);
+      const printData = this.buildPrintData(order, soNumber ?? order.soNumber ?? '');
 
       const dataUri = await this.printSalesOrderService.generatePdf(printData);
       this.printPdfUrl = this.sanitizer.bypassSecurityTrustResourceUrl(dataUri);
@@ -273,6 +305,51 @@ export class SalesOrderMaterialsComponent implements OnInit {
     } finally {
       this.isPrintLoading = false;
     }
+  }
+
+  private buildPrintData(
+    order: Awaited<ReturnType<SalesOrderMaterialService['getMaterialSalesOrderById']>>,
+    soNumber: string,
+  ): PrintSalesOrderData {
+    let paymentTerm = '';
+    if (order.paymentDetails && order.paymentDetails.length > 0) {
+      const payment = order.paymentDetails[0];
+      if (payment.method === 'Terms') {
+        paymentTerm = `TERMS ${payment.terms || ''} Day(s)`;
+      } else {
+        paymentTerm = payment.method || '';
+      }
+    }
+
+    const deliveryDateSource = order.deliveryDate ?? order.scheduleDate;
+    const deliveryDate = deliveryDateSource
+      ? new Date(deliveryDateSource).toLocaleDateString('en-US', {
+          month: '2-digit',
+          day: '2-digit',
+          year: 'numeric',
+        })
+      : '';
+
+    return {
+      dealer: order.customerName || '',
+      address: order.customerAddress || '',
+      deliveryDate,
+      soNumber,
+      paymentTerm,
+      terms: order.paymentDetails?.[0]?.terms || '',
+      totalAmount: order.totalAmount || 0,
+      items: (order.productItems || []).map((item) => {
+        const discount = item.discount ?? 0;
+        const effectiveRate = Math.max(item.rate - discount, 0);
+        return {
+          quantity: item.qty,
+          unit: 'pcs',
+          description: item.description || '',
+          unitPrice: effectiveRate,
+          amount: item.total,
+        };
+      }),
+    };
   }
 
   closePrintModal(): void {
@@ -286,6 +363,289 @@ export class SalesOrderMaterialsComponent implements OnInit {
 
   onEditOrder(orderId: number): void {
     this.router.navigate(['/users/sales-order-materials/edit', orderId]);
+  }
+
+  async onLineUpOrder(orderId: number): Promise<void> {
+    try {
+      await this.salesOrderMaterialService.updateMaterialSalesOrder(orderId, {
+        status: 'pending' as any,
+      });
+      this.notificationService.success('Success', 'Order has been lined up (moved to Pending).');
+      await this.loadOrders();
+    } catch (err: any) {
+      const message = err?.response?.data?.message ?? err?.message ?? 'Failed to line up order.';
+      this.notificationService.error('Error', message);
+    }
+  }
+
+  // ─── View Modal Methods ─────────────────────────────────────────────────────
+
+  async onViewOrder(orderId: number): Promise<void> {
+    this.isViewModalOpen = true;
+    this.isViewLoading = true;
+    this.viewOrder = null;
+
+    try {
+      this.viewOrder = await this.salesOrderMaterialService.getMaterialSalesOrderById(orderId);
+    } catch (err) {
+      console.error('Failed to load order details:', err);
+      this.isViewModalOpen = false;
+    } finally {
+      this.isViewLoading = false;
+    }
+  }
+
+  closeViewModal(): void {
+    this.isViewModalOpen = false;
+    this.viewOrder = null;
+    this.isCompletingOrder = false;
+  }
+
+  async completeOrderFromView(): Promise<void> {
+    if (!this.viewOrder || this.isCompletingOrder) return;
+
+    this.isCompletingOrder = true;
+
+    try {
+      await this.salesOrderMaterialService.updateMaterialSalesOrder(this.viewOrder.id, {
+        status: 'complete' as any,
+      });
+      this.notificationService.success('Success', 'Order marked as complete.');
+      this.closeViewModal();
+      await this.loadOrders();
+    } catch (err: any) {
+      const message = err?.response?.data?.message ?? err?.message ?? 'Failed to complete order.';
+      this.notificationService.error('Error', message);
+    } finally {
+      this.isCompletingOrder = false;
+    }
+  }
+
+  getViewOrderTotal(): number {
+    if (!this.viewOrder?.productItems) return 0;
+    return this.viewOrder.productItems.reduce((sum, item) => sum + (item.total ?? 0), 0);
+  }
+
+  // ─── Void Order Methods (Complete tab, Admin only) ──────────────────────────
+
+  openVoidOrderDialog(orderId: number): void {
+    this.voidOrderId = orderId;
+    this.voidPassword = '';
+    this.voidError = '';
+    this.isVoiding = false;
+    this.isVoidDialogOpen = true;
+  }
+
+  closeVoidDialog(): void {
+    this.isVoidDialogOpen = false;
+    this.voidPassword = '';
+    this.voidError = '';
+    this.voidOrderId = null;
+  }
+
+  async confirmVoidOrder(): Promise<void> {
+    if (!this.voidPassword || this.isVoiding || !this.voidOrderId) return;
+
+    this.isVoiding = true;
+    this.voidError = '';
+
+    try {
+      // Verify password using the login endpoint
+      const username = this.rbacService.getPayload()?.username ?? '';
+      const result = await this.authService.login(username, this.voidPassword);
+
+      if (!result.success) {
+        this.voidError = 'Incorrect password. Please try again.';
+        this.isVoiding = false;
+        return;
+      }
+
+      // Password verified — void the order
+      await this.salesOrderMaterialService.updateMaterialSalesOrder(this.voidOrderId, {
+        status: 'voided' as any,
+      });
+
+      this.notificationService.success('Success', 'Order has been voided. Stock returned to inventory.');
+      this.closeVoidDialog();
+      await this.loadOrders();
+    } catch (err: any) {
+      const message = err?.response?.data?.message ?? err?.message ?? 'Failed to void order.';
+      if (message.toLowerCase().includes('invalid') || message.toLowerCase().includes('unauthorized') || message.toLowerCase().includes('incorrect')) {
+        this.voidError = 'Incorrect password. Please try again.';
+      } else {
+        this.voidError = message;
+      }
+    } finally {
+      this.isVoiding = false;
+    }
+  }
+
+  // ─── Daily Sales Excel Report ─────────────────────────────────────────────
+
+  async generateDailySalesExcel(): Promise<void> {
+    if (this.isGeneratingExcel) return;
+    this.isGeneratingExcel = true;
+
+    try {
+      // Fetch ALL completed orders for the selected date range (not just current page)
+      const params: MaterialSalesOrderListParams = {
+        status: 'complete',
+        page: 1,
+        limit: 9999,
+        dateFrom: this.dateFrom,
+        dateTo: this.dateTo,
+      };
+
+      const result = await this.salesOrderMaterialService.getMaterialSalesOrders(params);
+      const allOrders = result.items;
+
+      if (allOrders.length === 0) {
+        this.notificationService.error('No Data', 'No completed orders found for the selected date range.');
+        return;
+      }
+
+      // Group orders by payment method
+      const groupedByMethod = new Map<string, MaterialSalesOrderListItem[]>();
+
+      for (const order of allOrders) {
+        if (order.payments && order.payments.length > 0) {
+          for (const payment of order.payments) {
+            const method = (payment.method || 'Other').toUpperCase();
+            if (!groupedByMethod.has(method)) {
+              groupedByMethod.set(method, []);
+            }
+            // Add order with the specific payment amount
+            groupedByMethod.get(method)!.push(order);
+          }
+        } else {
+          const method = 'OTHER';
+          if (!groupedByMethod.has(method)) {
+            groupedByMethod.set(method, []);
+          }
+          groupedByMethod.get(method)!.push(order);
+        }
+      }
+
+      // Format date range for header
+      const fromDate = this.dateFrom
+        ? new Date(this.dateFrom).toLocaleDateString('en-US', { month: 'long', day: 'numeric', year: 'numeric' })
+        : '';
+      const toDate = this.dateTo
+        ? new Date(this.dateTo).toLocaleDateString('en-US', { month: 'long', day: 'numeric', year: 'numeric' })
+        : '';
+      const dateLabel = fromDate === toDate ? fromDate : `${fromDate} - ${toDate}`;
+
+      // Generate Excel using ExcelJS
+      const ExcelJS = await import('exceljs');
+      const workbook = new ExcelJS.Workbook();
+
+      // Sort methods for consistent output
+      const sortedMethods = Array.from(groupedByMethod.keys()).sort();
+
+      for (const method of sortedMethods) {
+        const orders = groupedByMethod.get(method)!;
+        // Use short sheet name (max 31 chars)
+        const sheetName = method.length > 31 ? method.substring(0, 31) : method;
+        const worksheet = workbook.addWorksheet(sheetName);
+
+        // Title row
+        worksheet.mergeCells('A1:D1');
+        const titleCell = worksheet.getCell('A1');
+        titleCell.value = `Daily Sales Report - ${dateLabel}`;
+        titleCell.font = { bold: true, size: 14 };
+        titleCell.alignment = { horizontal: 'center' };
+
+        // Payment method subtitle
+        worksheet.mergeCells('A2:D2');
+        const subtitleCell = worksheet.getCell('A2');
+        subtitleCell.value = method;
+        subtitleCell.font = { bold: true, size: 12 };
+        subtitleCell.alignment = { horizontal: 'center' };
+
+        // Empty row
+        worksheet.addRow([]);
+
+        // Header row
+        const headerRow = worksheet.addRow(['No.', 'Customer/Client Name', 'DR/SI No.', 'Amount']);
+        headerRow.font = { bold: true };
+        headerRow.eachCell((cell) => {
+          cell.border = {
+            bottom: { style: 'thin' },
+          };
+          cell.fill = {
+            type: 'pattern',
+            pattern: 'solid',
+            fgColor: { argb: 'FFE8E8E8' },
+          };
+        });
+
+        // Data rows — deduplicate orders per method sheet
+        const seenOrderIds = new Set<number>();
+        let rowNum = 0;
+        let totalAmount = 0;
+
+        for (const order of orders) {
+          if (seenOrderIds.has(order.id)) continue;
+          seenOrderIds.add(order.id);
+
+          rowNum++;
+          // Calculate the amount for this specific payment method
+          let methodAmount = 0;
+          if (order.payments && order.payments.length > 0) {
+            for (const p of order.payments) {
+              if ((p.method || '').toUpperCase() === method) {
+                methodAmount += Number(p.amount) || 0;
+              }
+            }
+          }
+          // If no specific amount found, use total
+          if (methodAmount === 0) {
+            methodAmount = order.totalAmount ?? 0;
+          }
+          totalAmount += methodAmount;
+
+          const dataRow = worksheet.addRow([
+            rowNum,
+            order.customerName || '—',
+            order.soNumber || '—',
+            methodAmount,
+          ]);
+
+          // Format amount column as currency
+          dataRow.getCell(4).numFmt = '#,##0.00';
+        }
+
+        // Total row
+        worksheet.addRow([]);
+        const totalRow = worksheet.addRow(['', '', 'TOTAL:', totalAmount]);
+        totalRow.font = { bold: true };
+        totalRow.getCell(4).numFmt = '#,##0.00';
+        totalRow.getCell(3).alignment = { horizontal: 'right' };
+
+        // Set column widths
+        worksheet.getColumn(1).width = 6;
+        worksheet.getColumn(2).width = 35;
+        worksheet.getColumn(3).width = 18;
+        worksheet.getColumn(4).width = 15;
+      }
+
+      // Download the file
+      const buffer = await workbook.xlsx.writeBuffer();
+      const blob = new Blob([buffer], { type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' });
+      const url = URL.createObjectURL(blob);
+      const link = document.createElement('a');
+      link.href = url;
+      link.download = `Daily_Sales_Report_${this.dateFrom}_to_${this.dateTo}.xlsx`;
+      link.click();
+      URL.revokeObjectURL(url);
+
+      this.notificationService.success('Success', 'Daily Sales Excel report generated.');
+    } catch (err: any) {
+      console.error('Failed to generate Excel:', err);
+      this.notificationService.error('Error', 'Failed to generate Excel report.');
+    } finally {
+      this.isGeneratingExcel = false;
+    }
   }
 
   // ─── Migration Methods ──────────────────────────────────────────────────────

@@ -6540,6 +6540,7 @@ export class SalesOrderService {
         brand: string | null;
         cost: string;
         rate: string;
+        discount: string;
         qty: number;
         total: string;
         isNonInventory: boolean;
@@ -6553,6 +6554,7 @@ export class SalesOrderService {
            soi.brand,
            soi.cost::text,
            soi.rate::text,
+           COALESCE(soi.discount, 0)::text AS discount,
            soi.qty,
            soi.total::text,
            soi.is_non_inventory AS "isNonInventory",
@@ -6630,6 +6632,7 @@ export class SalesOrderService {
             brand: item.brand,
             cost: this.toOptionalNumber(item.cost) ?? 0,
             rate: this.toOptionalNumber(item.rate) ?? 0,
+            discount: this.toOptionalNumber(item.discount) ?? 0,
             qty: item.qty,
             total: this.toOptionalNumber(item.total) ?? 0,
             isNonInventory: item.isNonInventory,
@@ -7323,14 +7326,17 @@ export class SalesOrderService {
           });
         }
 
-        // 4. Compute total from product items
+        // 4. Compute total from product items (rate - discount) × qty
         const productItems = Array.isArray(dto.productItems) ? dto.productItems : [];
         let computedTotal = 0;
         for (const item of productItems) {
           const rate = Number(item.rate ?? 0);
+          const discount = Number(item.discount) || 0;
+          const effectiveRate = Math.max(rate - discount, 0);
           const qty = Number(item.qty ?? 0);
-          computedTotal += Math.round(rate * qty * 100) / 100;
+          computedTotal += Math.round(effectiveRate * qty * 100) / 100;
         }
+        computedTotal = Math.round(computedTotal * 100) / 100;
 
         // 5. Build update fields — explicitly omit 'installer'
         const updateFields: string[] = [];
@@ -7382,35 +7388,130 @@ export class SalesOrderService {
           throw new Error('Failed to update sales order');
         }
 
-        // 7. Replace line items: delete existing + insert new (within same transaction)
-        await client.query(
-          `DELETE FROM tblsales_order_items WHERE sales_order_id = $1`,
-          [id],
-        );
+        // 7a. Stock return: when status transitions from 'complete' to 'voided', return stock BEFORE deleting items
+        const previousStatus = String(existingOrder.status ?? '').trim().toLowerCase();
+        const newStatus = String(dto.status ?? '').trim().toLowerCase();
+        if (
+          newStatus === 'voided' &&
+          (previousStatus === 'complete' || previousStatus === 'completed')
+        ) {
+          // Fetch the line items from DB before they get deleted
+          const existingItemsResult = await client.query<{
+            material_id: number | null;
+            qty: number;
+            is_non_inventory: boolean;
+          }>(
+            `SELECT material_id, qty, is_non_inventory
+             FROM tblsales_order_items
+             WHERE sales_order_id = $1`,
+            [id],
+          );
 
-        // Insert new line items
-        for (const item of productItems) {
-          const rate = Number(item.rate ?? 0);
-          const qty = Number(item.qty ?? 0);
-          const total = Math.round(rate * qty * 100) / 100;
+          for (const row of existingItemsResult.rows) {
+            const materialId = Number(row.material_id);
+            const qty = Number(row.qty ?? 0);
+            const isNonInventory = Boolean(row.is_non_inventory);
 
+            if (!materialId || materialId <= 0 || qty <= 0 || isNonInventory) {
+              continue;
+            }
+
+            // Check how much was actually deducted (from movement records)
+            const movementResult = await client.query<{ qty: number }>(
+              `SELECT COALESCE(SUM(qty), 0) AS qty
+               FROM tblmaterial_stock_movement
+               WHERE source_type = 'SO'
+                 AND source_id = $1
+                 AND material_id = $2
+                 AND movement_type = 'OUT'`,
+              [id, materialId],
+            );
+            const deductedQty = Number(movementResult.rows[0]?.qty ?? 0);
+
+            // Check how much was already returned
+            const returnedResult = await client.query<{ qty: number }>(
+              `SELECT COALESCE(SUM(qty), 0) AS qty
+               FROM tblmaterial_stock_movement
+               WHERE source_type = 'SO'
+                 AND source_id = $1
+                 AND material_id = $2
+                 AND movement_type = 'RETURN'`,
+              [id, materialId],
+            );
+            const alreadyReturned = Number(returnedResult.rows[0]?.qty ?? 0);
+
+            const returnQty = Math.max(0, deductedQty - alreadyReturned);
+
+            if (returnQty > 0) {
+              // Record RETURN movement
+              try {
+                await this.materialStockService.recordMovement(
+                  {
+                    materialId,
+                    movementType: 'RETURN',
+                    qty: returnQty,
+                    sourceType: 'SO',
+                    sourceId: id,
+                    sourceLineKey: `SO-${id}-MAT-${materialId}-VOID`,
+                    statusSnapshot: 'voided',
+                    remarks: `Stock returned for voided Material SO #${id}`,
+                  },
+                  { client },
+                );
+              } catch (moveErr: any) {
+                if (moveErr?.message?.includes('unique') || moveErr?.message?.includes('duplicate')) {
+                  // Already recorded — idempotent, skip
+                } else {
+                  throw moveErr;
+                }
+              }
+
+              // Also add back to tblmaterials.on_hand_stock
+              await client.query(
+                `UPDATE tblmaterials
+                 SET on_hand_stock = COALESCE(on_hand_stock, 0) + $1
+                 WHERE id = $2`,
+                [returnQty, materialId],
+              );
+            }
+          }
+        }
+
+        // 7b. Replace line items: delete existing + insert new (within same transaction)
+        // Skip item replacement if no productItems provided (e.g., status-only update like void)
+        if (dto.productItems !== undefined && Array.isArray(dto.productItems)) {
           await client.query(
-            `INSERT INTO tblsales_order_items
-              (sales_order_id, material_id, description, item_code, brand, cost, rate, qty, total, is_non_inventory)
-             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)`,
-            [
-              id,
+            `DELETE FROM tblsales_order_items WHERE sales_order_id = $1`,
+            [id],
+          );
+
+          // Insert new line items
+          for (const item of productItems) {
+            const rate = Number(item.rate ?? 0);
+            const discount = Number(item.discount) || 0;
+            const effectiveRate = Math.max(rate - discount, 0);
+            const qty = Number(item.qty ?? 0);
+            const total = Math.round(effectiveRate * qty * 100) / 100;
+
+            await client.query(
+              `INSERT INTO tblsales_order_items
+                (sales_order_id, material_id, description, item_code, brand, cost, rate, discount, qty, total, is_non_inventory)
+               VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)`,
+              [
+                id,
               item.materialId ?? null,
               item.description,
               item.itemCode ?? null,
               item.brand ?? null,
               Number(item.cost ?? 0),
               rate,
+              discount,
               qty,
               total,
               Boolean(item.isNonInventory),
             ],
           );
+        }
         }
 
         // 8. Replace payment details: delete existing + insert new
@@ -7451,8 +7552,6 @@ export class SalesOrderService {
         }
 
         // 9. Stock deduction: when status transitions to 'complete', deduct material stock
-        const previousStatus = String(existingOrder.status ?? '').trim().toLowerCase();
-        const newStatus = String(dto.status ?? '').trim().toLowerCase();
         if (
           newStatus === 'complete' &&
           previousStatus !== 'complete' &&

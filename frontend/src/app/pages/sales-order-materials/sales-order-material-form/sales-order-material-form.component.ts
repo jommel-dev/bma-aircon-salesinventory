@@ -1,7 +1,9 @@
 import { CommonModule } from '@angular/common';
 import { Component, EventEmitter, Input, OnInit, Output } from '@angular/core';
 import { FormsModule } from '@angular/forms';
+import { DomSanitizer, SafeResourceUrl } from '@angular/platform-browser';
 import { RbacService } from '../../../shared/services/rbac.service';
+import { AuthService } from '../../../shared/services/auth.service';
 import {
   SalesOrderService,
   SalesCustomerOption,
@@ -14,6 +16,10 @@ import {
   SalesOrderMaterialService,
 } from '../../../shared/services/sales-order-material.service';
 import { NotificationService } from '../../../shared/services/notification.service';
+import {
+  PrintSalesOrderService,
+  PrintSalesOrderData,
+} from '../../../shared/services/print-sales-order.service';
 import { ProductItemsTableComponent } from '../product-items-table/product-items-table.component';
 
 @Component({
@@ -85,15 +91,33 @@ export class SalesOrderMaterialFormComponent implements OnInit {
   /** Stores the original salesType from the loaded order (for edit mode preservation). */
   private originalSalesType = 'sales';
 
+  // ─── Quotation Print ────────────────────────────────────────────────────────
+  isPrintModalOpen = false;
+  printPdfUrl: SafeResourceUrl | null = null;
+  isPrintLoading = false;
+
+  // ─── Post-Complete Print Dialog ─────────────────────────────────────────────
+  isPostCompleteDialogOpen = false;
+  private completedOrderId: number | null = null;
+
+  // ─── Void Order Dialog ──────────────────────────────────────────────────────
+  isVoidDialogOpen = false;
+  isVoiding = false;
+  voidPassword = '';
+  voidError = '';
+
   private customerDebounceTimer: ReturnType<typeof setTimeout> | null = null;
   private materialSearchDebounceTimer: ReturnType<typeof setTimeout> | null = null;
   private readonly debounceMs = 300;
 
   constructor(
     private readonly rbacService: RbacService,
+    private readonly authService: AuthService,
     private readonly salesOrderService: SalesOrderService,
     private readonly salesOrderMaterialService: SalesOrderMaterialService,
     private readonly notificationService: NotificationService,
+    private readonly printSalesOrderService: PrintSalesOrderService,
+    private readonly sanitizer: DomSanitizer,
   ) {}
 
   ngOnInit(): void {
@@ -423,6 +447,40 @@ export class SalesOrderMaterialFormComponent implements OnInit {
     if (payment.method !== 'Cash' && payment.method !== 'Credit Card') {
       payment.paymentDate = '';
     }
+    // Auto-calculate due date if terms are already filled
+    if (payment.terms && (payment.method === 'Terms' || payment.method === 'Terms with DP' || payment.method === 'Installment')) {
+      this.onTermsChange(index);
+    }
+  }
+
+  /**
+   * Auto-calculate the Terms Due Date when the user enters number of days.
+   * Due date = today + N days (extracted from the terms field).
+   */
+  onTermsChange(index: number): void {
+    const payment = this.paymentDetails[index];
+    if (!payment) return;
+
+    // Extract numeric days from the terms field (e.g., "30", "30 days", "60")
+    const daysMatch = String(payment.terms ?? '').match(/(\d+)/);
+    if (!daysMatch) {
+      return; // No numeric value found, don't change due date
+    }
+
+    const days = parseInt(daysMatch[1], 10);
+    if (!Number.isFinite(days) || days <= 0) {
+      return;
+    }
+
+    // Calculate due date: today + N days
+    const dueDate = new Date();
+    dueDate.setDate(dueDate.getDate() + days);
+
+    // Format as YYYY-MM-DD for the date input
+    const year = dueDate.getFullYear();
+    const month = String(dueDate.getMonth() + 1).padStart(2, '0');
+    const day = String(dueDate.getDate()).padStart(2, '0');
+    payment.termsDueDate = `${year}-${month}-${day}`;
   }
 
   shouldShowPaymentField(method: PaymentDetail['method'], field: string): boolean {
@@ -461,7 +519,20 @@ export class SalesOrderMaterialFormComponent implements OnInit {
       return;
     }
     if (!this.validateNonInventoryItems()) return;
-    await this.submitForm('complete');
+    await this.submitFormWithPostComplete('complete');
+  }
+
+  /**
+   * Complete Order directly from the create form (no orderId yet).
+   * Creates the order with status 'complete' and then asks if user wants to print.
+   */
+  async completeOrderDirect(): Promise<void> {
+    if (this.productItems.length === 0) {
+      this.validationError = 'At least one product item is required to complete an order.';
+      return;
+    }
+    if (!this.validateNonInventoryItems()) return;
+    await this.submitFormWithPostComplete('complete');
   }
 
   openCancelDialog(): void {
@@ -475,6 +546,58 @@ export class SalesOrderMaterialFormComponent implements OnInit {
   async confirmCancelOrder(): Promise<void> {
     this.isCancelDialogOpen = false;
     await this.submitForm('voided');
+  }
+
+  // ─── Void Order (Admin/SuperAdmin only, requires password) ──────────────────
+
+  openVoidDialog(): void {
+    this.voidPassword = '';
+    this.voidError = '';
+    this.isVoiding = false;
+    this.isVoidDialogOpen = true;
+  }
+
+  closeVoidDialog(): void {
+    this.isVoidDialogOpen = false;
+    this.voidPassword = '';
+    this.voidError = '';
+  }
+
+  async confirmVoidOrder(): Promise<void> {
+    if (!this.voidPassword || this.isVoiding) return;
+
+    this.isVoiding = true;
+    this.voidError = '';
+
+    try {
+      // Verify password using the login endpoint
+      const username = this.rbacService.getPayload()?.username ?? '';
+      const result = await this.authService.login(username, this.voidPassword);
+
+      if (!result.success) {
+        this.voidError = 'Incorrect password. Please try again.';
+        this.isVoiding = false;
+        return;
+      }
+
+      // Password verified — proceed to void the order
+      await this.salesOrderMaterialService.updateMaterialSalesOrder(this.orderId!, {
+        status: 'voided' as any,
+      });
+
+      this.notificationService.success('Success', 'Order has been voided.');
+      this.closeVoidDialog();
+      this.saved.emit();
+    } catch (err: any) {
+      const message = err?.response?.data?.message ?? err?.message ?? 'Failed to void order.';
+      if (message.toLowerCase().includes('invalid') || message.toLowerCase().includes('unauthorized') || message.toLowerCase().includes('incorrect')) {
+        this.voidError = 'Incorrect password. Please try again.';
+      } else {
+        this.voidError = message;
+      }
+    } finally {
+      this.isVoiding = false;
+    }
   }
 
   /**
@@ -554,6 +677,86 @@ export class SalesOrderMaterialFormComponent implements OnInit {
     this.cancelled.emit();
   }
 
+  canPrintQuotationFromForm(): boolean {
+    return this.productItems.length > 0;
+  }
+
+  async printQuotation(): Promise<void> {
+    if (!this.canPrintQuotationFromForm()) {
+      this.validationError = 'Add at least one product item to print a quotation.';
+      return;
+    }
+
+    this.validationError = '';
+    this.isPrintLoading = true;
+    this.isPrintModalOpen = true;
+    this.printPdfUrl = null;
+
+    try {
+      const printData = this.buildQuotationPrintData();
+      const dataUri = await this.printSalesOrderService.generatePdf(printData, {
+        watermark: 'QUOTATION ONLY',
+      });
+      this.printPdfUrl = this.sanitizer.bypassSecurityTrustResourceUrl(dataUri);
+    } catch {
+      this.notificationService.error('Error', 'Failed to generate quotation PDF.');
+      this.isPrintModalOpen = false;
+      this.printPdfUrl = null;
+    } finally {
+      this.isPrintLoading = false;
+    }
+  }
+
+  closePrintModal(): void {
+    this.isPrintModalOpen = false;
+    this.printPdfUrl = null;
+  }
+
+  private buildQuotationPrintData(): PrintSalesOrderData {
+    const payment = this.paymentDetails[0];
+    let paymentTerm = '';
+    if (payment) {
+      paymentTerm =
+        payment.method === 'Terms'
+          ? `TERMS ${payment.terms || ''} Day(s)`
+          : payment.method || '';
+    }
+
+    const deliveryDateFormatted = this.deliveryDate
+      ? new Date(this.deliveryDate).toLocaleDateString('en-US', {
+          month: '2-digit',
+          day: '2-digit',
+          year: 'numeric',
+        })
+      : '';
+
+    const soNumber = this.currentSoNumber || this.nextSoNumber || 'DRAFT';
+    const totalAmount = Math.round(
+      this.productItems.reduce((sum, item) => sum + (item.total ?? 0), 0) * 100,
+    ) / 100;
+
+    return {
+      dealer: this.customerForm.name || '',
+      address: this.customerForm.address || '',
+      deliveryDate: deliveryDateFormatted,
+      soNumber,
+      paymentTerm,
+      terms: payment?.terms || '',
+      totalAmount,
+      items: this.productItems.map((item) => {
+        const discount = item.discount ?? 0;
+        const effectiveRate = Math.max(item.rate - discount, 0);
+        return {
+          quantity: item.qty,
+          unit: 'pcs',
+          description: item.description || '',
+          unitPrice: effectiveRate,
+          amount: item.total,
+        };
+      }),
+    };
+  }
+
   /**
    * Opens validation modal with warnings and errors.
    * User can proceed despite warnings, but must fix errors.
@@ -574,7 +777,12 @@ export class SalesOrderMaterialFormComponent implements OnInit {
 
   async proceedWithSubmission(): Promise<void> {
     this.isValidationModalOpen = false;
-    await this.performSubmission(this.pendingSubmissionStatus);
+    if (this.pendingPostComplete) {
+      this.pendingPostComplete = false;
+      await this.performSubmissionWithPostComplete(this.pendingSubmissionStatus);
+    } else {
+      await this.performSubmission(this.pendingSubmissionStatus);
+    }
   }
 
   async submitForm(status: string): Promise<void> {
@@ -632,6 +840,146 @@ export class SalesOrderMaterialFormComponent implements OnInit {
       this.notificationService.error('Error', message);
       this.isSubmitting = false;
     }
+  }
+
+  /**
+   * Submit form specifically for "Complete Order" flow.
+   * On success, shows the post-complete print dialog instead of navigating away.
+   */
+  async submitFormWithPostComplete(status: string): Promise<void> {
+    if (this.isSubmitting) return;
+
+    this.isSubmitting = true;
+    this.validationError = '';
+
+    try {
+      if (!this.validateNonInventoryItems()) {
+        this.isSubmitting = false;
+        return;
+      }
+
+      const { warnings: stockWarnings, errors: stockErrors } = this.validateStockAvailability();
+      const { errors: paymentErrors } = this.validatePaymentSetup();
+      const allErrors = [...stockErrors, ...paymentErrors];
+
+      if (allErrors.length > 0 || stockWarnings.length > 0) {
+        this.isSubmitting = false;
+        // Store that we want post-complete behavior after validation proceed
+        this.pendingPostComplete = true;
+        this.openValidationModal(status, stockWarnings, allErrors);
+        return;
+      }
+
+      await this.performSubmissionWithPostComplete(status);
+    } finally {
+      this.isSubmitting = false;
+    }
+  }
+
+  private async performSubmissionWithPostComplete(status: string): Promise<void> {
+    try {
+      const payload = this.buildPayload(status);
+
+      let resultOrderId: number | null = null;
+
+      if (this.orderId) {
+        await this.salesOrderMaterialService.updateMaterialSalesOrder(this.orderId, payload);
+        resultOrderId = this.orderId;
+      } else {
+        const result = await this.salesOrderMaterialService.createMaterialSalesOrder(payload);
+        resultOrderId = result?.data?.salesOrderId ?? null;
+      }
+
+      this.notificationService.success('Success', 'Order completed successfully.');
+      this.completedOrderId = resultOrderId;
+      this.isPostCompleteDialogOpen = true;
+    } catch (error: any) {
+      const message =
+        error?.response?.data?.message ?? error?.message ?? 'An unexpected error occurred. Please try again later.';
+      this.notificationService.error('Error', message);
+      this.isSubmitting = false;
+    }
+  }
+
+  // ─── Post-Complete Print Dialog ─────────────────────────────────────────────
+
+  /** Flag to track if we should use post-complete flow after validation modal proceed. */
+  private pendingPostComplete = false;
+
+  closePostCompleteDialog(): void {
+    this.isPostCompleteDialogOpen = false;
+    this.completedOrderId = null;
+    this.saved.emit();
+  }
+
+  async printAfterComplete(): Promise<void> {
+    this.isPostCompleteDialogOpen = false;
+
+    if (!this.completedOrderId) {
+      this.saved.emit();
+      return;
+    }
+
+    // Open print preview
+    this.isPrintLoading = true;
+    this.isPrintModalOpen = true;
+    this.printPdfUrl = null;
+
+    try {
+      const order = await this.salesOrderMaterialService.getMaterialSalesOrderById(this.completedOrderId);
+      const printData = this.buildReceiptPrintData(order);
+      const dataUri = await this.printSalesOrderService.generatePdf(printData);
+      this.printPdfUrl = this.sanitizer.bypassSecurityTrustResourceUrl(dataUri);
+    } catch {
+      this.notificationService.error('Error', 'Failed to generate print PDF.');
+      this.isPrintModalOpen = false;
+      this.printPdfUrl = null;
+      this.saved.emit();
+    } finally {
+      this.isPrintLoading = false;
+    }
+  }
+
+  private buildReceiptPrintData(order: any): PrintSalesOrderData {
+    let paymentTerm = '';
+    if (order.paymentDetails && order.paymentDetails.length > 0) {
+      const payment = order.paymentDetails[0];
+      if (payment.method === 'Terms') {
+        paymentTerm = `TERMS ${payment.terms || ''} Day(s)`;
+      } else {
+        paymentTerm = payment.method || '';
+      }
+    }
+
+    const deliveryDateSource = order.deliveryDate ?? order.scheduleDate;
+    const deliveryDate = deliveryDateSource
+      ? new Date(deliveryDateSource).toLocaleDateString('en-US', {
+          month: '2-digit',
+          day: '2-digit',
+          year: 'numeric',
+        })
+      : '';
+
+    return {
+      dealer: order.customerName || '',
+      address: order.customerAddress || '',
+      deliveryDate,
+      soNumber: order.soNumber || '',
+      paymentTerm,
+      terms: order.paymentDetails?.[0]?.terms || '',
+      totalAmount: order.totalAmount || 0,
+      items: (order.productItems || []).map((item: any) => {
+        const discount = item.discount ?? 0;
+        const effectiveRate = Math.max(item.rate - discount, 0);
+        return {
+          quantity: item.qty,
+          unit: 'pcs',
+          description: item.description || '',
+          unitPrice: effectiveRate,
+          amount: item.total,
+        };
+      }),
+    };
   }
 
   private buildPayload(status: string): CreateMaterialSalesOrderPayload {
@@ -692,8 +1040,9 @@ export class SalesOrderMaterialFormComponent implements OnInit {
       this.currentSoNumber = order.soNumber ?? '';
 
       // Delivery date: non-admin always resets to today
-      if (this.isAdmin && order.scheduleDate) {
-        this.deliveryDate = order.scheduleDate.split('T')[0];
+      const scheduleDate = order.deliveryDate ?? order.scheduleDate;
+      if (this.isAdmin && scheduleDate) {
+        this.deliveryDate = scheduleDate.split('T')[0];
       } else {
         this.resetDeliveryDate();
       }

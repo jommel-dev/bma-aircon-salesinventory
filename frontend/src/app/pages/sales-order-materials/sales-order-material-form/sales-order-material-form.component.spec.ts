@@ -3,6 +3,8 @@ import { RbacService } from '../../../shared/services/rbac.service';
 import { SalesOrderService } from '../../../shared/services/sales-order.service';
 import { SalesOrderMaterialService } from '../../../shared/services/sales-order-material.service';
 import { NotificationService } from '../../../shared/services/notification.service';
+import { PrintSalesOrderService } from '../../../shared/services/print-sales-order.service';
+import { DomSanitizer } from '@angular/platform-browser';
 
 describe('SalesOrderMaterialFormComponent - Non-Inventory Item Handling', () => {
   let component: SalesOrderMaterialFormComponent;
@@ -10,6 +12,8 @@ describe('SalesOrderMaterialFormComponent - Non-Inventory Item Handling', () => 
   let mockSalesOrderService: jasmine.SpyObj<SalesOrderService>;
   let mockSalesOrderMaterialService: jasmine.SpyObj<SalesOrderMaterialService>;
   let mockNotificationService: jasmine.SpyObj<NotificationService>;
+  let mockPrintSalesOrderService: jasmine.SpyObj<PrintSalesOrderService>;
+  let mockSanitizer: jasmine.SpyObj<DomSanitizer>;
 
   beforeEach(() => {
     mockRbacService = jasmine.createSpyObj('RbacService', ['isAdminOrSuperAdmin']);
@@ -26,12 +30,16 @@ describe('SalesOrderMaterialFormComponent - Non-Inventory Item Handling', () => 
     ]);
 
     mockNotificationService = jasmine.createSpyObj('NotificationService', ['success', 'error']);
+    mockPrintSalesOrderService = jasmine.createSpyObj('PrintSalesOrderService', ['generatePrintPreview']);
+    mockSanitizer = jasmine.createSpyObj('DomSanitizer', ['bypassSecurityTrustResourceUrl']);
 
     component = new SalesOrderMaterialFormComponent(
       mockRbacService,
       mockSalesOrderService,
       mockSalesOrderMaterialService,
       mockNotificationService,
+      mockPrintSalesOrderService,
+      mockSanitizer,
     );
   });
 
@@ -191,6 +199,7 @@ describe('SalesOrderMaterialFormComponent - Non-Inventory Item Handling', () => 
         brand: 'Brand',
         cost: 5,
         rate: 0,
+        discount: 0,
         qty: 1,
         total: 0,
         materialId: 1,

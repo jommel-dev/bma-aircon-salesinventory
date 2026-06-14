@@ -232,9 +232,10 @@ export class MaterialsService {
   async migrateStock(
     rows: any[],
     userId: number,
-  ): Promise<{ success: boolean; summary: { total: number; updated: number; failed: number }; results: any[] }> {
+  ): Promise<{ success: boolean; summary: { total: number; updated: number; skipped: number; failed: number }; results: any[] }> {
     const results: any[] = [];
     let updated = 0;
+    let skipped = 0;
     let failed = 0;
 
     for (let i = 0; i < rows.length; i++) {
@@ -252,7 +253,14 @@ export class MaterialsService {
           continue;
         }
 
-        if (quantity <= 0) {
+        // Skip rows with 0 quantity to make the API faster
+        if (quantity === 0) {
+          results.push({ row: rowNum, status: 'skipped', message: 'Skipped: quantity is 0' });
+          skipped++;
+          continue;
+        }
+
+        if (quantity < 0) {
           results.push({ row: rowNum, status: 'failed', message: 'quantity must be greater than 0' });
           failed++;
           continue;
@@ -273,8 +281,8 @@ export class MaterialsService {
 
         const material = materialResult.rows[0];
         const materialId = material.id;
-        const previousStock = material.on_hand_stock || 0;
-        const newStock = previousStock + quantity;
+        const previousStock = Number(material.on_hand_stock || 0);
+        const newStock = quantity;  // Set to the migrated quantity, not adding to existing
 
         // Use transaction to ensure atomicity
         await this.db.query('BEGIN');
@@ -284,7 +292,7 @@ export class MaterialsService {
           await this.db.query(
             `INSERT INTO tblmaterial_stock_movement 
              (material_id, movement_type, qty, source_type, source_id, source_line_key, status_snapshot, remarks, created_by)
-             VALUES ($1, 'IN', $2, 'STOCK_MIGRATION', 0, $3, 'migration', $4, $5)`,
+             VALUES ($1, 'IN', $2, 'MANUAL', 0, $3, 'migration', $4, $5)`,
             [
               materialId,
               quantity,
@@ -341,7 +349,7 @@ export class MaterialsService {
 
     return {
       success: true,
-      summary: { total: rows.length, updated, failed },
+      summary: { total: rows.length, updated, skipped, failed },
       results,
     };
   }

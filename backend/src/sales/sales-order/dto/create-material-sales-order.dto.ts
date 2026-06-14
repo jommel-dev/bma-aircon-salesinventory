@@ -65,6 +65,12 @@ export class MaterialSalesOrderProductItemDto {
   @Max(999999.99)
   rate: number;
 
+  @IsOptional()
+  @IsNumber({ maxDecimalPlaces: 2 })
+  @Min(0)
+  @Max(999999.99)
+  discount?: number;
+
   @IsInt()
   @Min(1)
   @Max(99999)

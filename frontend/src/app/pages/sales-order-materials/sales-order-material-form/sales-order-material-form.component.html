@@ -352,12 +352,13 @@
 
             <!-- Terms (Terms, Terms with DP, Installment) -->
             <div *ngIf="shouldShowPaymentField(payment.method, 'terms')">
-              <label class="mb-1 block text-xs font-medium text-gray-600 dark:text-gray-300">Terms</label>
+              <label class="mb-1 block text-xs font-medium text-gray-600 dark:text-gray-300">Terms (days)</label>
               <input
                 type="text"
                 [(ngModel)]="payment.terms"
+                (ngModelChange)="onTermsChange(i)"
                 [name]="'payment_terms_' + i"
-                placeholder="e.g. 30 days"
+                placeholder="e.g. 30"
                 class="w-full rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm dark:border-gray-700 dark:bg-gray-900 dark:text-gray-200"
               />
             </div>
@@ -459,6 +460,16 @@
     <div class="mt-6 flex items-center gap-3">
       <!-- Creating new order (no orderId) -->
       @if (!orderId) {
+        @if (canPrintQuotationFromForm()) {
+          <button
+            type="button"
+            (click)="printQuotation()"
+            [disabled]="isPrintLoading"
+            class="rounded-lg border border-amber-300 bg-amber-50 px-4 py-2 text-sm font-medium text-amber-700 hover:bg-amber-100 disabled:cursor-not-allowed disabled:opacity-50 dark:border-amber-500/40 dark:bg-amber-900/20 dark:text-amber-300 dark:hover:bg-amber-900/40"
+          >
+            Print Quotation
+          </button>
+        }
         <button
           type="button"
           (click)="saveAsDraft()"
@@ -478,10 +489,31 @@
           }
           {{ isSubmitting ? 'Creating...' : 'Create Order' }}
         </button>
+        <button
+          type="button"
+          (click)="completeOrderDirect()"
+          [disabled]="isSubmitting"
+          class="rounded-lg bg-green-600 px-4 py-2 text-sm font-medium text-white hover:bg-green-700 disabled:cursor-not-allowed disabled:opacity-50 flex items-center gap-2"
+        >
+          @if (isSubmitting) {
+            <div class="h-4 w-4 animate-spin rounded-full border-2 border-white border-t-transparent"></div>
+          }
+          {{ isSubmitting ? 'Completing...' : 'Complete Order' }}
+        </button>
       }
 
       <!-- Editing with status 'draft' -->
       @if (orderId && orderStatus === 'draft') {
+        @if (canPrintQuotationFromForm()) {
+          <button
+            type="button"
+            (click)="printQuotation()"
+            [disabled]="isPrintLoading"
+            class="rounded-lg border border-amber-300 bg-amber-50 px-4 py-2 text-sm font-medium text-amber-700 hover:bg-amber-100 disabled:cursor-not-allowed disabled:opacity-50 dark:border-amber-500/40 dark:bg-amber-900/20 dark:text-amber-300 dark:hover:bg-amber-900/40"
+          >
+            Print Quotation
+          </button>
+        }
         <button
           type="button"
           (click)="saveAsDraft()"
@@ -505,14 +537,16 @@
 
       <!-- Editing with status 'pending' -->
       @if (orderId && orderStatus === 'pending') {
-        <button
-          type="button"
-          (click)="openCancelDialog()"
-          [disabled]="isSubmitting"
-          class="rounded-lg border border-red-500 px-4 py-2 text-sm font-medium text-red-600 hover:bg-red-50 disabled:cursor-not-allowed disabled:opacity-50 dark:border-red-500 dark:text-red-400 dark:hover:bg-red-900/20"
-        >
-          Cancel Order
-        </button>
+        @if (isAdmin) {
+          <button
+            type="button"
+            (click)="openCancelDialog()"
+            [disabled]="isSubmitting"
+            class="rounded-lg border border-red-500 px-4 py-2 text-sm font-medium text-red-600 hover:bg-red-50 disabled:cursor-not-allowed disabled:opacity-50 dark:border-red-500 dark:text-red-400 dark:hover:bg-red-900/20"
+          >
+            Cancel Order
+          </button>
+        }
         <button
           type="button"
           (click)="submitForm('pending')"
@@ -542,6 +576,16 @@
         <p class="text-sm text-gray-500 dark:text-gray-400">
           This order is {{ orderStatus }}. No further changes allowed.
         </p>
+        @if (orderStatus === 'complete' && isAdmin) {
+          <button
+            type="button"
+            (click)="openVoidDialog()"
+            [disabled]="isSubmitting"
+            class="rounded-lg border border-red-500 px-4 py-2 text-sm font-medium text-red-600 hover:bg-red-50 disabled:cursor-not-allowed disabled:opacity-50 dark:border-red-500 dark:text-red-400 dark:hover:bg-red-900/20"
+          >
+            Void Order
+          </button>
+        }
         <button
           type="button"
           (click)="cancel()"
@@ -577,6 +621,63 @@
           class="rounded-lg bg-red-600 px-4 py-2 text-sm font-medium text-white hover:bg-red-700"
         >
           Yes, Cancel Order
+        </button>
+      </div>
+    </div>
+  </div>
+}
+
+<!-- Void Order Confirmation Dialog (Password Required) -->
+@if (isVoidDialogOpen) {
+  <div class="fixed inset-0 z-[100014] flex items-center justify-center">
+    <div class="absolute inset-0 bg-black/50" (click)="closeVoidDialog()"></div>
+    <div class="relative z-10 w-full max-w-md rounded-2xl bg-white p-6 shadow-xl dark:bg-gray-900">
+      <div class="mb-4 flex items-center gap-3">
+        <div class="flex h-10 w-10 items-center justify-center rounded-full bg-red-100 dark:bg-red-900/30">
+          <svg class="h-5 w-5 text-red-600 dark:text-red-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-2.5L13.732 4c-.77-.833-1.964-.833-2.732 0L3.34 16.5c-.77.833.192 2.5 1.732 2.5z"/>
+          </svg>
+        </div>
+        <div>
+          <h3 class="text-lg font-semibold text-gray-800 dark:text-white">Void Completed Order</h3>
+          <p class="text-xs text-gray-500 dark:text-gray-400">This action cannot be undone</p>
+        </div>
+      </div>
+      <p class="text-sm text-gray-600 dark:text-gray-300">
+        You are about to void a completed order. Please enter your password to confirm.
+      </p>
+      <div class="mt-4">
+        <label class="mb-1 block text-xs font-medium text-gray-600 dark:text-gray-300">Password</label>
+        <input
+          type="password"
+          [(ngModel)]="voidPassword"
+          name="voidPassword"
+          placeholder="Enter your password"
+          (keydown.enter)="confirmVoidOrder()"
+          class="w-full rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm dark:border-gray-700 dark:bg-gray-900 dark:text-gray-200"
+        />
+      </div>
+      @if (voidError) {
+        <p class="mt-2 text-xs text-red-600 dark:text-red-400">{{ voidError }}</p>
+      }
+      <div class="mt-5 flex items-center justify-end gap-3">
+        <button
+          type="button"
+          (click)="closeVoidDialog()"
+          class="rounded-lg border border-gray-300 bg-white px-4 py-2 text-sm font-medium text-gray-700 hover:bg-gray-50 dark:border-gray-600 dark:bg-gray-800 dark:text-gray-200 dark:hover:bg-gray-700"
+        >
+          Cancel
+        </button>
+        <button
+          type="button"
+          (click)="confirmVoidOrder()"
+          [disabled]="isVoiding || !voidPassword"
+          class="rounded-lg bg-red-600 px-4 py-2 text-sm font-medium text-white hover:bg-red-700 disabled:cursor-not-allowed disabled:opacity-50 flex items-center gap-2"
+        >
+          @if (isVoiding) {
+            <div class="h-4 w-4 animate-spin rounded-full border-2 border-white border-t-transparent"></div>
+          }
+          {{ isVoiding ? 'Voiding...' : 'Confirm Void' }}
         </button>
       </div>
     </div>
@@ -634,6 +735,76 @@
             Proceed Anyway
           </button>
         }
+      </div>
+    </div>
+  </div>
+}
+
+<!-- Quotation Print Preview Modal -->
+@if (isPrintModalOpen) {
+  <div class="fixed inset-0 z-[100012] flex flex-col bg-black/60" (click)="closePrintModal()">
+    <div class="flex h-full w-full flex-col" (click)="$event.stopPropagation()">
+      <div class="flex items-center justify-between bg-white px-6 py-3 shadow dark:bg-gray-900">
+        <h2 class="text-lg font-semibold text-gray-900 dark:text-white">Quotation Preview</h2>
+        <button
+          type="button"
+          (click)="closePrintModal()"
+          class="rounded-lg border border-gray-300 px-4 py-2 text-sm font-medium text-gray-700 transition hover:bg-gray-50 dark:border-gray-700 dark:text-gray-300 dark:hover:bg-gray-800"
+        >
+          Close
+        </button>
+      </div>
+      <div class="flex-1 overflow-hidden bg-gray-200 dark:bg-gray-800">
+        @if (isPrintLoading) {
+          <div class="flex h-full items-center justify-center">
+            <div class="flex flex-col items-center gap-3">
+              <div class="h-8 w-8 animate-spin rounded-full border-4 border-brand-600 border-t-transparent"></div>
+              <p class="text-sm text-gray-600 dark:text-gray-300">Generating quotation PDF...</p>
+            </div>
+          </div>
+        } @else if (printPdfUrl) {
+          <iframe
+            [src]="printPdfUrl"
+            class="h-full w-full border-0"
+            title="Quotation Print Preview"
+          ></iframe>
+        }
+      </div>
+    </div>
+  </div>
+}
+
+<!-- Print After Complete Dialog -->
+@if (isPostCompleteDialogOpen) {
+  <div class="fixed inset-0 z-[100013] flex items-center justify-center">
+    <div class="absolute inset-0 bg-black/50" (click)="closePostCompleteDialog()"></div>
+    <div class="relative z-10 w-full max-w-sm rounded-2xl bg-white p-6 shadow-xl dark:bg-gray-900">
+      <div class="flex flex-col items-center text-center">
+        <div class="mb-3 flex h-12 w-12 items-center justify-center rounded-full bg-green-100 dark:bg-green-900/30">
+          <svg class="h-6 w-6 text-green-600 dark:text-green-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 13l4 4L19 7"/>
+          </svg>
+        </div>
+        <h3 class="text-lg font-semibold text-gray-800 dark:text-white">Order Completed!</h3>
+        <p class="mt-2 text-sm text-gray-600 dark:text-gray-300">
+          Would you like to print the Receipt / DR?
+        </p>
+      </div>
+      <div class="mt-5 flex items-center justify-center gap-3">
+        <button
+          type="button"
+          (click)="closePostCompleteDialog()"
+          class="rounded-lg border border-gray-300 bg-white px-4 py-2 text-sm font-medium text-gray-700 hover:bg-gray-50 dark:border-gray-600 dark:bg-gray-800 dark:text-gray-200 dark:hover:bg-gray-700"
+        >
+          No, Thanks
+        </button>
+        <button
+          type="button"
+          (click)="printAfterComplete()"
+          class="rounded-lg bg-brand-600 px-4 py-2 text-sm font-medium text-white hover:bg-brand-700"
+        >
+          Print Receipt / DR
+        </button>
       </div>
     </div>
   </div>
