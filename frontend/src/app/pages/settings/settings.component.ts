@@ -22,7 +22,7 @@ import {
 import axios from 'axios';
 import { apiClient } from '../../shared/services/api-client';
 
-type SettingsTab = 'system' | 'branches' | 'print-settings' | 'rbac-configs' | 'audit-logs';
+type SettingsTab = 'system' | 'branches' | 'print-settings' | 'rbac-configs' | 'audit-logs' | 'database';
 
 interface SettingsPermissionOption {
   key: string;
@@ -215,6 +215,7 @@ export class SettingsComponent implements OnInit {
     { key: 'print-settings', label: 'Print Settings' },
     { key: 'rbac-configs', label: 'RBAC Configs' },
     { key: 'audit-logs', label: 'Audit Logs' },
+    { key: 'database', label: 'Database' },
   ];
 
   get canReadSettings(): boolean {
@@ -268,6 +269,10 @@ export class SettingsComponent implements OnInit {
     this.activeTab = tab;
     if (tab === 'audit-logs') {
       void this.loadAuditLogs(1);
+    }
+    if (tab === 'database') {
+      void this.loadBackupHistory();
+      void this.checkDatabaseBlank();
     }
   }
 
@@ -1190,5 +1195,141 @@ export class SettingsComponent implements OnInit {
     }
 
     return fallback;
+  }
+
+  // ─── Database Backup & Restore ──────────────────────────────────────────────
+
+  backupHistory: Array<{
+    id: number;
+    mode: string;
+    filename: string;
+    size_bytes: number;
+    created_at: string;
+    created_by: number | null;
+  }> = [];
+  isLoadingBackupHistory = false;
+  isExportingBackup = false;
+  exportMode: 'full' | 'schema_only' | 'data_only' = 'full';
+  isImporting = false;
+  importFileName = '';
+  importError = '';
+  importSuccess = '';
+  isDatabaseBlank: boolean | null = null;
+  isCheckingBlank = false;
+
+  async loadBackupHistory(): Promise<void> {
+    this.isLoadingBackupHistory = true;
+    try {
+      const response = await apiClient.get<{ success: boolean; items: any[] }>('/database-backup/history');
+      this.backupHistory = response.data.items ?? [];
+    } catch {
+      this.backupHistory = [];
+    } finally {
+      this.isLoadingBackupHistory = false;
+    }
+  }
+
+  async exportDatabaseBackup(): Promise<void> {
+    if (this.isExportingBackup) return;
+    this.isExportingBackup = true;
+
+    try {
+      const response = await apiClient.get('/database-backup/export', {
+        params: { mode: this.exportMode },
+        responseType: 'blob',
+      });
+
+      // Extract filename from Content-Disposition header
+      const disposition = response.headers['content-disposition'] ?? '';
+      const filenameMatch = disposition.match(/filename="?([^";\n]+)"?/);
+      const filename = filenameMatch?.[1] ?? `backup_${this.exportMode}_${Date.now()}.sql`;
+
+      // Download the file
+      const blob = new Blob([response.data as any], { type: 'application/sql' });
+      const url = URL.createObjectURL(blob);
+      const link = document.createElement('a');
+      link.href = url;
+      link.download = filename;
+      link.click();
+      URL.revokeObjectURL(url);
+
+      // Refresh history
+      await this.loadBackupHistory();
+    } catch (err) {
+      this.uiError = this.resolveErrorMessage(err, 'Failed to export backup.');
+    } finally {
+      this.isExportingBackup = false;
+    }
+  }
+
+  async checkDatabaseBlank(): Promise<void> {
+    this.isCheckingBlank = true;
+    try {
+      const response = await apiClient.get<{ success: boolean; isBlank: boolean }>('/database-backup/check-blank');
+      this.isDatabaseBlank = response.data.isBlank;
+    } catch {
+      this.isDatabaseBlank = null;
+    } finally {
+      this.isCheckingBlank = false;
+    }
+  }
+
+  async onImportFileSelected(event: Event): Promise<void> {
+    const input = event.target as HTMLInputElement;
+    if (!input.files || input.files.length === 0) return;
+
+    const file = input.files[0];
+    this.importFileName = file.name;
+    this.importError = '';
+    this.importSuccess = '';
+
+    const ext = file.name.split('.').pop()?.toLowerCase();
+    if (ext !== 'sql') {
+      this.importError = 'Only .sql files are accepted.';
+      input.value = '';
+      return;
+    }
+
+    this.isImporting = true;
+
+    try {
+      const formData = new FormData();
+      formData.append('file', file);
+
+      const response = await apiClient.post<{ success: boolean; message: string }>(
+        '/database-backup/import',
+        formData,
+        { headers: { 'Content-Type': 'multipart/form-data' } },
+      );
+
+      if (response.data.success) {
+        this.importSuccess = response.data.message || 'Database imported successfully.';
+        this.importError = '';
+      } else {
+        this.importError = response.data.message || 'Import failed.';
+        this.importSuccess = '';
+      }
+    } catch (err) {
+      this.importError = this.resolveErrorMessage(err, 'Failed to import database.');
+      this.importSuccess = '';
+    } finally {
+      this.isImporting = false;
+      input.value = '';
+    }
+  }
+
+  formatFileSize(bytes: number): string {
+    if (bytes < 1024) return `${bytes} B`;
+    if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
+    return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
+  }
+
+  formatBackupMode(mode: string): string {
+    switch (mode) {
+      case 'full': return 'Full Backup';
+      case 'schema_only': return 'Schema Only';
+      case 'data_only': return 'Data Only';
+      default: return mode;
+    }
   }
 }

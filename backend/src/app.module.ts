@@ -23,6 +23,7 @@ import { AccountingModule } from './accounting/accounting.module';
 import { AuditLogModule } from './audit-log/audit-log.module';
 import { PartsModule } from './inventory/parts/parts.module';
 import { PayrollModule } from './payroll/payroll.module';
+import { DatabaseBackupModule } from './database-backup/database-backup.module';
 
 @Module({
   imports: [
@@ -51,6 +52,7 @@ import { PayrollModule } from './payroll/payroll.module';
     AuditLogModule,
     PartsModule,
     PayrollModule,
+    DatabaseBackupModule,
   ],
   controllers: [AppController],
   providers: [AppService],

@@ -1134,6 +1134,117 @@
         </div>
       </div>
     </div>
+
+    <!-- Database Backup Tab -->
+    <div *ngIf="activeTab === 'database'" class="space-y-6">
+      <!-- Export Section -->
+      <div class="rounded-xl border border-gray-200 bg-white p-5 dark:border-gray-800 dark:bg-gray-900">
+        <h3 class="text-sm font-semibold text-gray-900 dark:text-white mb-4">Export Database Backup</h3>
+        <div class="flex items-end gap-4">
+          <div>
+            <label class="mb-1 block text-xs font-medium text-gray-600 dark:text-gray-300">Backup Mode</label>
+            <select
+              [(ngModel)]="exportMode"
+              name="exportMode"
+              class="rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm dark:border-gray-700 dark:bg-gray-800 dark:text-gray-200"
+            >
+              <option value="full">Full Backup (Schema + Data)</option>
+              <option value="schema_only">Schema Only (Structure + Functions)</option>
+              <option value="data_only">Data Only (INSERT statements)</option>
+            </select>
+          </div>
+          <button
+            type="button"
+            (click)="exportDatabaseBackup()"
+            [disabled]="isExportingBackup"
+            class="rounded-lg bg-brand-600 px-4 py-2 text-sm font-medium text-white transition hover:bg-brand-700 disabled:cursor-not-allowed disabled:opacity-50"
+          >
+            <span *ngIf="isExportingBackup" class="flex items-center gap-2">
+              <div class="h-4 w-4 animate-spin rounded-full border-2 border-white border-t-transparent"></div>
+              Exporting...
+            </span>
+            <span *ngIf="!isExportingBackup">⬇ Export Backup</span>
+          </button>
+        </div>
+      </div>
+
+      <!-- Import Section (Public Setup) -->
+      <div class="rounded-xl border border-gray-200 bg-white p-5 dark:border-gray-800 dark:bg-gray-900">
+        <h3 class="text-sm font-semibold text-gray-900 dark:text-white mb-2">Import Database (New Client Setup)</h3>
+        <p class="mb-3 text-xs text-gray-500 dark:text-gray-400">
+          Upload a <code>.sql</code> backup file to set up a new client database. This only works when the database is blank (no existing tables).
+        </p>
+
+        <div class="mb-3 flex items-center gap-2">
+          <span class="text-xs font-medium text-gray-600 dark:text-gray-300">Database Status:</span>
+          <span *ngIf="isCheckingBlank" class="text-xs text-gray-400">Checking...</span>
+          <span *ngIf="!isCheckingBlank && isDatabaseBlank === true" class="inline-flex rounded-full bg-green-100 px-2.5 py-0.5 text-xs font-semibold text-green-700 dark:bg-green-900/30 dark:text-green-300">
+            Blank — Ready for Import
+          </span>
+          <span *ngIf="!isCheckingBlank && isDatabaseBlank === false" class="inline-flex rounded-full bg-amber-100 px-2.5 py-0.5 text-xs font-semibold text-amber-700 dark:bg-amber-900/30 dark:text-amber-300">
+            Not Blank — Import Disabled
+          </span>
+        </div>
+
+        <div class="flex items-center gap-3">
+          <input
+            type="file"
+            accept=".sql"
+            (change)="onImportFileSelected($event)"
+            [disabled]="isImporting || isDatabaseBlank === false"
+            class="block w-full max-w-sm text-sm text-gray-500 file:mr-4 file:rounded-lg file:border-0 file:bg-brand-50 file:px-4 file:py-2 file:text-sm file:font-semibold file:text-brand-700 hover:file:bg-brand-100 dark:text-gray-400 dark:file:bg-brand-900/20 dark:file:text-brand-300 disabled:opacity-50"
+          />
+          <span *ngIf="isImporting" class="flex items-center gap-2 text-xs text-gray-500">
+            <div class="h-3.5 w-3.5 animate-spin rounded-full border-2 border-brand-600 border-t-transparent"></div>
+            Importing...
+          </span>
+        </div>
+
+        <p *ngIf="importError" class="mt-2 text-xs text-red-600 dark:text-red-400">{{ importError }}</p>
+        <p *ngIf="importSuccess" class="mt-2 text-xs text-green-600 dark:text-green-400">{{ importSuccess }}</p>
+      </div>
+
+      <!-- Backup History -->
+      <div class="rounded-xl border border-gray-200 bg-white p-5 dark:border-gray-800 dark:bg-gray-900">
+        <h3 class="text-sm font-semibold text-gray-900 dark:text-white mb-3">Backup History</h3>
+
+        <div *ngIf="isLoadingBackupHistory" class="py-4 text-center text-sm text-gray-500">Loading history...</div>
+
+        <div *ngIf="!isLoadingBackupHistory && backupHistory.length === 0" class="py-4 text-center text-sm text-gray-400 dark:text-gray-500">
+          No backups yet.
+        </div>
+
+        <div *ngIf="!isLoadingBackupHistory && backupHistory.length > 0" class="overflow-x-auto">
+          <table class="w-full text-sm">
+            <thead>
+              <tr class="border-b border-gray-200 dark:border-gray-700">
+                <th class="px-3 py-2 text-left text-xs font-medium text-gray-500 dark:text-gray-400">Date</th>
+                <th class="px-3 py-2 text-left text-xs font-medium text-gray-500 dark:text-gray-400">Mode</th>
+                <th class="px-3 py-2 text-left text-xs font-medium text-gray-500 dark:text-gray-400">Filename</th>
+                <th class="px-3 py-2 text-right text-xs font-medium text-gray-500 dark:text-gray-400">Size</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr *ngFor="let item of backupHistory" class="border-b border-gray-100 dark:border-gray-800">
+                <td class="px-3 py-2 text-gray-600 dark:text-gray-300">{{ item.created_at | date: 'MMM dd, yyyy HH:mm' }}</td>
+                <td class="px-3 py-2">
+                  <span class="inline-flex rounded-full px-2 py-0.5 text-xs font-medium"
+                    [ngClass]="{
+                      'bg-blue-100 text-blue-700 dark:bg-blue-900/30 dark:text-blue-300': item.mode === 'full',
+                      'bg-purple-100 text-purple-700 dark:bg-purple-900/30 dark:text-purple-300': item.mode === 'schema_only',
+                      'bg-green-100 text-green-700 dark:bg-green-900/30 dark:text-green-300': item.mode === 'data_only'
+                    }">
+                    {{ formatBackupMode(item.mode) }}
+                  </span>
+                </td>
+                <td class="px-3 py-2 font-mono text-xs text-gray-600 dark:text-gray-300">{{ item.filename }}</td>
+                <td class="px-3 py-2 text-right text-gray-600 dark:text-gray-300">{{ formatFileSize(item.size_bytes) }}</td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+      </div>
+    </div>
   </div>
 </div>
 
