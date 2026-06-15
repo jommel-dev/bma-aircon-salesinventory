@@ -142,6 +142,8 @@ export interface MaterialSalesOrderDetail {
     qty: number;
     total: number;
     isNonInventory: boolean;
+    onHandStock?: number;
+    reorderLevel?: number;
   }>;
   paymentDetails: PaymentDetail[];
 }

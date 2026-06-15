@@ -1889,7 +1889,7 @@ export class PurchaseService {
                     sourceId: purchaseOrderId,
                     sourceLineKey: `po-${purchaseOrderId}-item-${row.item_id}`,
                     statusSnapshot: 'complete',
-                    remarks: `Inbound from PO #${result.poNumber || purchaseOrderId} (auto-completed)`,
+                    remarks: `Inbound from PO #${resolvedPoNumber || purchaseOrderId} (auto-completed)`,
                     createdBy: userId,
                   },
                   { client },

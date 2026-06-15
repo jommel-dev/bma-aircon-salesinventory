@@ -956,8 +956,8 @@ export class InventoryComponent implements OnInit, AfterViewChecked {
     this.productTypeSearch = pt.name;
     this.productTypePrefix = pt.prefix || '';
     this.isProductTypeDropdownOpen = false;
-    // Auto-generate codes for all rows using this prefix
-    this.regenerateAllCodes();
+    // Auto-generate codes for all rows using this prefix (fetches DB sequence)
+    void this.regenerateAllCodes();
   }
 
   /**
@@ -1044,13 +1044,44 @@ export class InventoryComponent implements OnInit, AfterViewChecked {
       row.material_code = '';
       return;
     }
-    // Find the next sequence number for this prefix
-    const seq = this.getNextSequenceForPrefix(prefix);
+    // Find the next sequence number for this prefix (checks DB + local rows)
+    const seq = await this.getNextSequenceForPrefixAsync(prefix);
     row.material_code = `${prefix}${String(seq).padStart(5, '0')}`;
   }
 
   /**
-   * Get the next sequence number for a given prefix by checking existing material rows.
+   * Get the next sequence number for a given prefix by checking both
+   * existing material codes in the DB and the current in-memory rows.
+   */
+  private async getNextSequenceForPrefixAsync(prefix: string): Promise<number> {
+    let dbMaxSeq = 0;
+
+    // Query the DB for existing materials with this prefix
+    try {
+      const result = await this.materialInventoryService.getNextMaterialCodeByPrefix(prefix);
+      dbMaxSeq = (result.next_sequence ?? 1) - 1; // next_sequence is max+1, so subtract 1 to get max
+    } catch {
+      // If API fails, fall back to 0
+      dbMaxSeq = 0;
+    }
+
+    // Also check current in-memory rows (in case user added rows already)
+    let localMaxSeq = 0;
+    for (const row of this.materialRows) {
+      if (row.material_code.startsWith(prefix)) {
+        const numPart = row.material_code.substring(prefix.length);
+        const seq = parseInt(numPart, 10);
+        if (!isNaN(seq) && seq > localMaxSeq) {
+          localMaxSeq = seq;
+        }
+      }
+    }
+
+    return Math.max(dbMaxSeq, localMaxSeq) + 1;
+  }
+
+  /**
+   * Synchronous fallback: get next sequence from in-memory rows only.
    */
   private getNextSequenceForPrefix(prefix: string): number {
     let maxSeq = 0;
@@ -1068,8 +1099,9 @@ export class InventoryComponent implements OnInit, AfterViewChecked {
 
   /**
    * Regenerate codes for all material rows using the current product type prefix.
+   * Fetches the next sequence from the DB to avoid code collisions.
    */
-  private regenerateAllCodes(): void {
+  private async regenerateAllCodes(): Promise<void> {
     const prefix = this.productTypePrefix.trim();
     if (!prefix) {
       for (const row of this.materialRows) {
@@ -1077,9 +1109,31 @@ export class InventoryComponent implements OnInit, AfterViewChecked {
       }
       return;
     }
+
+    // Fetch the next available sequence from the DB
+    const startSeq = await this.getNextSequenceForPrefixAsync(prefix);
+
+    // Assign sequential codes starting from the DB's next sequence
+    // But since getNextSequenceForPrefixAsync already accounts for local rows,
+    // we clear them first and reassign
     for (let i = 0; i < this.materialRows.length; i++) {
-      this.materialRows[i].material_code = `${prefix}${String(i + 1).padStart(5, '0')}`;
+      this.materialRows[i].material_code = `${prefix}${String(startSeq + i).padStart(5, '0')}`;
     }
+  }
+
+  /**
+   * Handle prefix input change — regenerate codes with debounce.
+   */
+  private prefixDebounceTimer: ReturnType<typeof setTimeout> | null = null;
+
+  onPrefixInput(): void {
+    if (this.prefixDebounceTimer) {
+      clearTimeout(this.prefixDebounceTimer);
+    }
+    this.prefixDebounceTimer = setTimeout(() => {
+      void this.regenerateAllCodes();
+      this.prefixDebounceTimer = null;
+    }, 400);
   }
 
   /**
@@ -1103,19 +1157,11 @@ export class InventoryComponent implements OnInit, AfterViewChecked {
       return;
     }
 
-    // Validate materials — at least one row with a name and brand
+    // Validate materials — at least one row with a name
     const validRows = this.materialRows.filter(r => r.material_name.trim());
     if (validRows.length === 0) {
       this.createError = 'At least one material with a name is required.';
       return;
-    }
-
-    // Validate that each valid row has a brand
-    for (let i = 0; i < validRows.length; i++) {
-      if (!validRows[i].brand_name.trim()) {
-        this.createError = `Row ${i + 1}: Brand is required.`;
-        return;
-      }
     }
 
     this.isCreateSaving = true;
@@ -1143,44 +1189,48 @@ export class InventoryComponent implements OnInit, AfterViewChecked {
 
       // Step 2: For each material row, resolve brand and create material
       for (const row of validRows) {
-        // Resolve brand
+        // Resolve brand (optional — only if brand_name is provided)
         let brandId: number | null = null;
-        const existingBrand = this.materialBrands.find(
-          b => b.brandName.toLowerCase() === row.brand_name.trim().toLowerCase()
-        );
 
-        if (existingBrand) {
-          brandId = existingBrand.id;
-        } else {
-          // Create new brand
-          const createdBrandId = await this.materialInventoryService.createBrand(
-            row.brand_name.trim(),
-            undefined,
-            productTypeId
+        if (row.brand_name.trim()) {
+          const existingBrand = this.materialBrands.find(
+            b => b.brandName.toLowerCase() === row.brand_name.trim().toLowerCase()
           );
-          brandId = createdBrandId;
 
-          // Fallback: if the response didn't include the ID, try to find it
+          if (existingBrand) {
+            brandId = existingBrand.id;
+          } else {
+            // Create new brand
+            const createdBrandId = await this.materialInventoryService.createBrand(
+              row.brand_name.trim(),
+              undefined,
+              productTypeId
+            );
+            brandId = createdBrandId;
+
+            // Fallback: if the response didn't include the ID, try to find it
+            if (!brandId) {
+              const updatedBrands = await this.materialInventoryService.getMaterialBrands();
+              const found = updatedBrands.find(b => b.brandName.toLowerCase() === row.brand_name.trim().toLowerCase());
+              brandId = found?.id ?? null;
+            }
+
+            // Add to local list so subsequent rows with same brand name don't re-create
+            if (brandId) {
+              this.materialBrands.push({
+                id: brandId,
+                brandName: row.brand_name.trim(),
+                prefix: '',
+                product_type_id: productTypeId,
+              });
+            }
+          }
+
+          // Only error if brand name was provided but couldn't be resolved
           if (!brandId) {
-            const updatedBrands = await this.materialInventoryService.getMaterialBrands();
-            const found = updatedBrands.find(b => b.brandName.toLowerCase() === row.brand_name.trim().toLowerCase());
-            brandId = found?.id ?? null;
+            this.createError = `Failed to resolve brand for "${row.brand_name}".`;
+            return;
           }
-
-          // Add to local list so subsequent rows with same brand name don't re-create
-          if (brandId) {
-            this.materialBrands.push({
-              id: brandId,
-              brandName: row.brand_name.trim(),
-              prefix: '',
-              product_type_id: productTypeId,
-            });
-          }
-        }
-
-        if (!brandId) {
-          this.createError = `Failed to resolve brand for "${row.brand_name}".`;
-          return;
         }
 
         // If no code was auto-generated, generate using Product Type prefix
@@ -1204,7 +1254,7 @@ export class InventoryComponent implements OnInit, AfterViewChecked {
           }
         }
 
-        // Create the material
+        // Create the material (with product_type_id, brand is optional)
         await this.materialInventoryService.createMaterial({
           material_name: row.material_name.trim(),
           material_code: row.material_code.trim() || null,
@@ -1214,7 +1264,8 @@ export class InventoryComponent implements OnInit, AfterViewChecked {
           on_hand_stock: Number(row.on_hand_stock) || 0,
           reorder_level: Number(row.reorder_level) || 0,
           brand_id: brandId,
-        });
+          product_type_id: productTypeId,
+        } as any);
       }
 
       this.createSuccess = `Successfully created ${validRows.length} material(s).`;

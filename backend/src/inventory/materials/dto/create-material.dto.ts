@@ -19,6 +19,12 @@ export class CreateMaterialDto {
   brand_id?: number;
 
   /**
+   * Product Type ID - Direct reference to product type
+   * Optional: Allows categorization without requiring a brand
+   */
+  product_type_id?: number;
+
+  /**
    * Material name - Required and must be unique
    * Example: "1/4 Copper Tube"
    */

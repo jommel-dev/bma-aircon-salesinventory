@@ -15,6 +15,7 @@ import { apiClient } from './api-client';
 export interface Material {
   id: number;
   brand_id: number | null;
+  product_type_id?: number | null;
   material_name: string;
   material_code: string | null;
   description: string | null;
@@ -136,6 +137,16 @@ export class MaterialInventoryService {
   async getNextMaterialCode(brandId: number): Promise<{ material_code: string; next_sequence: number }> {
     const response = await apiClient.get(`${this.baseUrl}/next-code`, {
       params: { brandId },
+    });
+    return response.data;
+  }
+
+  /**
+   * Get next material code by prefix (scans DB for existing codes with that prefix)
+   */
+  async getNextMaterialCodeByPrefix(prefix: string): Promise<{ material_code: string; next_sequence: number }> {
+    const response = await apiClient.get(`${this.baseUrl}/next-code-by-prefix`, {
+      params: { prefix },
     });
     return response.data;
   }

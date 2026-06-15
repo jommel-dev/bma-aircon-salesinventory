@@ -635,7 +635,12 @@ export class SalesOrderMaterialFormComponent implements OnInit {
         return;
       }
 
-      const stock = item.onHandStock ?? 0;
+      // Skip items without stock information (e.g., non-inventory or missing data)
+      if (item.onHandStock == null) {
+        return;
+      }
+
+      const stock = item.onHandStock;
       const qty = item.qty;
       const description = item.description;
 
@@ -1071,6 +1076,8 @@ export class SalesOrderMaterialFormComponent implements OnInit {
         total: item.total,
         materialId: item.materialId,
         isNonInventory: item.isNonInventory,
+        onHandStock: item.onHandStock ?? undefined,
+        reorderLevel: item.reorderLevel ?? undefined,
       }));
 
       // Order status

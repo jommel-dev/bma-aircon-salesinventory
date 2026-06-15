@@ -396,16 +396,12 @@ export class MaterialsService {
     }
 
     // Step 3: Insert new material
-    const insertQuery = `
-      INSERT INTO tblmaterials (
-        brand_id, material_name, material_code, description, unit,
-        unit_price, sell_price, on_hand_stock, reorder_level, created_by
-      )
-      VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
-      RETURNING *
-    `;
-
-    const values = [
+    // Build columns/values dynamically to handle optional product_type_id column
+    const columns: string[] = [
+      'brand_id', 'material_name', 'material_code', 'description', 'unit',
+      'unit_price', 'sell_price', 'on_hand_stock', 'reorder_level', 'created_by'
+    ];
+    const values: any[] = [
       createMaterialDto.brand_id || null,
       createMaterialDto.material_name,
       createMaterialDto.material_code || null,
@@ -417,6 +413,24 @@ export class MaterialsService {
       createMaterialDto.reorder_level || 0,
       userId
     ];
+
+    // Only include product_type_id if the column exists in the table
+    if (createMaterialDto.product_type_id) {
+      const colCheck = await this.db.query(
+        `SELECT 1 FROM information_schema.columns WHERE table_name = 'tblmaterials' AND column_name = 'product_type_id' AND table_schema = current_schema() LIMIT 1`
+      );
+      if (colCheck.rowCount > 0) {
+        columns.splice(1, 0, 'product_type_id'); // insert after brand_id
+        values.splice(1, 0, createMaterialDto.product_type_id);
+      }
+    }
+
+    const placeholders = values.map((_, i) => `$${i + 1}`).join(', ');
+    const insertQuery = `
+      INSERT INTO tblmaterials (${columns.join(', ')})
+      VALUES (${placeholders})
+      RETURNING *
+    `;
 
     const result = await this.db.query(insertQuery, values);
     const material = result.rows[0];
@@ -747,17 +761,31 @@ export class MaterialsService {
       throw new BadRequestException('Selected brand does not have a prefix configured');
     }
 
+    return this.getNextSequenceForPrefix(prefix);
+  }
+
+  /**
+   * Get the next material code sequence for a given prefix.
+   * Scans existing material_code values in tblmaterials to find the max sequence.
+   */
+  async getNextSequenceForPrefix(prefix: string): Promise<{ material_code: string; next_sequence: number }> {
+    if (!prefix || !prefix.trim()) {
+      throw new BadRequestException('Prefix is required');
+    }
+
+    const trimmedPrefix = prefix.trim();
+
     const codeResult = await this.db.query(
       `SELECT material_code FROM tblmaterials WHERE material_code LIKE $1 AND deleted_at IS NULL`,
-      [`${prefix}%`]
+      [`${trimmedPrefix}%`]
     );
 
     const maxSequence = codeResult.rows.reduce((max: number, row: any) => {
       const code = String(row.material_code ?? '');
-      if (!code.startsWith(prefix)) {
+      if (!code.startsWith(trimmedPrefix)) {
         return max;
       }
-      const digits = code.substring(prefix.length).match(/^0*(\d+)$/);
+      const digits = code.substring(trimmedPrefix.length).match(/^0*(\d+)$/);
       if (!digits) {
         return max;
       }
@@ -766,7 +794,7 @@ export class MaterialsService {
     }, 0);
 
     const nextSequence = maxSequence + 1;
-    const materialCode = `${prefix}${String(nextSequence).padStart(5, '0')}`;
+    const materialCode = `${trimmedPrefix}${String(nextSequence).padStart(5, '0')}`;
 
     return { material_code: materialCode, next_sequence: nextSequence };
   }

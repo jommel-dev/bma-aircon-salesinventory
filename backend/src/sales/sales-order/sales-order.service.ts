@@ -6544,6 +6544,8 @@ export class SalesOrderService {
         qty: number;
         total: string;
         isNonInventory: boolean;
+        onHandStock: number | null;
+        reorderLevel: number | null;
         createdAt: string | null;
       }>(
         `SELECT
@@ -6558,8 +6560,11 @@ export class SalesOrderService {
            soi.qty,
            soi.total::text,
            soi.is_non_inventory AS "isNonInventory",
+           COALESCE(m.on_hand_stock, 0) AS "onHandStock",
+           COALESCE(m.reorder_level, 0) AS "reorderLevel",
            soi.created_at AS "createdAt"
          FROM tblsales_order_items soi
+         LEFT JOIN tblmaterials m ON soi.material_id = m.id
          WHERE soi.sales_order_id = $1
          ORDER BY soi.id ASC`,
         [id],
@@ -6636,6 +6641,8 @@ export class SalesOrderService {
             qty: item.qty,
             total: this.toOptionalNumber(item.total) ?? 0,
             isNonInventory: item.isNonInventory,
+            onHandStock: Number(item.onHandStock) || 0,
+            reorderLevel: Number(item.reorderLevel) || 0,
           })),
           paymentDetails: paymentDetailsResult.rows.map((payment) => ({
             id: payment.id,

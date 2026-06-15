@@ -276,6 +276,16 @@ export class MaterialsController {
     return this.materialsService.getNextMaterialCode(brandId);
   }
 
+  @Get('next-code-by-prefix')
+  async getNextMaterialCodeByPrefix(
+    @Query('prefix') prefix: string,
+  ) {
+    if (!prefix || !prefix.trim()) {
+      throw new BadRequestException('Prefix query parameter is required');
+    }
+    return this.materialsService.getNextSequenceForPrefix(prefix.trim());
+  }
+
   /**
    * =====================================================
    * GET LOW STOCK MATERIALS
