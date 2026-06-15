@@ -30,6 +30,7 @@ const ACTIVE_BRANCH_STORAGE_KEY = 'activeBranchId';
 
 export const apiClient = axios.create({
   baseURL: API_BASE_URL,
+  timeout: 30000, // 30 second timeout to prevent page freezes
   headers: {
     'Content-Type': 'application/json',
   },
@@ -93,6 +94,7 @@ async function syncEffectivePermissionKeysWithToken(accessToken: string): Promis
         Authorization: `Bearer ${accessToken}`,
         'Cache-Control': 'no-cache, no-store, must-revalidate',
       },
+      timeout: 10000,
       validateStatus: (status) => {
         // Treat 2xx as valid responses (avoid 304 caching issues)
         return status >= 200 && status < 300;
@@ -130,7 +132,7 @@ async function refreshAccessToken(): Promise<string | null> {
       success: boolean;
       accessToken?: string;
       refreshToken?: string;
-    }>(`${API_BASE_URL}/login/refresh`, { refreshToken });
+    }>(`${API_BASE_URL}/login/refresh`, { refreshToken }, { timeout: 10000 });
 
     if (response.data.success && response.data.accessToken && response.data.refreshToken) {
       setSessionTokens(

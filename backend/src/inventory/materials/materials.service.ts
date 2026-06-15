@@ -563,6 +563,19 @@ export class MaterialsService {
       }
     }
 
+    // Step 3b: Check for duplicate material_code if being changed
+    if (updateMaterialDto.material_code && updateMaterialDto.material_code.trim()) {
+      const codeCheck = await this.db.query(
+        `SELECT id FROM tblmaterials 
+         WHERE material_code = $1 AND id != $2 AND deleted_at IS NULL`,
+        [updateMaterialDto.material_code.trim(), id]
+      );
+
+      if (codeCheck.rows.length > 0) {
+        throw new BadRequestException(`Material code '${updateMaterialDto.material_code}' is already in use`);
+      }
+    }
+
     // Step 4: Build dynamic update query
     const updateFields: string[] = [];
     const values: any[] = [];
@@ -579,7 +592,7 @@ export class MaterialsService {
 
     addField('brand_id', updateMaterialDto.brand_id);
     addField('material_name', updateMaterialDto.material_name);
-    addField('material_code', updateMaterialDto.material_code);
+    addField('material_code', updateMaterialDto.material_code === '' ? null : updateMaterialDto.material_code);
     addField('description', updateMaterialDto.description);
     addField('unit', updateMaterialDto.unit);
     addField('unit_price', updateMaterialDto.unit_price);
@@ -603,7 +616,21 @@ export class MaterialsService {
       RETURNING *
     `;
 
-    await this.db.query(updateQuery, values);
+    try {
+      await this.db.query(updateQuery, values);
+    } catch (err: any) {
+      // Handle unique constraint violations with user-friendly messages
+      if (err?.code === '23505') {
+        if (err?.constraint?.includes('material_code')) {
+          throw new BadRequestException('Material code is already in use by another material');
+        }
+        if (err?.constraint?.includes('material_name')) {
+          throw new BadRequestException('Material name is already in use by another material');
+        }
+        throw new BadRequestException('A unique constraint was violated');
+      }
+      throw err;
+    }
 
     // Step 5: Track price history if prices changed
     if (updateMaterialDto.unit_price !== undefined || updateMaterialDto.sell_price !== undefined) {
