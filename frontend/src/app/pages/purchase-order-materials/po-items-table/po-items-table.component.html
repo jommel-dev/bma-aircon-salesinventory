@@ -8,16 +8,11 @@
         <th class="whitespace-nowrap px-4 py-3 text-xs font-medium uppercase text-gray-500 dark:text-gray-400">
           Description
         </th>
-        @if (isAdmin) {
-          <th class="whitespace-nowrap px-4 py-3 text-xs font-medium uppercase text-gray-500 dark:text-gray-400">
-            Cost
-          </th>
-        }
         <th class="whitespace-nowrap px-4 py-3 text-xs font-medium uppercase text-gray-500 dark:text-gray-400">
-          Rate
+          Unit Cost
         </th>
         <th class="whitespace-nowrap px-4 py-3 text-xs font-medium uppercase text-gray-500 dark:text-gray-400">
-          Discount
+          SRP
         </th>
         <th class="whitespace-nowrap px-4 py-3 text-xs font-medium uppercase text-gray-500 dark:text-gray-400">
           QTY
@@ -36,7 +31,7 @@
       @if (items.length === 0) {
         <tr>
           <td
-            [attr.colspan]="isAdmin ? (isReadOnly ? 7 : 8) : (isReadOnly ? 6 : 7)"
+            [attr.colspan]="isReadOnly ? 6 : 7"
             class="px-4 py-6 text-center text-sm text-gray-400 dark:text-gray-500"
           >
             No product items added yet.
@@ -60,14 +55,25 @@
               }
             </td>
 
-            <!-- Cost (admin only) -->
-            @if (isAdmin) {
-              <td class="whitespace-nowrap px-4 py-2.5 text-sm text-gray-700 dark:text-gray-300">
-                {{ item.cost | number:'1.2-2' }}
-              </td>
-            }
+            <!-- Unit Cost (editable) -->
+            <td class="whitespace-nowrap px-4 py-2.5">
+              @if (isReadOnly) {
+                <span class="text-sm text-gray-700 dark:text-gray-300">{{ item.cost | number:'1.2-2' }}</span>
+              } @else {
+                <input
+                  type="number"
+                  [ngModel]="item.cost"
+                  (ngModelChange)="onCostChange(i, $event.toString())"
+                  [name]="'cost_' + i"
+                  step="0.01"
+                  min="0.01"
+                  max="999999.99"
+                  class="w-24 rounded border border-gray-300 bg-white px-2 py-1 text-sm text-gray-700 dark:border-gray-600 dark:bg-gray-900 dark:text-gray-200"
+                />
+              }
+            </td>
 
-            <!-- Rate (editable) -->
+            <!-- SRP / Sell Price (editable) -->
             <td class="whitespace-nowrap px-4 py-2.5">
               @if (isReadOnly) {
                 <span class="text-sm text-gray-700 dark:text-gray-300">{{ item.rate | number:'1.2-2' }}</span>
@@ -78,27 +84,9 @@
                   (ngModelChange)="onRateChange(i, $event.toString())"
                   [name]="'rate_' + i"
                   step="0.01"
-                  min="0.01"
-                  max="999999.99"
-                  class="w-24 rounded border border-gray-300 bg-white px-2 py-1 text-sm text-gray-700 dark:border-gray-600 dark:bg-gray-900 dark:text-gray-200"
-                />
-              }
-            </td>
-
-            <!-- Discount (editable) -->
-            <td class="whitespace-nowrap px-4 py-2.5">
-              @if (isReadOnly) {
-                <span class="text-sm text-gray-700 dark:text-gray-300">{{ item.discount | number:'1.2-2' }}</span>
-              } @else {
-                <input
-                  type="number"
-                  [ngModel]="item.discount"
-                  (ngModelChange)="onDiscountChange(i, $event.toString())"
-                  [name]="'discount_' + i"
-                  step="0.01"
                   min="0"
                   max="999999.99"
-                  class="w-20 rounded border border-gray-300 bg-white px-2 py-1 text-sm text-gray-700 dark:border-gray-600 dark:bg-gray-900 dark:text-gray-200"
+                  class="w-24 rounded border border-gray-300 bg-white px-2 py-1 text-sm text-gray-700 dark:border-gray-600 dark:bg-gray-900 dark:text-gray-200"
                 />
               }
             </td>
@@ -121,9 +109,9 @@
               }
             </td>
 
-            <!-- Total (computed) -->
+            <!-- Total (computed: cost × qty) -->
             <td class="whitespace-nowrap px-4 py-2.5 text-sm font-medium text-gray-700 dark:text-gray-300">
-              {{ item.total | number:'1.2-2' }}
+              {{ calculateTotal(item.cost, item.qty) | number:'1.2-2' }}
             </td>
 
             <!-- Action (hidden in read-only mode) -->
@@ -146,11 +134,11 @@
       }
     </tbody>
 
-    <!-- Footer: Grand Total and Total QTY (always shown) -->
+    <!-- Footer: Grand Total and Total QTY -->
     <tfoot class="border-t border-gray-200 bg-gray-50 dark:border-gray-700 dark:bg-gray-800">
       <tr>
         <td
-          [attr.colspan]="isAdmin ? (isReadOnly ? 5 : 5) : (isReadOnly ? 4 : 4)"
+          colspan="4"
           class="px-4 py-3 text-right text-xs font-semibold uppercase text-gray-600 dark:text-gray-300"
         >
           Totals

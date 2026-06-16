@@ -5,6 +5,7 @@ import { Pool, PoolClient, QueryResult } from 'pg';
 @Injectable()
 export class DatabaseService implements OnModuleDestroy {
   private readonly pool: Pool;
+  private readonly schema: string;
 
   constructor(private readonly configService: ConfigService) {
     console.log('🔌 Initializing database connection...');
@@ -19,6 +20,9 @@ export class DatabaseService implements OnModuleDestroy {
       rejectUnauthorized,
     );
 
+    // Schema support: defaults to 'public' if not specified
+    this.schema = this.configService.get<string>('DB_SCHEMA', 'public').trim();
+    console.log('DB_SCHEMA:', this.schema);
     console.log('DB_SSL:', shouldUseSsl);
     console.log('DB_SSL_REJECT_UNAUTHORIZED:', rejectUnauthorized);
     console.log('Using connection string:', !!connectionString);
@@ -34,6 +38,16 @@ export class DatabaseService implements OnModuleDestroy {
             password: this.configService.get<string>('DB_PASSWORD', ''),
             ssl,
           });
+
+      // Set search_path on every new connection from the pool
+      this.pool.on('connect', (client) => {
+        if (this.schema === 'public') {
+          client.query(`SET search_path TO public`);
+        } else {
+          // Custom schema first (for app tables), public second (for extensions like uuid-ossp, pgcrypto)
+          client.query(`SET search_path TO "${this.schema}", public`);
+        }
+      });
 
       console.log('✅ Database pool created successfully');
     } catch (error) {

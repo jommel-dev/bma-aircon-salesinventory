@@ -31,6 +31,17 @@ export class CreateQuotationProductItemDto {
   unitTypesQty?: CreateQuotationUnitTypeQtyDto[];
   totalSetQty?: number;
   remarks?: string;
+
+  // Material-style fields (for material quotations)
+  materialId?: number | null;
+  description?: string;
+  itemCode?: string | null;
+  brand?: string | null;
+  cost?: number;
+  rate?: number;
+  discount?: number;
+  qty?: number;
+  isNonInventory?: boolean;
 }
 
 export class CreateQuotationDto {

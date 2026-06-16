@@ -32,8 +32,8 @@ export class QuotationService {
     const result = await executor.query<{ column_name: string }>(
       `SELECT column_name
        FROM information_schema.columns
-       WHERE table_schema = current_schema()
-         AND table_name = $1`,
+       WHERE table_name = $1
+       ORDER BY ordinal_position`,
       [tableName],
     );
 
@@ -55,10 +55,29 @@ export class QuotationService {
     const quotedColumns = columns.map((column) => `"${column}"`).join(', ');
     const placeholders = values.map((_, index) => `$${index + 1}`).join(', ');
 
-    return executor.query<{ id: number }>(
-      `INSERT INTO ${tableName} (${quotedColumns}) VALUES (${placeholders}) RETURNING id`,
-      values,
-    );
+    try {
+      return await executor.query<{ id: number }>(
+        `INSERT INTO ${tableName} (${quotedColumns}) VALUES (${placeholders}) RETURNING id`,
+        values,
+      );
+    } catch (err: any) {
+      // If id auto-generation fails, insert with explicit next id
+      if (err?.message?.includes('null value in column "id"') || err?.message?.includes('violates not-null constraint')) {
+        const maxResult = await executor.query<{ max_id: string }>(
+          `SELECT COALESCE(MAX(id), 0)::text AS max_id FROM ${tableName}`
+        );
+        const nextVal = Number(maxResult.rows[0]?.max_id ?? 0) + 1;
+
+        const explicitColumns = ['"id"', ...columns.map(c => `"${c}"`)].join(', ');
+        const explicitValues = [nextVal, ...values];
+        const explicitPlaceholders = explicitValues.map((_, i) => `$${i + 1}`).join(', ');
+        return executor.query<{ id: number }>(
+          `INSERT INTO ${tableName} (${explicitColumns}) VALUES (${explicitPlaceholders}) RETURNING id`,
+          explicitValues,
+        );
+      }
+      throw err;
+    }
   }
 
   private normalizePage(value: unknown): number {
@@ -387,23 +406,61 @@ export class QuotationService {
         const quotationId = Number(insertedQuotation.rows[0].id);
 
         for (const item of productItems) {
-          const unitPrice = this.toOptionalNumber(item.unitPrice) ?? 0;
-          const sellPrice = this.toOptionalNumber(item.sellPrice) ?? 0;
-          const discountPrice = this.toOptionalNumber(item.discountPrice) ?? 0;
-          const totalSetQty = this.toOptionalNumber(item.totalSetQty) ?? 0;
-          const lineTotal = this.calculateItemLineTotal(item);
+          // Determine if this is a material-style item or AC unit item
+          const isMaterialItem = item.description || item.materialId != null || item.rate != null;
+
+          let unitPrice: number;
+          let sellPrice: number;
+          let discountPrice: number;
+          let totalSetQty: number;
+          let lineTotal: number;
+          let itemRemarks: string;
+          let productId: number | null;
+          let capacityId: number | null;
+
+          if (isMaterialItem) {
+            // Material quotation item
+            unitPrice = Number(item.cost ?? item.unitPrice ?? 0);
+            sellPrice = Number(item.rate ?? item.sellPrice ?? 0);
+            discountPrice = Number(item.discount ?? item.discountPrice ?? 0);
+            totalSetQty = Number(item.qty ?? item.totalSetQty ?? 0);
+            lineTotal = Math.max(0, sellPrice - discountPrice) * totalSetQty;
+            productId = null; // Don't use product_id FK — materialId goes in metadata
+            capacityId = null;
+
+            // Store material metadata in remarks as JSON
+            const metadata: Record<string, unknown> = {
+              type: 'material',
+              materialId: this.toOptionalNumber(item.materialId) ?? null,
+              description: item.description ?? '',
+              itemCode: item.itemCode ?? null,
+              brand: item.brand ?? null,
+              isNonInventory: item.isNonInventory ?? false,
+            };
+            itemRemarks = JSON.stringify(metadata);
+          } else {
+            // AC unit quotation item (original format)
+            unitPrice = this.toOptionalNumber(item.unitPrice) ?? 0;
+            sellPrice = this.toOptionalNumber(item.sellPrice) ?? 0;
+            discountPrice = this.toOptionalNumber(item.discountPrice) ?? 0;
+            totalSetQty = this.toOptionalNumber(item.totalSetQty) ?? 0;
+            lineTotal = this.calculateItemLineTotal(item);
+            productId = this.toOptionalNumber(item.productId);
+            capacityId = this.toOptionalNumber(item.capacityId);
+            itemRemarks = String(item.remarks ?? '').trim();
+          }
 
           const itemRecord: Record<string, unknown> = {
             quotation_id: quotationId,
-            product_id: this.toOptionalNumber(item.productId),
-            capacity_id: this.toOptionalNumber(item.capacityId),
+            product_id: productId,
+            capacity_id: capacityId,
             unit_price: unitPrice,
             sell_price: sellPrice,
             discount_price: discountPrice,
             unit_types_qty: JSON.stringify(item.unitTypesQty ?? []),
             total_set_qty: totalSetQty,
             line_total: lineTotal,
-            remarks: String(item.remarks ?? '').trim(),
+            remarks: itemRemarks,
           };
 
           await this.runInsert(client, 'tblquotation_items', itemRecord);

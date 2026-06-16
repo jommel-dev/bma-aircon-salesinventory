@@ -19,7 +19,7 @@ export class ProductsService {
       `SELECT column_name
        FROM information_schema.columns
        WHERE table_name = $1
-         AND table_schema = current_schema()`,
+         `,
       [tableName],
     );
 

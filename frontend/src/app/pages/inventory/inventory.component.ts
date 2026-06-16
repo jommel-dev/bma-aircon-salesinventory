@@ -49,7 +49,10 @@ export class InventoryComponent implements OnInit, AfterViewChecked {
   /** Currently selected brand node */
   selectedBrandId: number | null = null;
 
-  /** Name of the currently selected brand */
+  /** Currently selected product type ID */
+  selectedProductTypeId: number | null = null;
+
+  /** Name of the currently selected product type or brand */
   selectedBrandName = '';
 
   /** Loading state for the tree */
@@ -79,7 +82,7 @@ export class InventoryComponent implements OnInit, AfterViewChecked {
   inlineEditId: number | null = null;
 
   /** Which field is being inline-edited */
-  inlineEditField: 'material_name' | 'unit_price' | 'sell_price' | null = null;
+  inlineEditField: 'material_name' | 'unit_price' | 'sell_price' | 'brand_name' | null = null;
 
   /** Temporary value while inline editing */
   inlineEditValue = '';
@@ -307,14 +310,25 @@ export class InventoryComponent implements OnInit, AfterViewChecked {
   }
 
   /**
-   * Toggle expand/collapse state of a product type node
+   * Handle product type click — select it and load materials.
    */
   toggleNode(nodeId: number | null): void {
-    if (this.expandedNodes.has(nodeId)) {
-      this.expandedNodes.delete(nodeId);
-    } else {
-      this.expandedNodes.add(nodeId);
+    if (nodeId !== null) {
+      this.selectProductType(nodeId);
     }
+  }
+
+  /**
+   * Select a product type and load all materials under it.
+   */
+  selectProductType(productTypeId: number): void {
+    const node = this.treeNodes.find(n => n.id === productTypeId);
+    this.selectedProductTypeId = productTypeId;
+    this.selectedBrandId = null;
+    this.selectedBrandName = node?.name ?? 'Unknown';
+    this.materialFilter = '';
+    this.cancelInlineEdit();
+    void this.loadMaterialsByProductType(productTypeId);
   }
 
   /**
@@ -325,10 +339,18 @@ export class InventoryComponent implements OnInit, AfterViewChecked {
   }
 
   /**
+   * Check if a product type is currently selected
+   */
+  isProductTypeSelected(nodeId: number | null): boolean {
+    return this.selectedProductTypeId === nodeId;
+  }
+
+  /**
    * Handle brand node click - select the brand and load materials
    */
   selectBrand(brand: BrandNode): void {
     this.selectedBrandId = brand.id;
+    this.selectedProductTypeId = null;
     this.selectedBrandName = brand.name;
     this.materialFilter = '';
     this.cancelInlineEdit();
@@ -351,6 +373,24 @@ export class InventoryComponent implements OnInit, AfterViewChecked {
     this.materials = [];
     try {
       const rawMaterials: Material[] = await this.materialInventoryService.getMaterials(undefined, brandId);
+      this.materials = rawMaterials.map(computeMaterialRow);
+    } catch {
+      this.materialsError = 'Failed to load materials.';
+      this.materials = [];
+    } finally {
+      this.isMaterialsLoading = false;
+    }
+  }
+
+  /**
+   * Fetch materials for the selected product type and compute derived columns
+   */
+  async loadMaterialsByProductType(productTypeId: number): Promise<void> {
+    this.isMaterialsLoading = true;
+    this.materialsError = '';
+    this.materials = [];
+    try {
+      const rawMaterials: Material[] = await this.materialInventoryService.getMaterials(undefined, undefined, productTypeId);
       this.materials = rawMaterials.map(computeMaterialRow);
     } catch {
       this.materialsError = 'Failed to load materials.';
@@ -385,6 +425,26 @@ export class InventoryComponent implements OnInit, AfterViewChecked {
       const codeB = (b.material_code ?? '').toLowerCase();
       return codeA.localeCompare(codeB);
     });
+  }
+
+  /** Overall total cost (unit_price × on_hand_stock) across all materials in the list */
+  get summaryTotalCost(): number {
+    return Math.round(this.materials.reduce((sum, m) => sum + m.unit_price * m.on_hand_stock, 0) * 100) / 100;
+  }
+
+  /** Overall total price (sell_price × on_hand_stock) across all materials in the list */
+  get summaryTotalPrice(): number {
+    return Math.round(this.materials.reduce((sum, m) => sum + m.sell_price * m.on_hand_stock, 0) * 100) / 100;
+  }
+
+  /** Overall total margin (totalPrice - totalCost) */
+  get summaryTotalMargin(): number {
+    return Math.round((this.summaryTotalPrice - this.summaryTotalCost) * 100) / 100;
+  }
+
+  /** Overall stock value (sell_price × on_hand_stock total) */
+  get summaryStockValue(): number {
+    return this.summaryTotalPrice;
   }
 
   /**
@@ -426,12 +486,18 @@ export class InventoryComponent implements OnInit, AfterViewChecked {
   /**
    * Start inline editing a cell.
    */
-  startInlineEdit(row: ComputedMaterialRow, field: 'material_name' | 'unit_price' | 'sell_price'): void {
+  startInlineEdit(row: ComputedMaterialRow, field: 'material_name' | 'unit_price' | 'sell_price' | 'brand_name'): void {
     if (this.isInlineSaving) return;
     this.inlineEditId = row.id;
     this.inlineEditField = field;
-    this.inlineEditValue = String(row[field]);
+    this.inlineEditValue = String(row[field] ?? '');
     this.shouldFocusInlineInput = true;
+
+    // Open brand dropdown immediately when editing brand
+    if (field === 'brand_name') {
+      this.filteredBrandSuggestions = this.materialBrands;
+      this.isBrandInlineDropdownOpen = true;
+    }
   }
 
   /**
@@ -448,6 +514,53 @@ export class InventoryComponent implements OnInit, AfterViewChecked {
     this.inlineEditId = null;
     this.inlineEditField = null;
     this.inlineEditValue = '';
+    this.isBrandInlineDropdownOpen = false;
+  }
+
+  // ─── Brand Inline Dropdown ──────────────────────────────────────────────────
+
+  isBrandInlineDropdownOpen = false;
+  filteredBrandSuggestions: { id: number; brandName: string; prefix: string; product_type_id?: number | null }[] = [];
+
+  onBrandInlineSearch(): void {
+    const search = this.inlineEditValue.trim().toLowerCase();
+    if (!search) {
+      this.filteredBrandSuggestions = this.materialBrands;
+    } else {
+      this.filteredBrandSuggestions = this.materialBrands.filter(b =>
+        b.brandName.toLowerCase().includes(search)
+      );
+    }
+    this.isBrandInlineDropdownOpen = true;
+  }
+
+  selectBrandInline(row: ComputedMaterialRow, brand: { id: number; brandName: string; prefix: string }): void {
+    this.inlineEditValue = brand.brandName;
+    this.isBrandInlineDropdownOpen = false;
+    void this.saveInlineEdit(row);
+  }
+
+  onBrandInlineBlur(row: ComputedMaterialRow): void {
+    // Delay to allow dropdown click to register
+    setTimeout(() => {
+      if (this.isBrandInlineDropdownOpen) {
+        this.isBrandInlineDropdownOpen = false;
+      }
+      if (this.inlineEditField === 'brand_name') {
+        void this.saveInlineEdit(row);
+      }
+    }, 200);
+  }
+
+  onBrandInlineKeydown(event: KeyboardEvent, row: ComputedMaterialRow): void {
+    if (event.key === 'Enter') {
+      event.preventDefault();
+      this.isBrandInlineDropdownOpen = false;
+      (event.target as HTMLInputElement).blur();
+    } else if (event.key === 'Escape') {
+      this.isBrandInlineDropdownOpen = false;
+      this.cancelInlineEdit();
+    }
   }
 
   /**
@@ -477,14 +590,15 @@ export class InventoryComponent implements OnInit, AfterViewChecked {
       return;
     }
 
-    const numericValue = field !== 'material_name' ? parseFloat(newValue) : null;
-    if (field !== 'material_name' && (isNaN(numericValue!) || numericValue! < 0)) {
+    const isNumericField = field !== 'material_name' && field !== 'brand_name';
+    const numericValue = isNumericField ? parseFloat(newValue) : null;
+    if (isNumericField && (isNaN(numericValue!) || numericValue! < 0)) {
       this.cancelInlineEdit();
       return;
     }
 
     // Check if value actually changed
-    const currentValue = String(row[field]);
+    const currentValue = String(row[field] ?? '');
     if (newValue === currentValue) {
       this.cancelInlineEdit();
       return;
@@ -494,7 +608,27 @@ export class InventoryComponent implements OnInit, AfterViewChecked {
 
     try {
       const updateData: Record<string, any> = {};
-      if (field === 'material_name') {
+
+      if (field === 'brand_name') {
+        // Find or create the brand, then update brand_id
+        const brandName = newValue || 'No Brand';
+        const existingBrand = this.materialBrands.find(
+          b => b.brandName.toLowerCase() === brandName.toLowerCase()
+        );
+        if (existingBrand) {
+          updateData['brand_id'] = existingBrand.id;
+        } else {
+          // Create new brand under the current product type
+          const brandId = await this.materialInventoryService.createBrand(brandName, undefined, this.selectedProductTypeId);
+          if (brandId) {
+            updateData['brand_id'] = brandId;
+            this.materialBrands.push({ id: brandId, brandName, prefix: '', product_type_id: this.selectedProductTypeId });
+          } else {
+            this.cancelInlineEdit();
+            return;
+          }
+        }
+      } else if (field === 'material_name') {
         updateData['material_name'] = newValue;
       } else {
         updateData[field] = numericValue;
@@ -505,6 +639,8 @@ export class InventoryComponent implements OnInit, AfterViewChecked {
       // Update local data without full reload
       if (field === 'material_name') {
         row.material_name = newValue;
+      } else if (field === 'brand_name') {
+        (row as any).brand_name = newValue || 'No Brand';
       } else if (field === 'unit_price') {
         row.unit_price = numericValue!;
       } else if (field === 'sell_price') {
@@ -1132,6 +1268,20 @@ export class InventoryComponent implements OnInit, AfterViewChecked {
     }
     this.prefixDebounceTimer = setTimeout(() => {
       void this.regenerateAllCodes();
+
+      // If editing an existing product type, update its prefix on the backend
+      if (!this.isProductTypeNew && this.productTypePrefix.trim()) {
+        const existingType = this.productTypes.find(
+          pt => pt.name.toLowerCase() === this.productTypeSearch.trim().toLowerCase()
+        );
+        if (existingType) {
+          void this.materialInventoryService.updateProductType(existingType.id, {
+            name: existingType.name,
+            prefix: this.productTypePrefix.trim(),
+          });
+        }
+      }
+
       this.prefixDebounceTimer = null;
     }, 400);
   }

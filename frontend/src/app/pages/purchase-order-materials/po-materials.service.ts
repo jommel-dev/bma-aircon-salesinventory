@@ -68,6 +68,7 @@ export interface CreatePoMaterialsPayload {
     materialCode?: string | null;
     materialUnit?: string;
     unitPrice: number;
+    sellPrice?: number;
     discountPrice: number;
     totalSetQty: number;
   }>;

@@ -16,7 +16,7 @@ export class ProductTypesService {
       `SELECT column_name
        FROM information_schema.columns
        WHERE table_name = $1
-         AND table_schema = current_schema()`,
+       ORDER BY ordinal_position`,
       [tableName],
     );
 
@@ -242,6 +242,14 @@ export class ProductTypesService {
       return { success: false, message: `Product type ${id} not found` };
     }
 
+    // If prefix changed, update all material codes under this product type
+    if (prefixColumn && updateProductTypeDto.prefix !== undefined) {
+      const newPrefix = String(updateProductTypeDto.prefix).trim();
+      if (newPrefix) {
+        await this.resequenceMaterialCodes(id, newPrefix);
+      }
+    }
+
     return {
       success: true,
       message: 'Product type updated successfully',
@@ -250,6 +258,68 @@ export class ProductTypesService {
         name: typeName,
       },
     };
+  }
+
+  /**
+   * Resequence all material codes under a product type with the given prefix.
+   * Assigns sequential codes: PREFIX00001, PREFIX00002, etc.
+   * Orders by existing material_name ASC.
+   */
+  async resequenceMaterialCodes(productTypeId: number, prefix: string): Promise<void> {
+    // Get all materials under this product type (via their brand's product_type_id)
+    const materials = await this.databaseService.query<{ id: number }>(
+      `SELECT m.id
+       FROM tblmaterials m
+       JOIN tblbrands b ON m.brand_id = b.id
+       WHERE b.product_type_id = $1 AND m.deleted_at IS NULL
+       ORDER BY m.material_name ASC, m.id ASC`,
+      [productTypeId],
+    );
+
+    // Reassign codes sequentially
+    for (let i = 0; i < materials.rows.length; i++) {
+      const newCode = `${prefix}${String(i + 1).padStart(5, '0')}`;
+      await this.databaseService.query(
+        `UPDATE tblmaterials SET material_code = $1 WHERE id = $2`,
+        [newCode, materials.rows[i].id],
+      );
+    }
+  }
+
+  /**
+   * Resequence material codes for a product type by looking up its prefix.
+   * Called after a material is deleted to close gaps in the sequence.
+   */
+  async resequenceByProductTypeId(productTypeId: number): Promise<{ success: boolean; message: string }> {
+    if (!Number.isFinite(productTypeId) || productTypeId <= 0) {
+      return { success: false, message: 'Invalid product type id' };
+    }
+
+    // Get the product type's prefix
+    const columns = await this.getTableColumns(this.databaseService, 'tblproducttypes');
+    const prefixColumn = this.pickColumn(columns, ['prefix', 'typePrefix', 'type_prefix']);
+
+    if (!prefixColumn) {
+      return { success: false, message: 'Prefix column not found' };
+    }
+
+    const ptResult = await this.databaseService.query<{ prefix: string }>(
+      `SELECT COALESCE("${prefixColumn}", '') AS prefix FROM tblproducttypes WHERE id = $1 LIMIT 1`,
+      [productTypeId],
+    );
+
+    if (ptResult.rows.length === 0) {
+      return { success: false, message: 'Product type not found' };
+    }
+
+    const prefix = String(ptResult.rows[0].prefix ?? '').trim();
+    if (!prefix) {
+      return { success: false, message: 'Product type has no prefix configured' };
+    }
+
+    await this.resequenceMaterialCodes(productTypeId, prefix);
+
+    return { success: true, message: 'Material codes resequenced successfully' };
   }
 
   async remove(id: number) {

@@ -1,0 +1,318 @@
+<div class="relative rounded-2xl border border-gray-200 bg-white p-6 dark:border-gray-800 dark:bg-white/3">
+  <!-- Loading Overlay -->
+  @if (isSubmitting) {
+    <div class="absolute inset-0 flex items-center justify-center rounded-2xl bg-white/80 dark:bg-gray-950/80 backdrop-blur-sm z-50">
+      <div class="flex flex-col items-center gap-3">
+        <div class="h-10 w-10 animate-spin rounded-full border-4 border-gray-300 border-t-brand-500 dark:border-gray-700 dark:border-t-brand-400"></div>
+        <p class="text-sm font-medium text-gray-600 dark:text-gray-300">Saving Quotation...</p>
+      </div>
+    </div>
+  }
+
+  <!-- Form Header -->
+  <div class="mb-6 flex items-center justify-between">
+    <div>
+      <h3 class="text-lg font-semibold text-gray-800 dark:text-white">
+        {{ orderId ? 'Edit Quotation' : 'Create Quotation' }}
+      </h3>
+      <div class="mt-1 flex items-center gap-4 text-sm text-gray-500 dark:text-gray-400">
+        <div class="flex items-center gap-2">
+          <span>Quote Date:</span>
+          <input
+            type="date"
+            [ngModel]="quoteDate"
+            (ngModelChange)="onQuoteDateChange($event)"
+            name="quoteDate"
+            class="rounded border border-gray-300 bg-white px-2 py-0.5 text-sm text-gray-700 dark:border-gray-700 dark:bg-gray-900 dark:text-gray-300"
+          />
+        </div>
+        <div class="flex items-center gap-2">
+          <span>Valid for:</span>
+          <input
+            type="number"
+            [(ngModel)]="validityDays"
+            name="validityDays"
+            min="1"
+            max="365"
+            class="w-16 rounded border border-gray-300 bg-white px-2 py-0.5 text-sm text-gray-700 dark:border-gray-700 dark:bg-gray-900 dark:text-gray-300"
+          />
+          <span>days</span>
+        </div>
+      </div>
+    </div>
+    <button
+      type="button"
+      (click)="cancel()"
+      class="text-sm text-gray-500 hover:text-gray-700 dark:text-gray-400 dark:hover:text-gray-200"
+    >
+      &times; Close
+    </button>
+  </div>
+
+  <form #quotationForm="ngForm" (ngSubmit)="$event.preventDefault()">
+
+    <!-- Customer Selection -->
+    <div class="mt-5">
+      <label class="mb-1 block text-xs font-medium text-gray-600 dark:text-gray-300">
+        Customer
+      </label>
+      <div class="relative">
+        <input
+          type="text"
+          [ngModel]="customerSearch"
+          (ngModelChange)="onCustomerSearchChange($event)"
+          name="customerSearch"
+          placeholder="Search and select customer"
+          autocomplete="off"
+          (focus)="onCustomerComboboxFocus()"
+          (blur)="onCustomerComboboxBlur()"
+          class="w-full rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm dark:border-gray-700 dark:bg-gray-900"
+        />
+
+        @if (isCustomerDropdownOpen) {
+          <div class="absolute z-40 mt-1 max-h-56 w-full overflow-y-auto rounded-lg border border-gray-200 bg-white shadow-lg dark:border-gray-700 dark:bg-gray-900">
+            @if (getFilteredCustomerOptions().length === 0) {
+              <p class="px-3 py-2 text-xs text-gray-500 dark:text-gray-400">No customers found.</p>
+            } @else {
+              @for (customer of getFilteredCustomerOptions(); track customer.id) {
+                <button
+                  type="button"
+                  (mousedown)="$event.preventDefault()"
+                  (click)="selectCustomer(customer.id)"
+                  class="flex w-full items-center justify-between px-3 py-2 text-left text-sm text-gray-700 hover:bg-gray-50 dark:text-gray-200 dark:hover:bg-gray-800"
+                >
+                  <span>{{ customer.name }}</span>
+                </button>
+              }
+            }
+          </div>
+        }
+      </div>
+      <p class="mt-1 text-xs text-gray-500 dark:text-gray-400">
+        Type customer name and pick one from the list, or enter a new customer name.
+      </p>
+
+      <!-- Customer detail fields -->
+      @if (selectedCustomerId || customerSearch.trim()) {
+        <div class="mt-3 grid grid-cols-1 gap-3 md:grid-cols-2">
+          <div>
+            <label class="mb-1 block text-xs font-medium text-gray-600 dark:text-gray-300">Address</label>
+            <input
+              type="text"
+              [(ngModel)]="customerForm.address"
+              name="customer_address"
+              placeholder="Enter address"
+              class="w-full rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm dark:border-gray-700 dark:bg-gray-900"
+            />
+          </div>
+          <div>
+            <label class="mb-1 block text-xs font-medium text-gray-600 dark:text-gray-300">Contact Person</label>
+            <input
+              type="text"
+              [(ngModel)]="customerForm.contact_person"
+              name="customer_contact_person"
+              placeholder="Enter contact person"
+              class="w-full rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm dark:border-gray-700 dark:bg-gray-900"
+            />
+          </div>
+          <div>
+            <label class="mb-1 block text-xs font-medium text-gray-600 dark:text-gray-300">Contact Number</label>
+            <input
+              type="text"
+              [(ngModel)]="customerForm.contact_number"
+              name="customer_contact_number"
+              placeholder="Enter contact number"
+              class="w-full rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm dark:border-gray-700 dark:bg-gray-900"
+            />
+          </div>
+        </div>
+      }
+    </div>
+
+    <!-- Material Search -->
+    <div class="mt-5">
+      <label class="mb-1 block text-xs font-medium text-gray-600 dark:text-gray-300">
+        Search Materials
+      </label>
+      <div class="relative">
+        <input
+          type="text"
+          [ngModel]="materialSearchQuery"
+          (ngModelChange)="onMaterialSearchChange($event)"
+          name="materialSearch"
+          placeholder="Search by product name, item code, product type, or brand..."
+          autocomplete="off"
+          maxlength="255"
+          (focus)="onMaterialSearchFocus()"
+          (blur)="onMaterialSearchBlur()"
+          class="w-full rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm dark:border-gray-700 dark:bg-gray-900"
+        />
+
+        @if (isMaterialSearching) {
+          <div class="absolute right-3 top-2.5">
+            <svg class="h-4 w-4 animate-spin text-gray-400" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
+              <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
+              <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z"></path>
+            </svg>
+          </div>
+        }
+
+        @if (isMaterialDropdownOpen) {
+          <div class="absolute z-50 mt-1 max-h-64 w-full overflow-y-auto rounded-lg border border-gray-200 bg-white shadow-lg dark:border-gray-700 dark:bg-gray-900">
+            @if (materialSearchNoResults) {
+              <div class="px-3 py-3 text-center">
+                <p class="text-sm text-gray-500 dark:text-gray-400">No materials found.</p>
+                @if (nonInventoryValidationError) {
+                  <p class="mt-1 text-xs text-red-600 dark:text-red-400">{{ nonInventoryValidationError }}</p>
+                }
+                <button
+                  type="button"
+                  (mousedown)="$event.preventDefault()"
+                  (click)="addNonInventoryItem()"
+                  class="mt-2 inline-flex items-center rounded-md bg-gray-100 px-3 py-1.5 text-xs font-medium text-gray-700 hover:bg-gray-200 dark:bg-gray-800 dark:text-gray-300 dark:hover:bg-gray-700"
+                >
+                  + Add as Other
+                </button>
+              </div>
+            } @else {
+              @for (material of materialSearchResults; track material.id) {
+                <button
+                  type="button"
+                  (mousedown)="$event.preventDefault()"
+                  (click)="selectMaterial(material)"
+                  class="flex w-full flex-col px-3 py-2 text-left hover:bg-gray-50 dark:hover:bg-gray-800"
+                >
+                  <span class="text-sm font-medium text-gray-800 dark:text-gray-200">
+                    {{ material.material_name }}
+                  </span>
+                  <span class="text-xs text-gray-500 dark:text-gray-400">
+                    <span class="font-semibold text-brand-600 dark:text-brand-400">{{ material.material_code || '—' }}</span> · {{ material.brand_name || 'No brand' }} · {{ material.product_type }}
+                  </span>
+                </button>
+              }
+            }
+          </div>
+        }
+      </div>
+      <p class="mt-1 text-xs text-gray-500 dark:text-gray-400">
+        Type to search materials by name, code, type, or brand. Select to add to quotation.
+      </p>
+    </div>
+
+    <!-- Product Items Table -->
+    <div class="mt-5">
+      <label class="mb-1 block text-xs font-medium text-gray-600 dark:text-gray-300">Product Items</label>
+      @if (productItems.length === 0) {
+        <div class="rounded-lg border border-dashed border-gray-300 p-4 text-center text-sm text-gray-400 dark:border-gray-700 dark:text-gray-500">
+          <p>No product items added yet. Use the material search above to add items.</p>
+        </div>
+      } @else {
+        <app-product-items-table
+          [items]="productItems"
+          [isAdmin]="true"
+          (itemRemoved)="onItemRemoved($event)"
+          (itemChanged)="onItemChanged($event)"
+        />
+      }
+    </div>
+
+    <!-- Remarks Section -->
+    <div class="mt-5">
+      <label class="mb-1 block text-xs font-medium text-gray-600 dark:text-gray-300">Remarks</label>
+      <textarea
+        [(ngModel)]="remarks"
+        name="remarks"
+        placeholder="Add any special instructions or remarks for this quotation..."
+        rows="3"
+        maxlength="500"
+        class="w-full rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm text-gray-700 placeholder-gray-400 dark:border-gray-700 dark:bg-gray-900 dark:text-gray-200 dark:placeholder-gray-600"
+      ></textarea>
+      <p class="mt-1 text-xs text-gray-500 dark:text-gray-400">
+        {{ remarks.length }}/500 characters
+      </p>
+    </div>
+
+    <!-- Total Amount Display -->
+    @if (productItems.length > 0) {
+      <div class="mt-4 flex items-center justify-end">
+        <div class="rounded-lg bg-gray-50 px-4 py-2 dark:bg-gray-800">
+          <span class="text-sm text-gray-600 dark:text-gray-400">Total: </span>
+          <span class="text-lg font-semibold text-gray-800 dark:text-white">
+            ₱{{ totalAmount.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 }) }}
+          </span>
+        </div>
+      </div>
+    }
+
+    <!-- Validation Error -->
+    @if (validationError) {
+      <div class="mt-4 rounded-lg border border-red-200 bg-red-50 px-4 py-2 text-sm text-red-700 dark:border-red-800 dark:bg-red-900/20 dark:text-red-400">
+        {{ validationError }}
+      </div>
+    }
+
+    <!-- Action Buttons -->
+    <div class="mt-6 flex items-center gap-3">
+      <button
+        type="button"
+        (click)="saveDraft()"
+        [disabled]="isSubmitting"
+        class="rounded-lg border border-gray-300 bg-white px-4 py-2 text-sm font-medium text-gray-700 hover:bg-gray-50 disabled:cursor-not-allowed disabled:opacity-50 dark:border-gray-600 dark:bg-gray-800 dark:text-gray-200 dark:hover:bg-gray-700"
+      >
+        @if (isSubmitting) {
+          <div class="inline-block h-4 w-4 animate-spin rounded-full border-2 border-gray-400 border-t-transparent mr-1"></div>
+        }
+        {{ isSubmitting ? 'Saving...' : 'Save Draft' }}
+      </button>
+      <button
+        type="button"
+        (click)="previewQuotation()"
+        [disabled]="isPrintLoading || productItems.length === 0"
+        class="rounded-lg bg-brand-500 px-4 py-2 text-sm font-medium text-white hover:bg-brand-600 disabled:cursor-not-allowed disabled:opacity-50"
+      >
+        Preview Quotation
+      </button>
+      <button
+        type="button"
+        (click)="cancel()"
+        class="rounded-lg border border-gray-300 bg-white px-4 py-2 text-sm font-medium text-gray-700 hover:bg-gray-50 dark:border-gray-600 dark:bg-gray-800 dark:text-gray-200 dark:hover:bg-gray-700"
+      >
+        Close
+      </button>
+    </div>
+  </form>
+</div>
+
+<!-- Quotation Print Preview Modal -->
+@if (isPrintModalOpen) {
+  <div class="fixed inset-0 z-[100012] flex flex-col bg-black/60" (click)="closePrintModal()">
+    <div class="flex h-full w-full flex-col" (click)="$event.stopPropagation()">
+      <div class="flex items-center justify-between bg-white px-6 py-3 shadow dark:bg-gray-900">
+        <h2 class="text-lg font-semibold text-gray-900 dark:text-white">Quotation Preview</h2>
+        <button
+          type="button"
+          (click)="closePrintModal()"
+          class="rounded-lg border border-gray-300 px-4 py-2 text-sm font-medium text-gray-700 transition hover:bg-gray-50 dark:border-gray-700 dark:text-gray-300 dark:hover:bg-gray-800"
+        >
+          Close
+        </button>
+      </div>
+      <div class="flex-1 overflow-hidden bg-gray-200 dark:bg-gray-800">
+        @if (isPrintLoading) {
+          <div class="flex h-full items-center justify-center">
+            <div class="flex flex-col items-center gap-3">
+              <div class="h-8 w-8 animate-spin rounded-full border-4 border-brand-600 border-t-transparent"></div>
+              <p class="text-sm text-gray-600 dark:text-gray-300">Generating quotation PDF...</p>
+            </div>
+          </div>
+        } @else if (printPdfUrl) {
+          <iframe
+            [src]="printPdfUrl"
+            class="h-full w-full border-0"
+            title="Quotation Print Preview"
+          ></iframe>
+        }
+      </div>
+    </div>
+  </div>
+}

@@ -385,14 +385,16 @@ export class MaterialsService {
       }
     }
 
-    // Step 2: Check for duplicate material name
-    const duplicateCheck = await this.db.query(
-      `SELECT id FROM tblmaterials WHERE material_name = $1 AND deleted_at IS NULL`,
-      [createMaterialDto.material_name]
-    );
+    // Step 2: Check for duplicate material name + brand combination
+    if (createMaterialDto.brand_id) {
+      const duplicateCheck = await this.db.query(
+        `SELECT id FROM tblmaterials WHERE material_name = $1 AND brand_id = $2 AND deleted_at IS NULL`,
+        [createMaterialDto.material_name, createMaterialDto.brand_id]
+      );
 
-    if (duplicateCheck.rows.length > 0) {
-      throw new BadRequestException(`Material with name '${createMaterialDto.material_name}' already exists`);
+      if (duplicateCheck.rows.length > 0) {
+        throw new BadRequestException(`Material '${createMaterialDto.material_name}' already exists for this brand`);
+      }
     }
 
     // Step 3: Insert new material
@@ -417,7 +419,7 @@ export class MaterialsService {
     // Only include product_type_id if the column exists in the table
     if (createMaterialDto.product_type_id) {
       const colCheck = await this.db.query(
-        `SELECT 1 FROM information_schema.columns WHERE table_name = 'tblmaterials' AND column_name = 'product_type_id' AND table_schema = current_schema() LIMIT 1`
+        `SELECT 1 FROM information_schema.columns WHERE table_name = 'tblmaterials' AND column_name = 'product_type_id'  LIMIT 1`
       );
       if (colCheck.rowCount > 0) {
         columns.splice(1, 0, 'product_type_id'); // insert after brand_id
@@ -453,7 +455,7 @@ export class MaterialsService {
    * - Ordered by material name
    * =====================================================
    */
-  async findAll(search?: string, brandId?: number): Promise<Material[]> {
+  async findAll(search?: string, brandId?: number, productTypeId?: number): Promise<Material[]> {
     let query = `
       SELECT 
         m.*,
@@ -477,6 +479,13 @@ export class MaterialsService {
     if (brandId !== undefined && brandId !== null) {
       query += ` AND m.brand_id = $${paramIndex}`;
       params.push(brandId);
+      paramIndex++;
+    }
+
+    // Add product type filter — get all materials whose brand belongs to this product type
+    if (productTypeId !== undefined && productTypeId !== null) {
+      query += ` AND b.product_type_id = $${paramIndex}`;
+      params.push(productTypeId);
       paramIndex++;
     }
 
@@ -652,8 +661,8 @@ export class MaterialsService {
    * =====================================================
    */
   async remove(id: number, userId: number): Promise<void> {
-    // Check if material exists
-    await this.findOne(id);
+    // Check if material exists and get its brand info for resequencing
+    const material = await this.findOne(id);
 
     // Soft delete by setting deleted_at
     const deleteQuery = `
@@ -663,6 +672,52 @@ export class MaterialsService {
     `;
 
     await this.db.query(deleteQuery, [userId, id]);
+
+    // Auto-resequence material codes for the same product type
+    if (material.brand_id) {
+      try {
+        const brandResult = await this.db.query<{ product_type_id: number | null }>(
+          `SELECT product_type_id FROM tblbrands WHERE id = $1`,
+          [material.brand_id],
+        );
+        const productTypeId = brandResult.rows[0]?.product_type_id;
+
+        if (productTypeId) {
+          // Get the prefix for this product type
+          const ptResult = await this.db.query<{ prefix: string }>(
+            `SELECT COALESCE(
+               COALESCE(to_jsonb(t)->>'prefix', to_jsonb(t)->>'typePrefix', to_jsonb(t)->>'type_prefix'),
+               ''
+             ) AS prefix
+             FROM tblproducttypes t WHERE t.id = $1 LIMIT 1`,
+            [productTypeId],
+          );
+          const prefix = String(ptResult.rows[0]?.prefix ?? '').trim();
+
+          if (prefix) {
+            // Resequence all remaining materials under this product type
+            const materials = await this.db.query<{ id: number }>(
+              `SELECT m.id
+               FROM tblmaterials m
+               JOIN tblbrands b ON m.brand_id = b.id
+               WHERE b.product_type_id = $1 AND m.deleted_at IS NULL
+               ORDER BY m.material_name ASC, m.id ASC`,
+              [productTypeId],
+            );
+
+            for (let i = 0; i < materials.rows.length; i++) {
+              const newCode = `${prefix}${String(i + 1).padStart(5, '0')}`;
+              await this.db.query(
+                `UPDATE tblmaterials SET material_code = $1 WHERE id = $2`,
+                [newCode, materials.rows[i].id],
+              );
+            }
+          }
+        }
+      } catch {
+        // Non-fatal — don't fail the delete if resequencing fails
+      }
+    }
   }
 
   /**
@@ -702,10 +757,35 @@ export class MaterialsService {
       ORDER BY b."brandName" ASC
     `;
 
-    const [treeResult, uncategorizedResult] = await Promise.all([
+    // Query 3: Material count per product type (via brand's product_type_id)
+    const materialCountQuery = `
+      SELECT b.product_type_id, COUNT(m.id)::int AS material_count
+      FROM tblmaterials m
+      JOIN tblbrands b ON m.brand_id = b.id
+      WHERE m.deleted_at IS NULL AND b.product_type_id IS NOT NULL
+      GROUP BY b.product_type_id
+    `;
+
+    // Query 4: Material count for uncategorized (brands without product_type_id)
+    const uncategorizedCountQuery = `
+      SELECT COUNT(m.id)::int AS material_count
+      FROM tblmaterials m
+      JOIN tblbrands b ON m.brand_id = b.id
+      WHERE m.deleted_at IS NULL AND b.product_type_id IS NULL
+    `;
+
+    const [treeResult, uncategorizedResult, countResult, uncatCountResult] = await Promise.all([
       this.db.query(treeQuery),
       this.db.query(uncategorizedQuery),
+      this.db.query(materialCountQuery),
+      this.db.query(uncategorizedCountQuery),
     ]);
+
+    // Build a map of product_type_id → material count
+    const countMap = new Map<number, number>();
+    for (const row of countResult.rows) {
+      countMap.set(row.product_type_id, row.material_count);
+    }
 
     // Build product type nodes from the joined query
     const productTypeMap = new Map<number, any>();
@@ -716,6 +796,7 @@ export class MaterialsService {
           id: row.product_type_id,
           name: row.product_type_name,
           type: 'product-type',
+          materialCount: countMap.get(row.product_type_id) ?? 0,
           children: [],
         });
       }
@@ -736,10 +817,12 @@ export class MaterialsService {
 
     // Add "Uncategorized" node if there are brands without product_type_id
     if (uncategorizedResult.rows.length > 0) {
+      const uncatCount = Number(uncatCountResult.rows[0]?.material_count ?? 0);
       const uncategorizedNode = {
         id: null,
         name: 'Uncategorized',
         type: 'product-type',
+        materialCount: uncatCount,
         children: uncategorizedResult.rows.map((row) => ({
           id: row.brand_id,
           name: row.brand_name,

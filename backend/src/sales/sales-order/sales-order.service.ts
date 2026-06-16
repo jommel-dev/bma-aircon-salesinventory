@@ -144,8 +144,8 @@ export class SalesOrderService {
     const result = await executor.query<{ column_name: string }>(
       `SELECT column_name
        FROM information_schema.columns
-       WHERE table_schema = current_schema()
-         AND table_name = $1`,
+       WHERE table_name = $1
+       ORDER BY ordinal_position`,
       [tableName],
     );
 
@@ -6902,6 +6902,57 @@ export class SalesOrderService {
         }
       }
 
+      // Stock deduction if status is 'complete' (direct completion without going through pending first)
+      if (status === 'complete') {
+        try {
+          for (const item of productItems) {
+            const materialId = Number(item.materialId ?? 0);
+            const orderedQty = Number(item.qty ?? 0);
+            const isNonInventory = Boolean(item.isNonInventory);
+
+            if (!materialId || materialId <= 0 || orderedQty <= 0 || isNonInventory) {
+              continue;
+            }
+
+            // Get current available stock
+            const stockResult = await this.databaseService.query(
+              `SELECT COALESCE(on_hand_stock, 0) as available_stock FROM tblmaterials WHERE id = $1`,
+              [materialId],
+            );
+            const availableStock = Number(stockResult.rows[0]?.available_stock ?? 0);
+            const deductQty = Math.max(0, Math.min(orderedQty, availableStock));
+
+            if (deductQty > 0) {
+              // Record OUT movement
+              try {
+                await this.materialStockService.recordMovement({
+                  materialId,
+                  movementType: 'OUT',
+                  qty: deductQty,
+                  sourceType: 'SO',
+                  sourceId: result.salesOrderId,
+                  sourceLineKey: `SO-${result.salesOrderId}-MAT-${materialId}`,
+                  statusSnapshot: 'complete',
+                  remarks: `Stock deducted for Material SO #${result.salesOrderId}`,
+                });
+              } catch (moveErr: any) {
+                if (!moveErr?.message?.includes('unique') && !moveErr?.message?.includes('duplicate')) {
+                  console.error('Stock movement error:', moveErr?.message);
+                }
+              }
+
+              // Deduct from tblmaterials.on_hand_stock
+              await this.databaseService.query(
+                `UPDATE tblmaterials SET on_hand_stock = GREATEST(COALESCE(on_hand_stock, 0) - $1, 0) WHERE id = $2`,
+                [deductQty, materialId],
+              );
+            }
+          }
+        } catch (error) {
+          console.error('Stock deduction error on create-complete:', error);
+        }
+      }
+
       return responseData;
     } catch (error) {
       if (error instanceof BadRequestException) {
@@ -7195,7 +7246,10 @@ export class SalesOrderService {
         COALESCE(so.so_number, '') AS "soNumber",
         COALESCE(to_jsonb(so)->>'customer_id', '') AS "customerId",
         COALESCE(c.name, '') AS "customerName",
-        COALESCE(so.total_amount, 0)::numeric AS "totalAmount",
+        COALESCE(
+          NULLIF(so.total_amount, 0),
+          (SELECT COALESCE(SUM(GREATEST(soi.rate - COALESCE(soi.discount, 0), 0) * soi.qty), 0) FROM tblsales_order_items soi WHERE soi.sales_order_id = so.id)
+        )::numeric AS "totalAmount",
         COALESCE(so.status, 'draft') AS status,
         COALESCE(so."salesType", '') AS "salesType",
         so."scheduleDate" AS "deliveryDate",
@@ -7336,14 +7390,16 @@ export class SalesOrderService {
         // 4. Compute total from product items (rate - discount) × qty
         const productItems = Array.isArray(dto.productItems) ? dto.productItems : [];
         let computedTotal = 0;
-        for (const item of productItems) {
-          const rate = Number(item.rate ?? 0);
-          const discount = Number(item.discount) || 0;
-          const effectiveRate = Math.max(rate - discount, 0);
-          const qty = Number(item.qty ?? 0);
-          computedTotal += Math.round(effectiveRate * qty * 100) / 100;
+        if (productItems.length > 0) {
+          for (const item of productItems) {
+            const rate = Number(item.rate ?? 0);
+            const discount = Number(item.discount) || 0;
+            const effectiveRate = Math.max(rate - discount, 0);
+            const qty = Number(item.qty ?? 0);
+            computedTotal += Math.round(effectiveRate * qty * 100) / 100;
+          }
+          computedTotal = Math.round(computedTotal * 100) / 100;
         }
-        computedTotal = Math.round(computedTotal * 100) / 100;
 
         // 5. Build update fields — explicitly omit 'installer'
         const updateFields: string[] = [];
@@ -7353,9 +7409,11 @@ export class SalesOrderService {
         updateParams.push(customerId);
         updateFields.push(`customer_id = $${updateParams.length}`);
 
-        // total_amount
-        updateParams.push(computedTotal);
-        updateFields.push(`total_amount = $${updateParams.length}`);
+        // total_amount — only update if productItems were provided (avoid zeroing out on status-only updates)
+        if (productItems.length > 0) {
+          updateParams.push(computedTotal);
+          updateFields.push(`total_amount = $${updateParams.length}`);
+        }
 
         // status (if provided)
         if (dto.status) {
@@ -7564,7 +7622,23 @@ export class SalesOrderService {
           previousStatus !== 'complete' &&
           previousStatus !== 'completed'
         ) {
-          for (const item of productItems) {
+          // If productItems were not provided in the DTO, read from the database
+          let itemsToDeduct = productItems;
+          if (itemsToDeduct.length === 0) {
+            const dbItems = await client.query<{ material_id: number | null; qty: number; is_non_inventory: boolean }>(
+              `SELECT material_id, qty, is_non_inventory
+               FROM tblsales_order_items
+               WHERE sales_order_id = $1`,
+              [id],
+            );
+            itemsToDeduct = dbItems.rows.map(row => ({
+              materialId: row.material_id,
+              qty: row.qty,
+              isNonInventory: row.is_non_inventory,
+            }));
+          }
+
+          for (const item of itemsToDeduct) {
             const materialId = Number(item.materialId);
             const orderedQty = Number(item.qty ?? 0);
             const isNonInventory = Boolean(item.isNonInventory);

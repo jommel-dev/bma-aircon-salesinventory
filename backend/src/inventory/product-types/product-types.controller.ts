@@ -38,6 +38,11 @@ export class ProductTypesController {
     return this.productTypesService.update(+id, updateProductTypeDto);
   }
 
+  @Post(':id/resequence')
+  resequence(@Param('id') id: string) {
+    return this.productTypesService.resequenceByProductTypeId(+id);
+  }
+
   @Delete(':id')
   remove(@Param('id') id: string) {
     return this.productTypesService.remove(+id);

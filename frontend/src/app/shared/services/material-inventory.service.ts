@@ -76,6 +76,7 @@ export interface ProductTypeNode {
   id: number | null;       // null for "Uncategorized"
   name: string;
   type: 'product-type';
+  materialCount: number;
   children: BrandNode[];
 }
 
@@ -96,12 +97,16 @@ export class MaterialInventoryService {
   /**
    * Get all materials with optional filters
    */
-  async getMaterials(search?: string, brandId?: number): Promise<Material[]> {
+  async getMaterials(search?: string, brandId?: number, productTypeId?: number): Promise<Material[]> {
     const params: any = {};
     if (search) params.search = search;
     const parsedBrandId = Number(brandId);
     if (parsedBrandId && !isNaN(parsedBrandId)) {
       params.brandId = parsedBrandId;
+    }
+    const parsedProductTypeId = Number(productTypeId);
+    if (parsedProductTypeId && !isNaN(parsedProductTypeId)) {
+      params.productTypeId = parsedProductTypeId;
     }
 
     const response = await apiClient.get(this.baseUrl, { params });
@@ -235,6 +240,21 @@ export class MaterialInventoryService {
    */
   async createProductType(name: string, prefix?: string): Promise<void> {
     await apiClient.post('/product-types', { name, prefix });
+  }
+
+  /**
+   * Update product type (name and/or prefix).
+   * If prefix changes, all material codes under this type will be resequenced.
+   */
+  async updateProductType(id: number, data: { name?: string; prefix?: string }): Promise<void> {
+    await apiClient.patch(`/product-types/${id}`, data);
+  }
+
+  /**
+   * Resequence material codes for a product type (closes gaps after deletion).
+   */
+  async resequenceMaterialCodes(productTypeId: number): Promise<void> {
+    await apiClient.post(`/product-types/${productTypeId}/resequence`);
   }
 
   /**

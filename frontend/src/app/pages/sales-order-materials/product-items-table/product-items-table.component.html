@@ -124,7 +124,7 @@
 
             <!-- Total (computed) -->
             <td class="whitespace-nowrap px-4 py-2.5 text-sm font-medium text-gray-700 dark:text-gray-300">
-              {{ item.total | number:'1.2-2' }}
+              {{ calculateTotal(item.rate, item.discount, item.qty) | number:'1.2-2' }}
             </td>
 
             <!-- Action -->

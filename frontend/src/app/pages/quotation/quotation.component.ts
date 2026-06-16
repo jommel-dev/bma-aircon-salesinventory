@@ -1,6 +1,7 @@
 import { CommonModule } from '@angular/common';
 import { Component, OnDestroy, OnInit } from '@angular/core';
 import { FormsModule } from '@angular/forms';
+import { Router } from '@angular/router';
 import { DomSanitizer, SafeResourceUrl } from '@angular/platform-browser';
 import { PDFDocument, StandardFonts, rgb } from 'pdf-lib';
 import { PageBreadcrumbComponent } from '../../shared/components/common/page-breadcrumb/page-breadcrumb.component';
@@ -104,6 +105,7 @@ export class QuotationComponent implements OnInit, OnDestroy {
     private readonly businessSettingsService: BusinessSettingsService,
     private readonly rbacService: RbacService,
     private readonly sanitizer: DomSanitizer,
+    private readonly router: Router,
   ) {}
 
   private businessProfileSettings: BusinessProfileSettings | null = null;
@@ -344,32 +346,7 @@ export class QuotationComponent implements OnInit, OnDestroy {
   }
 
   openCreateDrawer(): void {
-    this.drawerMode = 'create';
-    this.editingQuotationId = null;
-    this.customerMode = 'existing';
-    this.customerSearch = '';
-    this.form = {
-      quoteDate: this.getDefaultQuoteDate(),
-      validityDays: 14,
-      customer_id: '',
-      customer: {
-        name: '',
-        address: '',
-        contact_person: '',
-        contact_number: '',
-        email: '',
-        tin_number: '',
-      },
-      productItems: [this.createEmptyProductItem()],
-      totalAmount: 0,
-      remarks: '',
-      status: 'draft',
-      termsConditions: this.createDefaultTermsConditions(),
-    };
-
-    this.uiMessage = '';
-    this.uiError = '';
-    this.isDrawerOpen = true;
+    this.router.navigate(['/users/quotation/create']);
   }
 
   async openEditDrawer(item: QuotationListItem): Promise<void> {

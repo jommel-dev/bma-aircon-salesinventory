@@ -1237,6 +1237,7 @@ export class SettingsComponent implements OnInit {
       const response = await apiClient.get('/database-backup/export', {
         params: { mode: this.exportMode },
         responseType: 'blob',
+        timeout: 120000, // 2 minutes for large database exports
       });
 
       // Extract filename from Content-Disposition header

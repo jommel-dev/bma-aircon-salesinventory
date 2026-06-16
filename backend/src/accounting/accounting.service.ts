@@ -526,7 +526,7 @@ export class AccountingService {
         );
 
         const vendorColumnsResult = await client.query<{ column_name: string }>(
-          `SELECT column_name FROM information_schema.columns WHERE table_name = 'tblvendors' AND table_schema = current_schema()`
+          `SELECT column_name FROM information_schema.columns WHERE table_name = 'tblvendors' `
         );
         const vendorColumns = vendorColumnsResult.rows.map(c => c.column_name);
         const nameCol = vendorColumns.includes('name') ? 'name' : (vendorColumns.includes('vendor_name') ? 'vendor_name' : null);

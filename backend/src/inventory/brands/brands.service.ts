@@ -16,7 +16,7 @@ export class BrandsService {
       `SELECT column_name
        FROM information_schema.columns
        WHERE table_name = $1
-         AND table_schema = current_schema()`,
+       ORDER BY ordinal_position`,
       [tableName],
     );
 
@@ -46,7 +46,7 @@ export class BrandsService {
     }
 
     const columns = await this.getTableColumns(this.databaseService, 'tblbrands');
-    const nameColumn = this.pickColumn(columns, ['name', 'brandName', 'brand_name']);
+    const nameColumn = this.pickColumn(columns, ['brandName', 'brand_name']);
 
     if (!nameColumn) {
       return {
@@ -98,7 +98,25 @@ export class BrandsService {
     const insertResult = await this.databaseService.query<{ id: number }>(
       `INSERT INTO tblbrands (${insertColumns.join(', ')}) VALUES (${valuePlaceholders.join(', ')}) RETURNING id`,
       insertValues,
-    );
+    ).catch(async (err) => {
+      // If id auto-generation fails, insert with explicit next id
+      if (err?.message?.includes('null value in column "id"') || err?.message?.includes('violates not-null constraint')) {
+        const maxId = await this.databaseService.query<{ max_id: string }>(
+          `SELECT COALESCE(MAX(id), 0)::text AS max_id FROM tblbrands`
+        );
+        const nextVal = Number(maxId.rows[0]?.max_id ?? 0) + 1;
+
+        // Insert with explicit id since auto-generation isn't working
+        const explicitColumns = ['"id"', ...insertColumns];
+        const explicitValues = [nextVal, ...insertValues];
+        const placeholders = explicitValues.map((_, i) => `$${i + 1}`).join(', ');
+        return this.databaseService.query<{ id: number }>(
+          `INSERT INTO tblbrands (${explicitColumns.join(', ')}) VALUES (${placeholders}) RETURNING id`,
+          explicitValues,
+        );
+      }
+      throw err;
+    });
 
     return {
       success: true,

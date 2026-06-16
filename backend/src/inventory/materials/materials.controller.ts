@@ -160,9 +160,15 @@ export class MaterialsController {
   async findAll(
     @Query('search') search?: string,
     @Query('brandId') brandIdRaw?: string,
+    @Query('productTypeId') productTypeIdRaw?: string,
   ) {
     const brandId = brandIdRaw ? parseInt(brandIdRaw, 10) : undefined;
-    const materials = await this.materialsService.findAll(search, isNaN(brandId as any) ? undefined : brandId);
+    const productTypeId = productTypeIdRaw ? parseInt(productTypeIdRaw, 10) : undefined;
+    const materials = await this.materialsService.findAll(
+      search,
+      isNaN(brandId as any) ? undefined : brandId,
+      isNaN(productTypeId as any) ? undefined : productTypeId,
+    );
 
     return {
       success: true,

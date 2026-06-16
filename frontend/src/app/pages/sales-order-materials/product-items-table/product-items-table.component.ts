@@ -140,7 +140,7 @@ export class ProductItemsTableComponent {
    */
   get grandTotal(): number {
     return Math.round(
-      this.items.reduce((sum, item) => sum + (item.total ?? 0), 0) * 100,
+      this.items.reduce((sum, item) => sum + this.calculateTotal(item.rate, item.discount, item.qty), 0) * 100,
     ) / 100;
   }
 

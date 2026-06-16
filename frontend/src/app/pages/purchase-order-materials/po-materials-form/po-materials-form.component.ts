@@ -138,7 +138,7 @@ export class PoMaterialsFormComponent implements OnInit {
       // Duplicate material: increment quantity by 1
       const existingItem = this.productItems[existingIndex];
       existingItem.qty += 1;
-      existingItem.total = this.calculateTotal(existingItem.rate, existingItem.discount, existingItem.qty);
+      existingItem.total = this.calculateTotal(existingItem.cost, existingItem.qty);
     } else {
       // New material: add line item
       const newItem: PoLineItem = {
@@ -147,7 +147,7 @@ export class PoMaterialsFormComponent implements OnInit {
         itemCode: material.material_code,
         unit: material.unit,
         cost: material.unit_price,
-        rate: material.unit_price,
+        rate: material.sell_price,
         discount: 0,
         qty: 1,
         total: material.unit_price * 1,
@@ -183,6 +183,23 @@ export class PoMaterialsFormComponent implements OnInit {
     this.vendorSearch = value;
     this.vendorSearchNoResults = false;
     this.vendorValidationError = '';
+    this.selectedVendorId = null;
+    this.vendorForm.name = value.trim();
+    this.vendorForm.address = '';
+    this.vendorForm.contact_person = '';
+    this.vendorForm.contact_number = '';
+
+    // Check for exact match
+    const normalized = value.trim().toLowerCase();
+    if (normalized && this.vendorSearchResults.length > 0) {
+      const exactMatch = this.vendorSearchResults.find(
+        (v) => (v.name ?? '').trim().toLowerCase() === normalized,
+      );
+      if (exactMatch) {
+        this.selectVendor(exactMatch);
+        return;
+      }
+    }
 
     if (this.vendorSearchDebounceTimer) {
       clearTimeout(this.vendorSearchDebounceTimer);
@@ -196,6 +213,7 @@ export class PoMaterialsFormComponent implements OnInit {
     }
 
     this.isVendorSearching = true;
+    this.isVendorDropdownOpen = true;
     this.vendorSearchDebounceTimer = setTimeout(() => {
       void this.performVendorSearch(value.trim());
       this.vendorSearchDebounceTimer = null;
@@ -481,7 +499,8 @@ export class PoMaterialsFormComponent implements OnInit {
         materialName: item.description,
         materialCode: item.itemCode,
         materialUnit: item.unit,
-        unitPrice: item.rate,
+        unitPrice: item.cost,
+        sellPrice: item.rate,
         discountPrice: item.discount,
         totalSetQty: item.qty,
       })),
@@ -567,10 +586,10 @@ export class PoMaterialsFormComponent implements OnInit {
         itemCode: item.materialCode,
         unit: item.materialUnit ?? '',
         cost: item.unitPrice,
-        rate: item.unitPrice,
+        rate: item.sellPrice ?? item.unitPrice,
         discount: item.discountPrice ?? 0,
         qty: item.totalSetQty,
-        total: this.calculateTotal(item.unitPrice, item.discountPrice ?? 0, item.totalSetQty),
+        total: this.calculateTotal(item.unitPrice, item.totalSetQty),
       }));
 
       // Remarks
@@ -834,7 +853,7 @@ export class PoMaterialsFormComponent implements OnInit {
 
   // ─── Helpers ────────────────────────────────────────────────────────────────
 
-  private calculateTotal(rate: number, discount: number, qty: number): number {
-    return Math.round(Math.max(rate - discount, 0) * qty * 100) / 100;
+  private calculateTotal(cost: number, qty: number): number {
+    return Math.round(cost * qty * 100) / 100;
   }
 }

@@ -305,7 +305,7 @@ export class PurchaseService {
       `SELECT column_name
        FROM information_schema.columns
        WHERE table_name = $1
-         AND table_schema = current_schema()`,
+       ORDER BY ordinal_position`,
       [tableName],
     );
 
@@ -1769,6 +1769,19 @@ export class PurchaseService {
 
                 if (!materialId) {
                   throw new Error('Failed to create/retrieve material id for ACM item');
+                }
+
+                // Record price history when PO updates material cost
+                if (materialId && (unitPrice > 0 || sellPrice > 0)) {
+                  try {
+                    await client.query(
+                      `INSERT INTO tblmaterial_price_history (material_id, unit_price, sell_price, created_by)
+                       VALUES ($1, $2, $3, $4)`,
+                      [materialId, unitPrice, sellPrice, userId ?? null],
+                    );
+                  } catch {
+                    // Non-fatal — don't block PO if price history fails
+                  }
                 }
               }
 
@@ -3306,19 +3319,19 @@ export class PurchaseService {
 
         const existingPurchase = existingPurchaseResult.rows[0];
 
-        // Status guard: reject update if PO status is not 'in-progress' for ACM type
-        // Check both the requested poType and the existing PO's type
+        // Status guard: reject update if PO status is not editable for ACM type
+        // Allow 'in-progress' (normal editing) and 'complete' (admin adjustment)
         const requestedPoType = String(payload.poType ?? '').trim().toUpperCase();
         const existingPoType = this.normalizePoType(existingPurchase.po_type);
         const effectivePoType = requestedPoType || existingPoType;
         const currentStatus = String(existingPurchase.status ?? '').trim().toLowerCase();
+        const editableStatuses = ['in-progress', 'in_progress', 'complete', 'completed'];
         if (
           effectivePoType === 'ACM' &&
-          currentStatus !== 'in-progress' &&
-          currentStatus !== 'in_progress'
+          !editableStatuses.includes(currentStatus)
         ) {
           throw new BadRequestException(
-            `Purchase order cannot be edited in its current status '${currentStatus}'. Only orders with status 'in-progress' can be updated.`,
+            `Purchase order cannot be edited in its current status '${currentStatus}'. Only orders with status 'in-progress' or 'complete' can be updated.`,
           );
         }
 
@@ -3657,6 +3670,30 @@ export class PurchaseService {
               )
             : null;
 
+          // ─── ACM Stock Adjustment: capture old quantities before deleting items ───
+          const oldMaterialQtys = new Map<number, number>();
+          if (poType === 'ACM' && (currentStatus === 'complete' || currentStatus === 'completed')) {
+            const oldItemsResult = await client.query<{ material_id: string; quantity: string }>(
+              `SELECT
+                 COALESCE(to_jsonb(t)->>'material_id', to_jsonb(t)->>'productId', to_jsonb(t)->>'product_id')::text AS material_id,
+                 COALESCE(to_jsonb(t)->>'quantity', to_jsonb(t)->>'totalSetQty', to_jsonb(t)->>'total_set_qty', '0')::text AS quantity
+               FROM ${itemsTable} t
+               WHERE COALESCE(
+                 to_jsonb(t)->>'purchaseId',
+                 to_jsonb(t)->>'purchase_id',
+                 to_jsonb(t)->>'po_id'
+               ) = $1`,
+              [String(id)],
+            );
+            for (const row of oldItemsResult.rows) {
+              const matId = Number(row.material_id);
+              const qty = Number(row.quantity);
+              if (matId > 0 && qty > 0) {
+                oldMaterialQtys.set(matId, (oldMaterialQtys.get(matId) ?? 0) + qty);
+              }
+            }
+          }
+
           await client.query(
             `DELETE FROM ${itemsTable}
              WHERE COALESCE(
@@ -3834,6 +3871,19 @@ export class PurchaseService {
 
                 if (!materialId) {
                   throw new Error('Failed to create/retrieve material id for ACM item');
+                }
+
+                // Record price history when PO updates material cost
+                if (materialId && (unitPrice > 0 || sellPrice > 0)) {
+                  try {
+                    await client.query(
+                      `INSERT INTO tblmaterial_price_history (material_id, unit_price, sell_price, created_by)
+                       VALUES ($1, $2, $3, $4)`,
+                      [materialId, unitPrice, sellPrice, userId ?? null],
+                    );
+                  } catch {
+                    // Non-fatal — don't block PO if price history fails
+                  }
                 }
               }
 
@@ -4013,6 +4063,60 @@ export class PurchaseService {
                   );
                 } else {
                   await this.runInsert(client, 'tblserial_numbers', serialRecord);
+                }
+              }
+            }
+          }
+
+          // ─── ACM Stock Adjustment: compare old vs new quantities and adjust stock ───
+          if (poType === 'ACM' && oldMaterialQtys.size > 0) {
+            // Collect new quantities per materialId
+            const newMaterialQtys = new Map<number, number>();
+            for (const item of productItems) {
+              const matId = this.toOptionalNumber((item as any).materialId ?? (item as any).productId ?? (item as any).material_id) ?? 0;
+              const qty = this.toOptionalNumber((item as any).totalSetQty ?? (item as any).quantity ?? (item as any).qty) ?? 0;
+              if (matId > 0 && qty > 0) {
+                newMaterialQtys.set(matId, (newMaterialQtys.get(matId) ?? 0) + qty);
+              }
+            }
+
+            // Calculate and apply differences
+            const allMaterialIds = new Set([...oldMaterialQtys.keys(), ...newMaterialQtys.keys()]);
+            for (const matId of allMaterialIds) {
+              const oldQty = oldMaterialQtys.get(matId) ?? 0;
+              const newQty = newMaterialQtys.get(matId) ?? 0;
+              const diff = newQty - oldQty;
+
+              if (diff === 0) continue;
+
+              // Update on_hand_stock
+              if (diff > 0) {
+                await client.query(
+                  `UPDATE tblmaterials SET on_hand_stock = COALESCE(on_hand_stock, 0) + $1, updated_at = NOW() WHERE id = $2`,
+                  [diff, matId],
+                );
+              } else {
+                await client.query(
+                  `UPDATE tblmaterials SET on_hand_stock = GREATEST(COALESCE(on_hand_stock, 0) + $1, 0), updated_at = NOW() WHERE id = $2`,
+                  [diff, matId],
+                );
+              }
+
+              // Record stock movement for the adjustment
+              try {
+                await this.materialStockService.recordMovement({
+                  materialId: matId,
+                  movementType: 'ADJUSTMENT',
+                  qty: Math.abs(diff),
+                  sourceType: 'PO',
+                  sourceId: id,
+                  sourceLineKey: `PO-${id}-ADJ-${matId}-${Date.now()}`,
+                  statusSnapshot: 'po-adjustment',
+                  remarks: `PO #${id} adjustment: ${diff > 0 ? 'increased' : 'decreased'} by ${Math.abs(diff)} units`,
+                }, { client });
+              } catch (moveErr: any) {
+                if (!moveErr?.message?.includes('unique') && !moveErr?.message?.includes('duplicate')) {
+                  console.warn('PO stock adjustment movement error:', moveErr?.message?.slice(0, 200));
                 }
               }
             }

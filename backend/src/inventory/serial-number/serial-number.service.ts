@@ -1,4 +1,4 @@
-﻿import { Injectable } from '@nestjs/common';
+import { Injectable } from '@nestjs/common';
 import { CreateSerialNumberDto } from './dto/create-serial-number.dto';
 import { UpdateSerialNumberDto } from './dto/update-serial-number.dto';
 import { DatabaseService } from 'src/database/database.service';
@@ -101,7 +101,7 @@ export class SerialNumberService {
       `SELECT column_name
        FROM information_schema.columns
        WHERE table_name = $1
-         AND table_schema = current_schema()`,
+         `,
       [tableName],
     );
 

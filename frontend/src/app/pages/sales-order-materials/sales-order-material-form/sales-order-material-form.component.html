@@ -573,10 +573,18 @@
 
       <!-- Editing with status 'complete' or 'voided' -->
       @if (orderId && (orderStatus === 'complete' || orderStatus === 'voided')) {
-        <p class="text-sm text-gray-500 dark:text-gray-400">
-          This order is {{ orderStatus }}. No further changes allowed.
-        </p>
-        @if (orderStatus === 'complete' && isAdmin) {
+        @if (isAdmin && orderStatus === 'complete') {
+          <button
+            type="button"
+            (click)="submitForm('complete')"
+            [disabled]="isSubmitting"
+            class="rounded-lg bg-brand-500 px-4 py-2 text-sm font-medium text-white hover:bg-brand-600 disabled:cursor-not-allowed disabled:opacity-50"
+          >
+            @if (isSubmitting) {
+              <div class="h-4 w-4 animate-spin rounded-full border-2 border-white border-t-transparent"></div>
+            }
+            {{ isSubmitting ? 'Updating...' : 'Update Order' }}
+          </button>
           <button
             type="button"
             (click)="openVoidDialog()"
@@ -585,6 +593,10 @@
           >
             Void Order
           </button>
+        } @else {
+          <p class="text-sm text-gray-500 dark:text-gray-400">
+            This order is {{ orderStatus }}. No further changes allowed.
+          </p>
         }
         <button
           type="button"

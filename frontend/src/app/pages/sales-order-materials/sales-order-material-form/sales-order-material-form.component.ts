@@ -78,6 +78,12 @@ export class SalesOrderMaterialFormComponent implements OnInit {
   orderStatus: string = '';
   isCancelDialogOpen = false;
 
+  /** Returns true if the order is completed and the user is NOT superadmin — form should be read-only */
+  get isFormReadonly(): boolean {
+    const status = (this.orderStatus ?? '').toLowerCase();
+    return (status === 'complete' || status === 'completed') && !this.isAdmin;
+  }
+
   // ─── Stock Validation Modal ─────────────────────────────────────────────────
   isValidationModalOpen = false;
   validationWarnings: string[] = [];
@@ -661,18 +667,50 @@ export class SalesOrderMaterialFormComponent implements OnInit {
   }
 
   /**
-   * Validates payment setup - ensures at least one payment method is configured.
-   * Multiple payment methods are now supported (e.g., Cash + Terms, Cash + Credit Card, etc.).
+   * Validates payment setup:
+   * - At least one payment method with amount > 0
+   * - Total payment amount must equal the grand total of product items
+   * - Payment amount cannot exceed the grand total
    * Returns { errors: [] }
    */
   private validatePaymentSetup(): { errors: string[] } {
     const errors: string[] = [];
+
+    // Must have at least one product item
+    if (this.productItems.length === 0) {
+      errors.push('At least one product item is required.');
+      return { errors };
+    }
+
+    // Calculate grand total from product items
+    const grandTotal = Math.round(
+      this.productItems.reduce((sum, item) => {
+        const effectiveRate = Math.max((item.rate ?? 0) - (item.discount ?? 0), 0);
+        return sum + effectiveRate * (item.qty ?? 0);
+      }, 0) * 100
+    ) / 100;
 
     // Check that at least one payment method is configured
     const validPayments = this.paymentDetails.filter((p) => p.method && p.amount > 0);
 
     if (validPayments.length === 0) {
       errors.push('At least one payment method with amount greater than 0 is required.');
+      return { errors };
+    }
+
+    // Calculate total payment amount
+    const totalPayment = Math.round(
+      validPayments.reduce((sum, p) => sum + Number(p.amount ?? 0), 0) * 100
+    ) / 100;
+
+    // Payment must not exceed grand total
+    if (totalPayment > grandTotal) {
+      errors.push(`Total payment (₱${totalPayment.toFixed(2)}) exceeds the order total (₱${grandTotal.toFixed(2)}).`);
+    }
+
+    // Payment must equal grand total
+    if (totalPayment < grandTotal) {
+      errors.push(`Total payment (₱${totalPayment.toFixed(2)}) does not cover the order total (₱${grandTotal.toFixed(2)}).`);
     }
 
     return { errors };
@@ -792,6 +830,10 @@ export class SalesOrderMaterialFormComponent implements OnInit {
 
   async submitForm(status: string): Promise<void> {
     if (this.isSubmitting) return;
+    if (this.isFormReadonly) {
+      this.validationError = 'Only Super Admin can update a completed order.';
+      return;
+    }
 
     this.isSubmitting = true;
     this.validationError = '';
@@ -853,6 +895,10 @@ export class SalesOrderMaterialFormComponent implements OnInit {
    */
   async submitFormWithPostComplete(status: string): Promise<void> {
     if (this.isSubmitting) return;
+    if (this.isFormReadonly) {
+      this.validationError = 'Only Super Admin can update a completed order.';
+      return;
+    }
 
     this.isSubmitting = true;
     this.validationError = '';

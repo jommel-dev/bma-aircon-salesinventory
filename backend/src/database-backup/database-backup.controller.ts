@@ -2,6 +2,7 @@ import {
   Controller,
   Get,
   Post,
+  Body,
   Query,
   Req,
   Res,
@@ -49,14 +50,22 @@ export class DatabaseBackupController {
     }
 
     const userId = Number(request.user?.sub);
-    const { sql, filename } = await this.backupService.generateBackup(
-      backupMode,
-      Number.isFinite(userId) ? userId : undefined,
-    );
 
-    res.setHeader('Content-Type', 'application/sql');
-    res.setHeader('Content-Disposition', `attachment; filename="${filename}"`);
-    res.send(sql);
+    try {
+      const { sql, filename } = await this.backupService.generateBackup(
+        backupMode,
+        Number.isFinite(userId) ? userId : undefined,
+      );
+
+      res.setHeader('Content-Type', 'application/sql');
+      res.setHeader('Content-Disposition', `attachment; filename="${filename}"`);
+      res.send(sql);
+    } catch (err: any) {
+      res.status(500).json({
+        success: false,
+        message: err?.message ?? 'Failed to generate backup',
+      });
+    }
   }
 
   /**
@@ -93,5 +102,52 @@ export class DatabaseBackupController {
 
     const result = await this.backupService.importSql(sql);
     return result;
+  }
+
+  /**
+   * POST /database-backup/setup-schema
+   * Public route — initializes the database schema from the built-in SQL file.
+   * Only works if the database is blank. Returns immediately and runs in background.
+   */
+  @Post('setup-schema')
+  async setupSchema() {
+    const isBlank = await this.backupService.isDatabaseBlank();
+    if (!isBlank) {
+      throw new BadRequestException('Database is not empty. Schema setup is only allowed on a blank database.');
+    }
+
+    // Start migration in background
+    this.backupService.startSchemaSetup();
+
+    return { success: true, message: 'Schema initialization started.' };
+  }
+
+  /**
+   * GET /database-backup/setup-schema/status
+   * Public route — returns the current progress of schema initialization.
+   */
+  @Get('setup-schema/status')
+  getSetupStatus() {
+    return this.backupService.getSetupProgress();
+  }
+
+  /**
+   * POST /database-backup/setup-admin
+   * Public route — creates the first admin user.
+   * Only works if no users exist in the database.
+   */
+  @Post('setup-admin')
+  async setupAdmin(
+    @Body() body: { fullName: string; username: string; password: string; email?: string },
+  ) {
+    if (!body.fullName?.trim() || !body.username?.trim() || !body.password?.trim()) {
+      throw new BadRequestException('Full name, username, and password are required.');
+    }
+
+    if (body.password.length < 6) {
+      throw new BadRequestException('Password must be at least 6 characters.');
+    }
+
+    return this.backupService.createFirstAdmin(body);
   }
 }

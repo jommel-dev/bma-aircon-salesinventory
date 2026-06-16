@@ -11,6 +11,7 @@ import { PurchaseOrderComponent } from './pages/purchase-order/purchase-order.co
 import { ScheduleTodaySalesOrderComponent } from './pages/schedule-today-sales-order/schedule-today-sales-order.component';
 import { InventoryComponent } from './pages/inventory/inventory.component';
 import { QuotationComponent } from './pages/quotation/quotation.component';
+import { QuotationFormPageComponent } from './pages/quotation/quotation-form/quotation-form-page.component';
 import { SalesOrderMaterialsComponent } from './pages/sales-order-materials/sales-order-materials.component';
 import { SalesOrderMaterialFormPageComponent } from './pages/sales-order-materials/sales-order-material-form/sales-order-material-form-page.component';
 import { PoMaterialsListComponent } from './pages/purchase-order-materials/po-materials-list/po-materials-list.component';
@@ -19,6 +20,7 @@ import { SettingsComponent } from './pages/settings/settings.component';
 import { AccountingComponent } from './pages/accounting/accounting.component';
 import { ProjectsComponent } from './pages/projects/projects.component';
 import { PayrollComponent } from './payroll/payroll.component';
+import { SetupComponent } from './pages/setup/setup.component';
 
 
 export const routes: Routes = [
@@ -191,6 +193,26 @@ export const routes: Routes = [
         title: 'Quotation',
       },
       {
+        path: 'quotation/create',
+        component: QuotationFormPageComponent,
+        canActivate: [rbacGuard],
+        data: {
+          menu: 'quotation',
+          permission: 'canCreate',
+        },
+        title: 'New Quotation',
+      },
+      {
+        path: 'quotation/edit/:id',
+        component: QuotationFormPageComponent,
+        canActivate: [rbacGuard],
+        data: {
+          menu: 'quotation',
+          permission: 'canUpdate',
+        },
+        title: 'Edit Quotation',
+      },
+      {
         path: 'user-management',
         component: UserManagementComponent,
         canActivate: [rbacGuard],
@@ -219,6 +241,12 @@ export const routes: Routes = [
     canActivate: [guestOnlyGuard],
     canMatch: [guestOnlyMatchGuard],
     title:'Login'
+  },
+  // system setup (public, no auth required)
+  {
+    path: 'setup',
+    component: SetupComponent,
+    title: 'System Setup',
   },
   // error pages
   {

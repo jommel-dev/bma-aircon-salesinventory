@@ -7,11 +7,11 @@ export interface PoLineItem {
   description: string;
   itemCode: string | null;
   unit: string;
-  cost: number;       // material unit_price (admin-only display)
-  rate: number;       // editable unit price
-  discount: number;   // editable discount amount per unit
+  cost: number;       // editable purchase cost per unit
+  rate: number;       // sell price (display only, from material)
+  discount: number;   // not used in PO, kept for compatibility
   qty: number;        // editable quantity
-  total: number;      // computed: max(rate - discount, 0) * qty
+  total: number;      // computed: cost * qty
 }
 
 @Component({
@@ -39,35 +39,32 @@ export class PoItemsTableComponent {
   // ─── Validation ─────────────────────────────────────────────────────────────
 
   /**
-   * Validates and applies a new Rate value for a line item.
-   * Rate must be numeric, 0.01–999999.99, max 2 decimal places.
-   * Rejects invalid input and retains previous valid value.
+   * Validates and applies a new Cost value for a line item.
+   * Cost must be numeric, 0.01–999999.99, max 2 decimal places.
    */
-  onRateChange(index: number, value: string): void {
+  onCostChange(index: number, value: string): void {
     const parsed = parseFloat(value);
     if (isNaN(parsed) || parsed < 0.01 || parsed > 999999.99) {
       return;
     }
 
-    // Check max 2 decimal places
     const decimalParts = value.split('.');
     if (decimalParts.length === 2 && decimalParts[1].length > 2) {
       return;
     }
 
-    const rate = Math.round(parsed * 100) / 100;
+    const cost = Math.round(parsed * 100) / 100;
     const item = this.items[index];
-    item.rate = rate;
-    item.total = this.calculateTotal(rate, item.discount, item.qty);
+    item.cost = cost;
+    item.total = this.calculateTotal(cost, item.qty);
     this.itemChanged.emit({ index, item: { ...item } });
   }
 
   /**
-   * Validates and applies a new Discount value for a line item.
-   * Discount must be numeric, 0–999999.99, max 2 decimal places.
-   * Rejects invalid input and retains previous valid value.
+   * Validates and applies a new Rate (SRP/Sell Price) value for a line item.
+   * Rate must be numeric, 0–999999.99, max 2 decimal places.
    */
-  onDiscountChange(index: number, value: string): void {
+  onRateChange(index: number, value: string): void {
     const parsed = parseFloat(value);
     if (isNaN(parsed) || parsed < 0 || parsed > 999999.99) {
       return;
@@ -78,17 +75,15 @@ export class PoItemsTableComponent {
       return;
     }
 
-    const discount = Math.round(parsed * 100) / 100;
+    const rate = Math.round(parsed * 100) / 100;
     const item = this.items[index];
-    item.discount = discount;
-    item.total = this.calculateTotal(item.rate, discount, item.qty);
+    item.rate = rate;
     this.itemChanged.emit({ index, item: { ...item } });
   }
 
   /**
    * Validates and applies a new QTY value for a line item.
    * QTY must be an integer, 1–99999.
-   * Rejects invalid input and retains previous valid value.
    */
   onQtyChange(index: number, value: string): void {
     const parsed = parseInt(value, 10);
@@ -96,14 +91,13 @@ export class PoItemsTableComponent {
       return;
     }
 
-    // Must be a whole number (reject decimals like "1.5")
     if (String(parsed) !== value.trim()) {
       return;
     }
 
     const item = this.items[index];
     item.qty = parsed;
-    item.total = this.calculateTotal(item.rate, item.discount, parsed);
+    item.total = this.calculateTotal(item.cost, parsed);
     this.itemChanged.emit({ index, item: { ...item } });
   }
 
@@ -117,24 +111,24 @@ export class PoItemsTableComponent {
   // ─── Computed Values ────────────────────────────────────────────────────────
 
   /**
-   * Calculate total for a single row: max(Rate - Discount, 0) × QTY rounded to 2 decimal places.
+   * Calculate total for a single row: Cost × QTY rounded to 2 decimal places.
    */
-  calculateTotal(rate: number, discount: number, qty: number): number {
-    return Math.round(Math.max(rate - discount, 0) * qty * 100) / 100;
+  calculateTotal(cost: number, qty: number): number {
+    return Math.round(cost * qty * 100) / 100;
   }
 
   /**
-   * Grand Total: sum of all line item totals. Returns 0 when empty.
+   * Grand Total: sum of all line item totals.
    */
   get grandTotal(): number {
     if (this.items.length === 0) return 0;
     return Math.round(
-      this.items.reduce((sum, item) => sum + (item.total ?? 0), 0) * 100,
+      this.items.reduce((sum, item) => sum + this.calculateTotal(item.cost, item.qty), 0) * 100,
     ) / 100;
   }
 
   /**
-   * Total QTY: sum of all line item quantities. Returns 0 when empty.
+   * Total QTY: sum of all line item quantities.
    */
   get totalQty(): number {
     if (this.items.length === 0) return 0;
