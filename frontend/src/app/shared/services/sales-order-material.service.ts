@@ -335,4 +335,27 @@ export class SalesOrderMaterialService {
     );
     return response.data;
   }
+
+  // ─── Bulk Void & Unvoid ─────────────────────────────────────────────────────
+
+  /**
+   * Void multiple material sales orders with a reason.
+   */
+  async bulkVoidOrders(ids: number[], reason: string): Promise<{ success: boolean; message: string; voided: number; skipped: number }> {
+    const response = await apiClient.post<{ success: boolean; message: string; voided: number; skipped: number }>(
+      '/sales-order/materials/bulk-void',
+      { ids, reason },
+    );
+    return response.data;
+  }
+
+  /**
+   * Unvoid a voided material sales order (restore to complete, re-deduct stock).
+   */
+  async unvoidOrder(id: number): Promise<{ success: boolean; message: string }> {
+    const response = await apiClient.post<{ success: boolean; message: string }>(
+      `/sales-order/materials/${id}/unvoid`,
+    );
+    return response.data;
+  }
 }

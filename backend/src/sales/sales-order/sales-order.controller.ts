@@ -178,6 +178,31 @@ export class SalesOrderController {
     return this.salesOrderService.updateMaterialSalesOrder(+id, dto);
   }
 
+  @Post('materials/bulk-void')
+  bulkVoidMaterialSalesOrders(
+    @Body() body: { ids: number[]; reason?: string },
+    @Req() request: { user?: Record<string, unknown> },
+  ) {
+    const userId = Number(request.user?.sub);
+    return this.salesOrderService.bulkVoidMaterialSalesOrders(
+      body.ids ?? [],
+      body.reason ?? '',
+      Number.isFinite(userId) ? userId : undefined,
+    );
+  }
+
+  @Post('materials/:id/unvoid')
+  unvoidMaterialSalesOrder(
+    @Param('id') id: string,
+    @Req() request: { user?: Record<string, unknown> },
+  ) {
+    const userId = Number(request.user?.sub);
+    return this.salesOrderService.unvoidMaterialSalesOrder(
+      +id,
+      Number.isFinite(userId) ? userId : undefined,
+    );
+  }
+
   @Get('deliveries')
   getDeliveries(
     @Query() query: ListSalesOrderQueryDto,

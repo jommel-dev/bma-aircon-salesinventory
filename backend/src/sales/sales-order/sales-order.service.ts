@@ -7749,6 +7749,171 @@ export class SalesOrderService {
     }
   }
 
+  // ─── Bulk Void Material Sales Orders ────────────────────────────────────────
+
+  async bulkVoidMaterialSalesOrders(
+    ids: number[],
+    reason: string,
+    userId?: number,
+  ): Promise<{ success: boolean; message: string; voided: number; skipped: number }> {
+    if (!Array.isArray(ids) || ids.length === 0) {
+      return { success: false, message: 'No order IDs provided', voided: 0, skipped: 0 };
+    }
+
+    let voided = 0;
+    let skipped = 0;
+
+    for (const id of ids) {
+      if (!Number.isFinite(id) || id <= 0) {
+        skipped++;
+        continue;
+      }
+
+      try {
+        // Fetch current order
+        const orderResult = await this.databaseService.query<{ status: string }>(
+          `SELECT status FROM tblsales_order WHERE id = $1 LIMIT 1`,
+          [id],
+        );
+
+        if (orderResult.rowCount === 0) {
+          skipped++;
+          continue;
+        }
+
+        const currentStatus = String(orderResult.rows[0].status ?? '').trim().toLowerCase();
+
+        // Only void complete/completed orders
+        if (currentStatus !== 'complete' && currentStatus !== 'completed') {
+          skipped++;
+          continue;
+        }
+
+        // Return stock (all voided orders were complete)
+        const items = await this.databaseService.query<{ material_id: number | null; qty: number; is_non_inventory: boolean }>(
+          `SELECT material_id, qty, is_non_inventory FROM tblsales_order_items WHERE sales_order_id = $1`,
+          [id],
+        );
+
+          for (const item of items.rows) {
+            const materialId = Number(item.material_id);
+            const qty = Number(item.qty ?? 0);
+            if (!materialId || materialId <= 0 || qty <= 0 || item.is_non_inventory) continue;
+
+            // Return stock
+            await this.databaseService.query(
+              `UPDATE tblmaterials SET on_hand_stock = COALESCE(on_hand_stock, 0) + $1, updated_at = NOW() WHERE id = $2`,
+              [qty, materialId],
+            );
+
+            // Record return movement
+            try {
+              await this.materialStockService.recordMovement({
+                materialId,
+                movementType: 'RETURN',
+                qty,
+                sourceType: 'SO',
+                sourceId: id,
+                sourceLineKey: `SO-${id}-MAT-${materialId}-VOID-${Date.now()}`,
+                statusSnapshot: 'voided',
+                remarks: `Stock returned: SO #${id} voided. Reason: ${reason || 'No reason provided'}`,
+              });
+            } catch {
+              // Non-fatal
+            }
+          }
+
+        // Update status to voided with reason in remarks
+        const voidRemarks = reason ? `[VOIDED] ${reason}` : '[VOIDED]';
+        await this.databaseService.query(
+          `UPDATE tblsales_order
+           SET status = 'voided', remarks = CONCAT(COALESCE(remarks, ''), $1)
+           WHERE id = $2`,
+          ['\n' + voidRemarks, id],
+        );
+
+        voided++;
+      } catch {
+        skipped++;
+      }
+    }
+
+    return {
+      success: true,
+      message: `${voided} order(s) voided, ${skipped} skipped.`,
+      voided,
+      skipped,
+    };
+  }
+
+  // ─── Unvoid Material Sales Order ────────────────────────────────────────────
+
+  async unvoidMaterialSalesOrder(
+    id: number,
+    userId?: number,
+  ): Promise<{ success: boolean; message: string }> {
+    if (!Number.isFinite(id) || id <= 0) {
+      return { success: false, message: 'Invalid order ID' };
+    }
+
+    // Fetch current order
+    const orderResult = await this.databaseService.query<{ status: string }>(
+      `SELECT status FROM tblsales_order WHERE id = $1 LIMIT 1`,
+      [id],
+    );
+
+    if (orderResult.rowCount === 0) {
+      return { success: false, message: 'Sales order not found' };
+    }
+
+    const currentStatus = String(orderResult.rows[0].status ?? '').trim().toLowerCase();
+    if (currentStatus !== 'voided') {
+      return { success: false, message: `Order is not voided (current status: ${currentStatus})` };
+    }
+
+    // Deduct stock again (restore to complete means items are sold again)
+    const items = await this.databaseService.query<{ material_id: number | null; qty: number; is_non_inventory: boolean }>(
+      `SELECT material_id, qty, is_non_inventory FROM tblsales_order_items WHERE sales_order_id = $1`,
+      [id],
+    );
+
+    for (const item of items.rows) {
+      const materialId = Number(item.material_id);
+      const qty = Number(item.qty ?? 0);
+      if (!materialId || materialId <= 0 || qty <= 0 || item.is_non_inventory) continue;
+
+      // Deduct stock
+      await this.databaseService.query(
+        `UPDATE tblmaterials SET on_hand_stock = GREATEST(COALESCE(on_hand_stock, 0) - $1, 0), updated_at = NOW() WHERE id = $2`,
+        [qty, materialId],
+      );
+
+      // Record OUT movement
+      try {
+        await this.materialStockService.recordMovement({
+          materialId,
+          movementType: 'OUT',
+          qty,
+          sourceType: 'SO',
+          sourceId: id,
+          sourceLineKey: `SO-${id}-MAT-${materialId}-UNVOID-${Date.now()}`,
+          statusSnapshot: 'complete',
+          remarks: `Stock deducted: SO #${id} restored from voided to complete`,
+        });
+      } catch {
+        // Non-fatal
+      }
+    }
+
+    // Update status back to complete
+    await this.databaseService.query(
+      `UPDATE tblsales_order SET status = 'complete' WHERE id = $1`,
+      [id],
+    );
+
+    return { success: true, message: 'Order restored to complete. Stock has been deducted.' };
+  }
+
   private getMaterialPaymentAutoStatus(method: string, termsDueDate?: string | null, postDated?: string | null): string {
     const normalizedMethod = (method ?? '').trim().toLowerCase();
 

@@ -3872,19 +3872,6 @@ export class PurchaseService {
                 if (!materialId) {
                   throw new Error('Failed to create/retrieve material id for ACM item');
                 }
-
-                // Record price history when PO updates material cost
-                if (materialId && (unitPrice > 0 || sellPrice > 0)) {
-                  try {
-                    await client.query(
-                      `INSERT INTO tblmaterial_price_history (material_id, unit_price, sell_price, created_by)
-                       VALUES ($1, $2, $3, $4)`,
-                      [materialId, unitPrice, sellPrice, userId ?? null],
-                    );
-                  } catch {
-                    // Non-fatal — don't block PO if price history fails
-                  }
-                }
               }
 
               resolvedProductOrPartOrMaterialId = materialId;
@@ -4070,13 +4057,33 @@ export class PurchaseService {
 
           // ─── ACM Stock Adjustment: compare old vs new quantities and adjust stock ───
           if (poType === 'ACM' && oldMaterialQtys.size > 0) {
-            // Collect new quantities per materialId
+            // Read NEW quantities from the DB (after items were re-inserted above)
+            const newItemsResult = await client.query<{ material_id: string; quantity: string; unit_price: string; sell_price: string }>(
+              `SELECT
+                 COALESCE(to_jsonb(t)->>'material_id', to_jsonb(t)->>'productId', to_jsonb(t)->>'product_id')::text AS material_id,
+                 COALESCE(to_jsonb(t)->>'quantity', to_jsonb(t)->>'totalSetQty', to_jsonb(t)->>'total_set_qty', '0')::text AS quantity,
+                 COALESCE(to_jsonb(t)->>'unitPrice', to_jsonb(t)->>'unit_price', '0')::text AS unit_price,
+                 COALESCE(to_jsonb(t)->>'sellPrice', to_jsonb(t)->>'sell_price', '0')::text AS sell_price
+               FROM ${itemsTable} t
+               WHERE COALESCE(
+                 to_jsonb(t)->>'purchaseId',
+                 to_jsonb(t)->>'purchase_id',
+                 to_jsonb(t)->>'po_id'
+               ) = $1`,
+              [String(id)],
+            );
+
             const newMaterialQtys = new Map<number, number>();
-            for (const item of productItems) {
-              const matId = this.toOptionalNumber((item as any).materialId ?? (item as any).productId ?? (item as any).material_id) ?? 0;
-              const qty = this.toOptionalNumber((item as any).totalSetQty ?? (item as any).quantity ?? (item as any).qty) ?? 0;
-              if (matId > 0 && qty > 0) {
+            const newMaterialPrices = new Map<number, { unitPrice: number; sellPrice: number }>();
+            for (const row of newItemsResult.rows) {
+              const matId = Number(row.material_id);
+              const qty = Number(row.quantity);
+              if (matId > 0) {
                 newMaterialQtys.set(matId, (newMaterialQtys.get(matId) ?? 0) + qty);
+                newMaterialPrices.set(matId, {
+                  unitPrice: Number(row.unit_price) || 0,
+                  sellPrice: Number(row.sell_price) || 0,
+                });
               }
             }
 
@@ -4087,20 +4094,16 @@ export class PurchaseService {
               const newQty = newMaterialQtys.get(matId) ?? 0;
               const diff = newQty - oldQty;
 
+              // Skip if no quantity change
               if (diff === 0) continue;
 
               // Update on_hand_stock
-              if (diff > 0) {
-                await client.query(
-                  `UPDATE tblmaterials SET on_hand_stock = COALESCE(on_hand_stock, 0) + $1, updated_at = NOW() WHERE id = $2`,
-                  [diff, matId],
-                );
-              } else {
-                await client.query(
-                  `UPDATE tblmaterials SET on_hand_stock = GREATEST(COALESCE(on_hand_stock, 0) + $1, 0), updated_at = NOW() WHERE id = $2`,
-                  [diff, matId],
-                );
-              }
+              await client.query(
+                `UPDATE tblmaterials
+                 SET on_hand_stock = GREATEST(COALESCE(on_hand_stock, 0) + $1, 0), updated_at = NOW()
+                 WHERE id = $2`,
+                [diff, matId],
+              );
 
               // Record stock movement for the adjustment
               try {
@@ -4117,6 +4120,58 @@ export class PurchaseService {
               } catch (moveErr: any) {
                 if (!moveErr?.message?.includes('unique') && !moveErr?.message?.includes('duplicate')) {
                   console.warn('PO stock adjustment movement error:', moveErr?.message?.slice(0, 200));
+                }
+              }
+            }
+
+            // Update material prices only if they changed
+            for (const matId of newMaterialQtys.keys()) {
+              const prices = newMaterialPrices.get(matId);
+              if (!prices) continue;
+
+              // Get current material prices
+              const currentPrices = await client.query<{ unit_price: string; sell_price: string }>(
+                `SELECT unit_price::text, sell_price::text FROM tblmaterials WHERE id = $1`,
+                [matId],
+              );
+              if (currentPrices.rows.length === 0) continue;
+
+              const currentUnitPrice = Number(currentPrices.rows[0].unit_price) || 0;
+              const currentSellPrice = Number(currentPrices.rows[0].sell_price) || 0;
+              const newUnitPrice = prices.unitPrice;
+              const newSellPrice = prices.sellPrice;
+
+              // Only update and record history if prices actually changed
+              if (newUnitPrice !== currentUnitPrice || newSellPrice !== currentSellPrice) {
+                const updateParts: string[] = ['updated_at = NOW()'];
+                const updateVals: unknown[] = [];
+
+                if (newUnitPrice > 0 && newUnitPrice !== currentUnitPrice) {
+                  updateVals.push(newUnitPrice);
+                  updateParts.push(`unit_price = $${updateVals.length}`);
+                }
+                if (newSellPrice > 0 && newSellPrice !== currentSellPrice) {
+                  updateVals.push(newSellPrice);
+                  updateParts.push(`sell_price = $${updateVals.length}`);
+                }
+
+                if (updateVals.length > 0) {
+                  updateVals.push(matId);
+                  await client.query(
+                    `UPDATE tblmaterials SET ${updateParts.join(', ')} WHERE id = $${updateVals.length}`,
+                    updateVals,
+                  );
+
+                  // Record price history
+                  try {
+                    await client.query(
+                      `INSERT INTO tblmaterial_price_history (material_id, unit_price, sell_price, created_by)
+                       VALUES ($1, $2, $3, $4)`,
+                      [matId, newUnitPrice || currentUnitPrice, newSellPrice || currentSellPrice, userId ?? null],
+                    );
+                  } catch {
+                    // Non-fatal
+                  }
                 }
               }
             }

@@ -480,6 +480,184 @@ export class SalesOrderMaterialsComponent implements OnInit {
     }
   }
 
+  // ─── Multi-Select & Bulk Void ─────────────────────────────────────────────
+
+  selectedOrderIds = new Set<number>();
+  isBulkVoidDialogOpen = false;
+  bulkVoidReason = '';
+  bulkVoidPassword = '';
+  isBulkVoiding = false;
+  bulkVoidError = '';
+
+  toggleOrderSelection(orderId: number): void {
+    if (this.selectedOrderIds.has(orderId)) {
+      this.selectedOrderIds.delete(orderId);
+    } else {
+      this.selectedOrderIds.add(orderId);
+    }
+  }
+
+  isOrderSelected(orderId: number): boolean {
+    return this.selectedOrderIds.has(orderId);
+  }
+
+  toggleSelectAll(): void {
+    if (this.selectedOrderIds.size === this.orders.length) {
+      this.selectedOrderIds.clear();
+    } else {
+      for (const order of this.orders) {
+        this.selectedOrderIds.add(order.id);
+      }
+    }
+  }
+
+  get isAllSelected(): boolean {
+    return this.orders.length > 0 && this.selectedOrderIds.size === this.orders.length;
+  }
+
+  openBulkVoidDialog(): void {
+    if (this.selectedOrderIds.size === 0) return;
+    this.bulkVoidReason = '';
+    this.bulkVoidPassword = '';
+    this.bulkVoidError = '';
+    this.isBulkVoiding = false;
+    this.isBulkVoidDialogOpen = true;
+  }
+
+  closeBulkVoidDialog(): void {
+    this.isBulkVoidDialogOpen = false;
+    this.bulkVoidReason = '';
+    this.bulkVoidPassword = '';
+    this.bulkVoidError = '';
+  }
+
+  async confirmBulkVoid(): Promise<void> {
+    if (this.isBulkVoiding || this.selectedOrderIds.size === 0) return;
+    if (!this.bulkVoidPassword) {
+      this.bulkVoidError = 'Password is required to void orders.';
+      return;
+    }
+
+    this.isBulkVoiding = true;
+    this.bulkVoidError = '';
+
+    try {
+      // Verify password first
+      const username = this.rbacService.getPayload()?.username ?? '';
+      const loginResult = await this.authService.login(username, this.bulkVoidPassword);
+
+      if (!loginResult.success) {
+        this.bulkVoidError = 'Incorrect password. Please try again.';
+        this.isBulkVoiding = false;
+        return;
+      }
+
+      // Password verified — proceed with voiding
+      const result = await this.salesOrderMaterialService.bulkVoidOrders(
+        [...this.selectedOrderIds],
+        this.bulkVoidReason.trim(),
+      );
+
+      if (result.success) {
+        this.notificationService.success('Success', result.message);
+        this.selectedOrderIds.clear();
+        this.closeBulkVoidDialog();
+        await this.loadOrders();
+      } else {
+        this.bulkVoidError = result.message;
+      }
+    } catch (err: any) {
+      this.bulkVoidError = err?.response?.data?.message ?? err?.message ?? 'Failed to void orders.';
+    } finally {
+      this.isBulkVoiding = false;
+    }
+  }
+
+  // ─── Unvoid ──────────────────────────────────────────────────────────────────
+
+  isBulkUnvoiding = false;
+  isBulkUnvoidDialogOpen = false;
+  bulkUnvoidPassword = '';
+  bulkUnvoidError = '';
+
+  async unvoidOrder(orderId: number): Promise<void> {
+    try {
+      const result = await this.salesOrderMaterialService.unvoidOrder(orderId);
+      if (result.success) {
+        this.notificationService.success('Success', result.message);
+        await this.loadOrders();
+      } else {
+        this.notificationService.error('Error', result.message);
+      }
+    } catch (err: any) {
+      const message = err?.response?.data?.message ?? err?.message ?? 'Failed to unvoid order.';
+      this.notificationService.error('Error', message);
+    }
+  }
+
+  openBulkUnvoidDialog(): void {
+    if (this.selectedOrderIds.size === 0) return;
+    this.bulkUnvoidPassword = '';
+    this.bulkUnvoidError = '';
+    this.isBulkUnvoiding = false;
+    this.isBulkUnvoidDialogOpen = true;
+  }
+
+  closeBulkUnvoidDialog(): void {
+    this.isBulkUnvoidDialogOpen = false;
+    this.bulkUnvoidPassword = '';
+    this.bulkUnvoidError = '';
+  }
+
+  async confirmBulkUnvoid(): Promise<void> {
+    if (this.isBulkUnvoiding || this.selectedOrderIds.size === 0) return;
+    if (!this.bulkUnvoidPassword) {
+      this.bulkUnvoidError = 'Password is required.';
+      return;
+    }
+
+    this.isBulkUnvoiding = true;
+    this.bulkUnvoidError = '';
+
+    try {
+      // Verify password first
+      const username = this.rbacService.getPayload()?.username ?? '';
+      const loginResult = await this.authService.login(username, this.bulkUnvoidPassword);
+
+      if (!loginResult.success) {
+        this.bulkUnvoidError = 'Incorrect password. Please try again.';
+        this.isBulkUnvoiding = false;
+        return;
+      }
+
+      // Password verified — proceed
+      let restored = 0;
+      let failed = 0;
+
+      for (const id of this.selectedOrderIds) {
+        try {
+          const result = await this.salesOrderMaterialService.unvoidOrder(id);
+          if (result.success) {
+            restored++;
+          } else {
+            failed++;
+          }
+        } catch {
+          failed++;
+        }
+      }
+
+      this.notificationService.success('Success', `${restored} order(s) restored.${failed > 0 ? ` ${failed} failed.` : ''}`);
+      this.selectedOrderIds.clear();
+      this.closeBulkUnvoidDialog();
+      await this.loadOrders();
+    } catch (err: any) {
+      this.bulkUnvoidError = err?.message ?? 'Failed to unvoid orders.';
+    } finally {
+      this.isBulkUnvoiding = false;
+    }
+  }
+
   // ─── Daily Sales Excel Report ─────────────────────────────────────────────
 
   async generateDailySalesExcel(): Promise<void> {
