@@ -3673,23 +3673,40 @@ export class PurchaseService {
           // ─── ACM Stock Adjustment: capture old quantities before deleting items ───
           const oldMaterialQtys = new Map<number, number>();
           if (poType === 'ACM' && (currentStatus === 'complete' || currentStatus === 'completed')) {
-            const oldItemsResult = await client.query<{ material_id: string; quantity: string }>(
-              `SELECT
-                 COALESCE(to_jsonb(t)->>'material_id', to_jsonb(t)->>'productId', to_jsonb(t)->>'product_id')::text AS material_id,
-                 COALESCE(to_jsonb(t)->>'quantity', to_jsonb(t)->>'totalSetQty', to_jsonb(t)->>'total_set_qty', '0')::text AS quantity
-               FROM ${itemsTable} t
-               WHERE COALESCE(
-                 to_jsonb(t)->>'purchaseId',
-                 to_jsonb(t)->>'purchase_id',
-                 to_jsonb(t)->>'po_id'
-               ) = $1`,
-              [String(id)],
-            );
-            for (const row of oldItemsResult.rows) {
-              const matId = Number(row.material_id);
-              const qty = Number(row.quantity);
-              if (matId > 0 && qty > 0) {
-                oldMaterialQtys.set(matId, (oldMaterialQtys.get(matId) ?? 0) + qty);
+            try {
+              const oldItemsResult = await client.query<{ material_id: string; quantity: string }>(
+                `SELECT material_id::text AS material_id, COALESCE(quantity, 0)::text AS quantity
+                 FROM ${itemsTable}
+                 WHERE purchase_id = $1 OR
+                   COALESCE(to_jsonb(${itemsTable})->>'purchaseId', to_jsonb(${itemsTable})->>'purchase_id', to_jsonb(${itemsTable})->>'po_id') = $2`,
+                [id, String(id)],
+              );
+              for (const row of oldItemsResult.rows) {
+                const matId = Number(row.material_id);
+                const qty = Number(row.quantity);
+                if (matId > 0 && qty > 0) {
+                  oldMaterialQtys.set(matId, (oldMaterialQtys.get(matId) ?? 0) + qty);
+                }
+              }
+            } catch (oldItemsErr: any) {
+              // If the query fails, try a simpler approach
+              try {
+                const fallbackResult = await client.query<{ material_id: string; quantity: string }>(
+                  `SELECT material_id::text, COALESCE(quantity, 0)::text AS quantity
+                   FROM tbltransaction_material_items
+                   WHERE purchase_id = $1`,
+                  [id],
+                );
+                for (const row of fallbackResult.rows) {
+                  const matId = Number(row.material_id);
+                  const qty = Number(row.quantity);
+                  if (matId > 0 && qty > 0) {
+                    oldMaterialQtys.set(matId, (oldMaterialQtys.get(matId) ?? 0) + qty);
+                  }
+                }
+              } catch {
+                // Can't capture old quantities — skip adjustment
+                console.warn('Could not capture old PO quantities for adjustment');
               }
             }
           }
@@ -4058,24 +4075,23 @@ export class PurchaseService {
           // ─── ACM Stock Adjustment: compare old vs new quantities and adjust stock ───
           if (poType === 'ACM' && oldMaterialQtys.size > 0) {
             // Read NEW quantities from the DB (after items were re-inserted above)
-            const newItemsResult = await client.query<{ material_id: string; quantity: string; unit_price: string; sell_price: string }>(
-              `SELECT
-                 COALESCE(to_jsonb(t)->>'material_id', to_jsonb(t)->>'productId', to_jsonb(t)->>'product_id')::text AS material_id,
-                 COALESCE(to_jsonb(t)->>'quantity', to_jsonb(t)->>'totalSetQty', to_jsonb(t)->>'total_set_qty', '0')::text AS quantity,
-                 COALESCE(to_jsonb(t)->>'unitPrice', to_jsonb(t)->>'unit_price', '0')::text AS unit_price,
-                 COALESCE(to_jsonb(t)->>'sellPrice', to_jsonb(t)->>'sell_price', '0')::text AS sell_price
-               FROM ${itemsTable} t
-               WHERE COALESCE(
-                 to_jsonb(t)->>'purchaseId',
-                 to_jsonb(t)->>'purchase_id',
-                 to_jsonb(t)->>'po_id'
-               ) = $1`,
-              [String(id)],
-            );
+            let newItemsRows: Array<{ material_id: string; quantity: string; unit_price: string; sell_price: string }> = [];
+            try {
+              const newItemsResult = await client.query<{ material_id: string; quantity: string; unit_price: string; sell_price: string }>(
+                `SELECT material_id::text, COALESCE(quantity, 0)::text AS quantity,
+                   COALESCE(unit_price, 0)::text AS unit_price, COALESCE(sell_price, 0)::text AS sell_price
+                 FROM tbltransaction_material_items
+                 WHERE purchase_id = $1`,
+                [id],
+              );
+              newItemsRows = newItemsResult.rows;
+            } catch {
+              // If query fails, skip adjustment
+            }
 
             const newMaterialQtys = new Map<number, number>();
             const newMaterialPrices = new Map<number, { unitPrice: number; sellPrice: number }>();
-            for (const row of newItemsResult.rows) {
+            for (const row of newItemsRows) {
               const matId = Number(row.material_id);
               const qty = Number(row.quantity);
               if (matId > 0) {

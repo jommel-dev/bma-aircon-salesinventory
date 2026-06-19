@@ -22,11 +22,6 @@ export interface DashboardOpsItem {
   level: 'normal' | 'warning' | 'critical';
 }
 
-export interface DashboardMarginItem {
-  label: string;
-  margin: number;
-}
-
 export interface DashboardActivityItem {
   time: string;
   text: string;
@@ -38,10 +33,10 @@ export interface DashboardOverview {
   topKpis: DashboardKpiCard[];
   operations: DashboardOpsItem[];
   salesSummary: DashboardKpiCard[];
-  topCustomers: Array<{ name: string; orders: number; balance: string }>;
-  topCapacities: Array<{ label: string; units: number; sellThrough: number }>;
-  marginByBrand: DashboardMarginItem[];
-  marginByVendor: DashboardMarginItem[];
+  topCustomers: Array<{ rank: number; name: string; totalAmount: number; orderCount: number }>;
+  topSuppliers: Array<{ rank: number; name: string; totalAmount: number; poCount: number }>;
+  topEmployees: Array<{ rank: number; name: string; totalSales: number; orderCount: number }>;
+  netoData: { gross: number; discounts: number; returns: number; neto: number; outstanding: number };
   activityFeed: DashboardActivityItem[];
   todayFocus: string;
 }

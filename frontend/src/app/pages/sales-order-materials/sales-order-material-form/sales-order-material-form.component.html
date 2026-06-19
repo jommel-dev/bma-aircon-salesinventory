@@ -821,3 +821,32 @@
     </div>
   </div>
 }
+
+<!-- Close Confirmation Dialog -->
+@if (isCloseConfirmOpen) {
+  <div class="fixed inset-0 z-[100015] flex items-center justify-center">
+    <div class="absolute inset-0 bg-black/50" (click)="cancelClose()"></div>
+    <div class="relative z-10 w-full max-w-sm rounded-2xl bg-white p-6 shadow-xl dark:bg-gray-900">
+      <h3 class="text-lg font-semibold text-gray-800 dark:text-white">Unsaved Work</h3>
+      <p class="mt-2 text-sm text-gray-600 dark:text-gray-300">
+        You have unsaved items. Would you like to keep the draft for later or discard it?
+      </p>
+      <div class="mt-5 flex items-center justify-end gap-3">
+        <button
+          type="button"
+          (click)="confirmCloseAndClear()"
+          class="rounded-lg border border-red-300 bg-red-50 px-4 py-2 text-sm font-medium text-red-700 transition hover:bg-red-100 dark:border-red-500/40 dark:bg-red-900/20 dark:text-red-300"
+        >
+          Discard Draft
+        </button>
+        <button
+          type="button"
+          (click)="confirmCloseAndKeep()"
+          class="rounded-lg bg-brand-600 px-4 py-2 text-sm font-medium text-white transition hover:bg-brand-700"
+        >
+          Keep Draft
+        </button>
+      </div>
+    </div>
+  </div>
+}

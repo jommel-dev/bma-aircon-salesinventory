@@ -4,7 +4,6 @@ import { FormsModule } from '@angular/forms';
 import {
   DashboardActivityItem,
   DashboardKpiCard,
-  DashboardMarginItem,
   DashboardOperationDetailMode,
   DashboardOpsItem,
   DashboardReceivableVerificationMode,
@@ -12,6 +11,7 @@ import {
   DashboardSettlementMode,
   DashboardService,
 } from '../../../shared/services/dashboard.service';
+import { RbacService } from '../../../shared/services/rbac.service';
 
 @Component({
   selector: 'app-ecommerce',
@@ -23,19 +23,23 @@ export class EcommerceComponent implements OnInit {
   dashboardError = '';
   todayFocus = '-';
   lastUpdatedLabel = '—';
+  isAdminUser = false;
+  isSuperAdmin = false;
+
+  netoData = { gross: 0, discounts: 0, returns: 0, neto: 0, outstanding: 0 };
 
   topKpis: DashboardKpiCard[] = [
-    { label: 'In-Stock Units', value: '0', change: '0%', trend: 'up' },
-    { label: 'Open Purchase Orders', value: '0', change: '0%', trend: 'up' },
-    { label: 'Dispatch Today', value: '0', change: '0%', trend: 'up' },
-    { label: 'Install Queue', value: '0', change: '0%', trend: 'down' },
+    { label: 'Active Pending SO', value: '0', change: '0', trend: 'up' },
+    { label: 'Completed SO', value: '0', change: '0', trend: 'up' },
+    { label: 'Draft / Quotation', value: '0', change: '0', trend: 'up' },
+    { label: 'Total Sales Orders', value: '0', change: '0', trend: 'up' },
   ];
 
   operations: DashboardOpsItem[] = [
-    { label: 'Receiving Today', value: '-', hint: '-', level: 'normal' },
-    { label: 'For Dispatch', value: '-', hint: '-', level: 'warning' },
-    { label: 'For Installation', value: '-', hint: '-', level: 'warning' },
-    { label: 'Stock Alerts', value: '-', hint: '-', level: 'critical' },
+    { label: 'Total Purchase Orders', value: '-', hint: '-', level: 'normal' },
+    { label: 'Total Credit Terms', value: '-', hint: '-', level: 'normal' },
+    { label: 'Total Paid POs', value: '-', hint: '-', level: 'normal' },
+    { label: 'Stock Alert', value: '-', hint: '-', level: 'normal' },
   ];
 
   salesSummary: DashboardKpiCard[] = [
@@ -45,32 +49,11 @@ export class EcommerceComponent implements OnInit {
     { label: 'Cheques', value: '0', change: '0%', trend: 'up' },
   ];
 
-  topCustomers = [
-    { name: '-', orders: 0, balance: 'PHP 0' },
-    { name: '-', orders: 0, balance: 'PHP 0' },
-    { name: '-', orders: 0, balance: 'PHP 0' },
-  ];
+  topCustomers: Array<{ rank: number; name: string; totalAmount: number; orderCount: number }> = [];
 
-  topCapacities = [
-    { label: '-', units: 0, sellThrough: 0 },
-    { label: '-', units: 0, sellThrough: 0 },
-    { label: '-', units: 0, sellThrough: 0 },
-    { label: '-', units: 0, sellThrough: 0 },
-  ];
+  topSuppliers: Array<{ rank: number; name: string; totalAmount: number; poCount: number }> = [];
 
-  marginByBrand: DashboardMarginItem[] = [
-    { label: '-', margin: 0 },
-    { label: '-', margin: 0 },
-    { label: '-', margin: 0 },
-    { label: '-', margin: 0 },
-  ];
-
-  marginByVendor: DashboardMarginItem[] = [
-    { label: '-', margin: 0 },
-    { label: '-', margin: 0 },
-    { label: '-', margin: 0 },
-    { label: '-', margin: 0 },
-  ];
+  topEmployees: Array<{ rank: number; name: string; totalSales: number; orderCount: number }> = [];
 
   activityFeed: DashboardActivityItem[] = [
     { time: '--:--', text: '-', status: 'received' },
@@ -113,9 +96,15 @@ export class EcommerceComponent implements OnInit {
     'stock-alerts',
   ];
 
-  constructor(private readonly dashboardService: DashboardService) {}
+  constructor(
+    private readonly dashboardService: DashboardService,
+    private readonly rbacService: RbacService,
+  ) {}
 
   ngOnInit(): void {
+    this.isAdminUser = this.rbacService.isAdminOrSuperAdmin();
+    this.isSuperAdmin = String(this.rbacService.getPayload()?.roleName ?? '').trim().toLowerCase() === 'superadmin'
+      || String(this.rbacService.getPayload()?.roleName ?? '').trim().toLowerCase() === 'super admin';
     void this.loadDashboardOverview();
   }
 
@@ -128,10 +117,10 @@ export class EcommerceComponent implements OnInit {
       this.topKpis = Array.isArray(payload.topKpis) && payload.topKpis.length > 0 ? payload.topKpis : this.topKpis;
       this.operations = Array.isArray(payload.operations) && payload.operations.length > 0 ? payload.operations : this.operations;
       this.salesSummary = Array.isArray(payload.salesSummary) && payload.salesSummary.length > 0 ? payload.salesSummary : this.salesSummary;
-      this.topCustomers = Array.isArray(payload.topCustomers) && payload.topCustomers.length > 0 ? payload.topCustomers : this.topCustomers;
-      this.topCapacities = Array.isArray(payload.topCapacities) && payload.topCapacities.length > 0 ? payload.topCapacities : this.topCapacities;
-      this.marginByBrand = Array.isArray(payload.marginByBrand) && payload.marginByBrand.length > 0 ? payload.marginByBrand : this.marginByBrand;
-      this.marginByVendor = Array.isArray(payload.marginByVendor) && payload.marginByVendor.length > 0 ? payload.marginByVendor : this.marginByVendor;
+      this.topCustomers = Array.isArray(payload.topCustomers) ? payload.topCustomers : this.topCustomers;
+      this.topSuppliers = Array.isArray(payload.topSuppliers) ? payload.topSuppliers : this.topSuppliers;
+      this.topEmployees = Array.isArray(payload.topEmployees) ? payload.topEmployees : this.topEmployees;
+      this.netoData = payload.netoData ?? this.netoData;
       this.activityFeed = Array.isArray(payload.activityFeed) && payload.activityFeed.length > 0 ? payload.activityFeed : this.activityFeed;
       this.todayFocus = String(payload.todayFocus ?? '').trim() || this.todayFocus;
       this.lastUpdatedLabel = this.formatDateTime(payload.generatedAt);

@@ -60,6 +60,32 @@
     }
   </section>
 
+  <!-- NETO Summary (Super Admin only) -->
+  @if (isSuperAdmin) {
+    <section class="grid grid-cols-1 gap-4 sm:grid-cols-2 xl:grid-cols-4">
+      <article class="rounded-2xl border border-gray-200 bg-white p-5 dark:border-gray-800 dark:bg-white/[0.03]">
+        <p class="text-xs font-medium uppercase tracking-wide text-gray-500 dark:text-gray-400">Gross Sales</p>
+        <p class="mt-2 text-2xl font-bold text-gray-800 dark:text-white/90">₱{{ netoData.gross | number:'1.2-2' }}</p>
+        <p class="mt-1 text-xs text-gray-400 dark:text-gray-500">Net + Outstanding</p>
+      </article>
+      <article class="rounded-2xl border border-green-200 bg-green-50/50 p-5 dark:border-green-800 dark:bg-green-900/20">
+        <p class="text-xs font-medium uppercase tracking-wide text-green-600 dark:text-green-400">Net (Neto)</p>
+        <p class="mt-2 text-2xl font-bold" [class]="netoData.neto >= 0 ? 'text-green-700 dark:text-green-300' : 'text-red-700 dark:text-red-300'">₱{{ netoData.neto | number:'1.2-2' }}</p>
+        <p class="mt-1 text-xs text-green-600/70 dark:text-green-400/70">Unit Cost x QTY</p>
+      </article>
+      <article class="rounded-2xl border border-amber-200 bg-amber-50/50 p-5 dark:border-amber-800 dark:bg-amber-900/20">
+        <p class="text-xs font-medium uppercase tracking-wide text-amber-600 dark:text-amber-400">Outstanding</p>
+        <p class="mt-2 text-2xl font-bold text-amber-700 dark:text-amber-300">₱{{ netoData.outstanding | number:'1.2-2' }}</p>
+        <p class="mt-1 text-xs text-amber-600/70 dark:text-amber-400/70">Unpaid Sales unit cost x QTY</p>
+      </article>
+      <article class="rounded-2xl border border-gray-200 bg-gray-50/50 p-5 dark:border-gray-700 dark:bg-gray-800/50">
+        <p class="text-xs font-medium uppercase tracking-wide text-gray-500 dark:text-gray-400">Discounts Given</p>
+        <p class="mt-2 text-2xl font-bold text-gray-700 dark:text-gray-300">₱{{ netoData.discounts | number:'1.2-2' }}</p>
+        <p class="mt-1 text-xs text-gray-400 dark:text-gray-500">Total discount amount this year</p>
+      </article>
+    </section>
+  }
+
   <section class="grid grid-cols-1 gap-4 xl:grid-cols-12">
 
     <article class="rounded-2xl border border-gray-200 bg-white p-4 dark:border-gray-800 dark:bg-white/[0.03] xl:col-span-8">
@@ -148,26 +174,30 @@
         </button>
       </div>
 
+      @if (isAdminUser) {
       <div class="mt-4 overflow-x-auto rounded-xl border border-gray-200 dark:border-gray-700">
         <table class="w-full min-w-[520px]">
           <thead>
             <tr class="border-b border-gray-200 bg-gray-50 dark:border-gray-700 dark:bg-gray-800/50">
+              <th class="px-3 py-2 text-left text-xs font-medium text-gray-500 dark:text-gray-400">Rank</th>
               <th class="px-3 py-2 text-left text-xs font-medium text-gray-500 dark:text-gray-400">Top Customer</th>
-              <th class="px-3 py-2 text-right text-xs font-medium text-gray-500 dark:text-gray-400">Orders (30d)</th>
-              <th class="px-3 py-2 text-right text-xs font-medium text-gray-500 dark:text-gray-400">Outstanding</th>
+              <th class="px-3 py-2 text-right text-xs font-medium text-gray-500 dark:text-gray-400">Orders</th>
+              <th class="px-3 py-2 text-right text-xs font-medium text-gray-500 dark:text-gray-400">Total Amount</th>
             </tr>
           </thead>
           <tbody>
             @for (customer of topCustomers; track customer.name) {
               <tr class="border-b border-gray-100 last:border-b-0 dark:border-gray-800/70">
+                <td class="px-3 py-2 text-sm text-gray-700 dark:text-gray-300">{{ customer.rank }}</td>
                 <td class="px-3 py-2 text-sm text-gray-700 dark:text-gray-300">{{ customer.name }}</td>
-                <td class="px-3 py-2 text-right text-sm text-gray-700 dark:text-gray-300">{{ customer.orders }}</td>
-                <td class="px-3 py-2 text-right text-sm font-medium text-gray-800 dark:text-white/90">{{ customer.balance }}</td>
+                <td class="px-3 py-2 text-right text-sm text-gray-700 dark:text-gray-300">{{ customer.orderCount }}</td>
+                <td class="px-3 py-2 text-right text-sm font-medium text-gray-800 dark:text-white/90">₱{{ customer.totalAmount | number:'1.0-0' }}</td>
               </tr>
             }
           </tbody>
         </table>
       </div>
+      }
     </article>
     <article class="rounded-2xl border border-gray-200 bg-white p-4 dark:border-gray-800 dark:bg-white/[0.03] xl:col-span-4">
       <h2 class="text-lg font-semibold text-gray-800 dark:text-white/90">Live Activity</h2>
@@ -185,6 +215,7 @@
     </article>
   </section>
 
+  @if (isAdminUser) {
   <section class="grid grid-cols-1 gap-4 xl:grid-cols-12">
     <!-- Previous Summary -->
     <article class="rounded-2xl border border-gray-200 bg-white p-4 dark:border-gray-800 dark:bg-white/[0.03] xl:col-span-8">
@@ -215,65 +246,63 @@
       </div>
     </article>
     <article class="rounded-2xl border border-gray-200 bg-white p-4 dark:border-gray-800 dark:bg-white/[0.03] xl:col-span-4">
-      <h2 class="text-lg font-semibold text-gray-800 dark:text-white/90">Top Capacity Movement</h2>
-      <div class="mt-4 space-y-3">
-        @for (item of topCapacities; track item.label) {
-          <div>
-            <div class="flex items-center justify-between text-sm">
-              <p class="text-gray-700 dark:text-gray-300">{{ item.label }}</p>
-              <p class="font-medium text-gray-800 dark:text-white/90">{{ item.units }} units</p>
-            </div>
-            <div class="mt-2 h-2 rounded-full bg-gray-100 dark:bg-gray-800">
-              <div class="h-2 rounded-full bg-brand-500" [style.width.%]="item.sellThrough"></div>
-            </div>
-            <p class="mt-1 text-xs text-gray-500 dark:text-gray-400">Sell-through: {{ item.sellThrough }}%</p>
-          </div>
-        }
+      <h2 class="text-lg font-semibold text-gray-800 dark:text-white/90">Top Employees</h2>
+      <div class="mt-4 overflow-x-auto rounded-xl border border-gray-200 dark:border-gray-700">
+        <table class="w-full min-w-[400px]">
+          <thead>
+            <tr class="border-b border-gray-200 bg-gray-50 dark:border-gray-700 dark:bg-gray-800/50">
+              <th class="px-3 py-2 text-left text-xs font-medium text-gray-500 dark:text-gray-400">Rank</th>
+              <th class="px-3 py-2 text-left text-xs font-medium text-gray-500 dark:text-gray-400">Employee Name</th>
+              <th class="px-3 py-2 text-right text-xs font-medium text-gray-500 dark:text-gray-400">Total Sales</th>
+              <th class="px-3 py-2 text-right text-xs font-medium text-gray-500 dark:text-gray-400">SO Count</th>
+            </tr>
+          </thead>
+          <tbody>
+            @for (emp of topEmployees; track emp.name) {
+              <tr class="border-b border-gray-100 last:border-b-0 dark:border-gray-800/70">
+                <td class="px-3 py-2 text-sm text-gray-700 dark:text-gray-300">{{ emp.rank }}</td>
+                <td class="px-3 py-2 text-sm text-gray-700 dark:text-gray-300">{{ emp.name }}</td>
+                <td class="px-3 py-2 text-right text-sm font-medium text-gray-800 dark:text-white/90">₱{{ emp.totalSales | number:'1.0-0' }}</td>
+                <td class="px-3 py-2 text-right text-sm text-gray-700 dark:text-gray-300">{{ emp.orderCount }}</td>
+              </tr>
+            }
+          </tbody>
+        </table>
       </div>
     </article>
   </section>
 
-  <section class="grid grid-cols-1 gap-4 xl:grid-cols-2">
+  <section class="grid grid-cols-1 gap-4 xl:grid-cols-1">
     <article class="rounded-2xl border border-gray-200 bg-white p-4 dark:border-gray-800 dark:bg-white/[0.03]">
       <div class="flex items-center justify-between">
-        <h2 class="text-lg font-semibold text-gray-800 dark:text-white/90">Margin by Brand</h2>
-        <span class="text-xs text-gray-500 dark:text-gray-400">Analytics</span>
+        <h2 class="text-lg font-semibold text-gray-800 dark:text-white/90">Top Supplier</h2>
+        <span class="text-xs text-gray-500 dark:text-gray-400">Year-to-date</span>
       </div>
-      <div class="mt-4 space-y-3">
-        @for (item of marginByBrand; track item.label) {
-          <div>
-            <div class="flex items-center justify-between text-sm">
-              <p class="text-gray-700 dark:text-gray-300">{{ item.label }}</p>
-              <p class="font-medium text-gray-800 dark:text-white/90">{{ item.margin | number:'1.1-1' }}%</p>
-            </div>
-            <div class="mt-2 h-2 rounded-full bg-gray-100 dark:bg-gray-800">
-              <div class="h-2 rounded-full bg-success-500" [style.width.%]="item.margin * 3"></div>
-            </div>
-          </div>
-        }
-      </div>
-    </article>
-
-    <article class="rounded-2xl border border-gray-200 bg-white p-4 dark:border-gray-800 dark:bg-white/[0.03]">
-      <div class="flex items-center justify-between">
-        <h2 class="text-lg font-semibold text-gray-800 dark:text-white/90">Margin Contribution by Dealer</h2>
-        <span class="text-xs text-gray-500 dark:text-gray-400">Land Costing Lens</span>
-      </div>
-      <div class="mt-4 space-y-3">
-        @for (item of marginByVendor; track item.label) {
-          <div>
-            <div class="flex items-center justify-between text-sm">
-              <p class="text-gray-700 dark:text-gray-300">{{ item.label }}</p>
-              <p class="font-medium text-gray-800 dark:text-white/90">PHP {{ item.margin | number:'1.1-1' }}M</p>
-            </div>
-            <div class="mt-2 h-2 rounded-full bg-gray-100 dark:bg-gray-800">
-              <div class="h-2 rounded-full bg-brand-400" [style.width.%]="item.margin * 12"></div>
-            </div>
-          </div>
-        }
+      <div class="mt-4 overflow-x-auto rounded-xl border border-gray-200 dark:border-gray-700">
+        <table class="w-full min-w-[500px]">
+          <thead>
+            <tr class="border-b border-gray-200 bg-gray-50 dark:border-gray-700 dark:bg-gray-800/50">
+              <th class="px-3 py-2 text-left text-xs font-medium text-gray-500 dark:text-gray-400">Rank</th>
+              <th class="px-3 py-2 text-left text-xs font-medium text-gray-500 dark:text-gray-400">Supplier Name</th>
+              <th class="px-3 py-2 text-right text-xs font-medium text-gray-500 dark:text-gray-400">Total PO Amount</th>
+              <th class="px-3 py-2 text-right text-xs font-medium text-gray-500 dark:text-gray-400">PO Count</th>
+            </tr>
+          </thead>
+          <tbody>
+            @for (supplier of topSuppliers; track supplier.name) {
+              <tr class="border-b border-gray-100 last:border-b-0 dark:border-gray-800/70">
+                <td class="px-3 py-2 text-sm text-gray-700 dark:text-gray-300">{{ supplier.rank }}</td>
+                <td class="px-3 py-2 text-sm text-gray-700 dark:text-gray-300">{{ supplier.name }}</td>
+                <td class="px-3 py-2 text-right text-sm font-medium text-gray-800 dark:text-white/90">₱{{ supplier.totalAmount | number:'1.0-0' }}</td>
+                <td class="px-3 py-2 text-right text-sm text-gray-700 dark:text-gray-300">{{ supplier.poCount }}</td>
+              </tr>
+            }
+          </tbody>
+        </table>
       </div>
     </article>
   </section>
+  }
 </div>
 
 <!-- Sales Summary Details Modal -->

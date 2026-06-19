@@ -1,5 +1,5 @@
 import { CommonModule } from '@angular/common';
-import { Component, EventEmitter, Input, OnInit, Output } from '@angular/core';
+import { Component, EventEmitter, Input, OnInit, OnDestroy, Output } from '@angular/core';
 import { FormsModule } from '@angular/forms';
 import { RbacService } from '../../../shared/services/rbac.service';
 import {
@@ -18,7 +18,7 @@ import { PoItemsTableComponent, PoLineItem } from '../po-items-table/po-items-ta
   imports: [CommonModule, FormsModule, PoItemsTableComponent],
   templateUrl: './po-materials-form.component.html',
 })
-export class PoMaterialsFormComponent implements OnInit {
+export class PoMaterialsFormComponent implements OnInit, OnDestroy {
   /** When set, the form operates in edit mode and loads existing order data. */
   @Input() orderId?: number;
 
@@ -78,6 +78,9 @@ export class PoMaterialsFormComponent implements OnInit {
     private readonly notificationService: NotificationService,
   ) {}
 
+  private readonly PO_DRAFT_STORAGE_KEY = 'po_material_form_draft';
+  private poDraftAutoSaveTimer: ReturnType<typeof setInterval> | null = null;
+
   ngOnInit(): void {
     this.isAdmin = this.rbacService.isAdminOrSuperAdmin();
     this.paymentDetails = [this.createEmptyPaymentDetail()];
@@ -85,7 +88,58 @@ export class PoMaterialsFormComponent implements OnInit {
     if (this.orderId) {
       this.mode = 'edit';
       void this.loadExistingOrder();
+    } else {
+      this.restorePoDraft();
+      this.poDraftAutoSaveTimer = setInterval(() => this.savePoDraftToStorage(), 5000);
     }
+  }
+
+  ngOnDestroy(): void {
+    if (this.poDraftAutoSaveTimer) {
+      clearInterval(this.poDraftAutoSaveTimer);
+      this.poDraftAutoSaveTimer = null;
+    }
+  }
+
+  private savePoDraftToStorage(): void {
+    if (this.productItems.length === 0 && !this.vendorSearch.trim()) return;
+
+    const draft = {
+      vendorSearch: this.vendorSearch,
+      selectedVendorId: this.selectedVendorId,
+      vendorForm: { ...this.vendorForm },
+      productItems: this.productItems.map(item => ({ ...item })),
+      paymentDetails: this.paymentDetails.map(p => ({ ...p })),
+      remarks: this.remarks,
+      savedAt: new Date().toISOString(),
+    };
+
+    try { localStorage.setItem(this.PO_DRAFT_STORAGE_KEY, JSON.stringify(draft)); } catch { }
+  }
+
+  private restorePoDraft(): void {
+    try {
+      const raw = localStorage.getItem(this.PO_DRAFT_STORAGE_KEY);
+      if (!raw) return;
+      const draft = JSON.parse(raw);
+      if (!draft?.savedAt) return;
+
+      const hoursAgo = (Date.now() - new Date(draft.savedAt).getTime()) / (1000 * 60 * 60);
+      if (hoursAgo > 24) { this.clearPoDraftStorage(); return; }
+
+      if (draft.vendorSearch) this.vendorSearch = draft.vendorSearch;
+      if (draft.selectedVendorId) this.selectedVendorId = draft.selectedVendorId;
+      if (draft.vendorForm) this.vendorForm = { ...this.vendorForm, ...draft.vendorForm };
+      if (Array.isArray(draft.productItems) && draft.productItems.length > 0) this.productItems = draft.productItems;
+      if (Array.isArray(draft.paymentDetails) && draft.paymentDetails.length > 0) this.paymentDetails = draft.paymentDetails;
+      if (draft.remarks) this.remarks = draft.remarks;
+
+      this.notificationService.success('Draft Restored', 'Your unsaved PO work has been recovered.');
+    } catch { this.clearPoDraftStorage(); }
+  }
+
+  clearPoDraftStorage(): void {
+    try { localStorage.removeItem(this.PO_DRAFT_STORAGE_KEY); } catch { }
   }
 
   // ─── Material Search ──────────────────────────────────────────────────────────
@@ -459,6 +513,7 @@ export class PoMaterialsFormComponent implements OnInit {
         const result = await this.poMaterialsService.updatePurchaseOrder(this.orderId, payload);
         if (result.success) {
           this.notificationService.success('Success', 'Purchase order updated successfully.');
+          this.clearPoDraftStorage();
           this.saved.emit();
         } else {
           this.validationError = result.message || 'Failed to update purchase order.';
@@ -467,6 +522,7 @@ export class PoMaterialsFormComponent implements OnInit {
         const result = await this.poMaterialsService.createPurchaseOrder(payload);
         if (result.success) {
           this.notificationService.success('Success', 'Purchase order created successfully.');
+          this.clearPoDraftStorage();
           this.saved.emit();
         } else {
           this.validationError = result.message || 'Failed to create purchase order.';
@@ -484,7 +540,28 @@ export class PoMaterialsFormComponent implements OnInit {
   }
 
   cancel(): void {
+    if (!this.orderId && this.productItems.length > 0) {
+      this.isCloseConfirmOpen = true;
+    } else {
+      this.cancelled.emit();
+    }
+  }
+
+  isCloseConfirmOpen = false;
+
+  confirmCloseAndClear(): void {
+    this.clearPoDraftStorage();
+    this.isCloseConfirmOpen = false;
     this.cancelled.emit();
+  }
+
+  confirmCloseAndKeep(): void {
+    this.isCloseConfirmOpen = false;
+    this.cancelled.emit();
+  }
+
+  cancelClose(): void {
+    this.isCloseConfirmOpen = false;
   }
 
   /**

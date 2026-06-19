@@ -22,16 +22,8 @@ export class IdleSessionService implements OnDestroy {
   ) {}
 
   start(): void {
-    if (this.started || typeof window === 'undefined') {
-      return;
-    }
-
-    this.started = true;
-    this.activityEvents.forEach((eventName) =>
-      window.addEventListener(eventName, this.onActivity, { passive: true }),
-    );
-
-    this.resetIdleTimer();
+    // Session timeout disabled — was causing page hangs
+    return;
   }
 
   stop(): void {

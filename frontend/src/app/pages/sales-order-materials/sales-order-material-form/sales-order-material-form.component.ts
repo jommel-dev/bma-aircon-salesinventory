@@ -1,5 +1,5 @@
 import { CommonModule } from '@angular/common';
-import { Component, EventEmitter, Input, OnInit, Output } from '@angular/core';
+import { Component, EventEmitter, Input, OnInit, OnDestroy, Output } from '@angular/core';
 import { FormsModule } from '@angular/forms';
 import { DomSanitizer, SafeResourceUrl } from '@angular/platform-browser';
 import { RbacService } from '../../../shared/services/rbac.service';
@@ -28,7 +28,7 @@ import { ProductItemsTableComponent } from '../product-items-table/product-items
   imports: [CommonModule, FormsModule, ProductItemsTableComponent],
   templateUrl: './sales-order-material-form.component.html',
 })
-export class SalesOrderMaterialFormComponent implements OnInit {
+export class SalesOrderMaterialFormComponent implements OnInit, OnDestroy {
   /** When set, the form operates in edit mode and loads existing order data. */
   @Input() orderId?: number;
 
@@ -126,6 +126,9 @@ export class SalesOrderMaterialFormComponent implements OnInit {
     private readonly sanitizer: DomSanitizer,
   ) {}
 
+  private readonly DRAFT_STORAGE_KEY = 'so_material_form_draft';
+  private draftAutoSaveTimer: ReturnType<typeof setInterval> | null = null;
+
   ngOnInit(): void {
     this.isAdmin = this.rbacService.isAdminOrSuperAdmin();
     this.resetDeliveryDate();
@@ -136,8 +139,88 @@ export class SalesOrderMaterialFormComponent implements OnInit {
     if (this.orderId) {
       void this.loadExistingOrder();
     } else {
+      // Restore unsaved draft if available (only for new orders)
+      this.restoreDraft();
       void this.loadNextSoNumber();
+      // Start auto-saving every 5 seconds
+      this.draftAutoSaveTimer = setInterval(() => this.saveDraftToStorage(), 5000);
     }
+  }
+
+  ngOnDestroy(): void {
+    if (this.draftAutoSaveTimer) {
+      clearInterval(this.draftAutoSaveTimer);
+      this.draftAutoSaveTimer = null;
+    }
+  }
+
+  /** Save current form state to localStorage */
+  private saveDraftToStorage(): void {
+    // Only save if there's meaningful data (at least one item or customer)
+    if (this.productItems.length === 0 && !this.customerSearch.trim()) {
+      return;
+    }
+
+    const draft = {
+      deliveryDate: this.deliveryDate,
+      customerSearch: this.customerSearch,
+      selectedCustomerId: this.selectedCustomerId,
+      customerForm: { ...this.customerForm },
+      productItems: this.productItems.map(item => ({ ...item })),
+      paymentDetails: this.paymentDetails.map(p => ({ ...p })),
+      remarks: this.remarks,
+      savedAt: new Date().toISOString(),
+    };
+
+    try {
+      localStorage.setItem(this.DRAFT_STORAGE_KEY, JSON.stringify(draft));
+    } catch {
+      // Storage full or unavailable — ignore
+    }
+  }
+
+  /** Restore draft from localStorage */
+  private restoreDraft(): void {
+    try {
+      const raw = localStorage.getItem(this.DRAFT_STORAGE_KEY);
+      if (!raw) return;
+
+      const draft = JSON.parse(raw);
+      if (!draft || !draft.savedAt) return;
+
+      // Only restore if saved within the last 24 hours
+      const savedAt = new Date(draft.savedAt).getTime();
+      const hoursAgo = (Date.now() - savedAt) / (1000 * 60 * 60);
+      if (hoursAgo > 24) {
+        this.clearDraftStorage();
+        return;
+      }
+
+      // Restore form data
+      if (draft.deliveryDate) this.deliveryDate = draft.deliveryDate;
+      if (draft.customerSearch) this.customerSearch = draft.customerSearch;
+      if (draft.selectedCustomerId) this.selectedCustomerId = draft.selectedCustomerId;
+      if (draft.customerForm) this.customerForm = { ...this.customerForm, ...draft.customerForm };
+      if (Array.isArray(draft.productItems) && draft.productItems.length > 0) {
+        this.productItems = draft.productItems;
+      }
+      if (Array.isArray(draft.paymentDetails) && draft.paymentDetails.length > 0) {
+        this.paymentDetails = draft.paymentDetails;
+      }
+      if (draft.remarks) this.remarks = draft.remarks;
+
+      this.notificationService.success('Draft Restored', 'Your unsaved work has been recovered.');
+    } catch {
+      // Corrupted data — clear it
+      this.clearDraftStorage();
+    }
+  }
+
+  /** Clear saved draft from localStorage */
+  private clearDraftStorage(): void {
+    try {
+      localStorage.removeItem(this.DRAFT_STORAGE_KEY);
+    } catch { /* ignore */ }
   }
 
   /**
@@ -717,7 +800,29 @@ export class SalesOrderMaterialFormComponent implements OnInit {
   }
 
   cancel(): void {
+    // If there's draft data and this is a new order, ask to clear
+    if (!this.orderId && this.productItems.length > 0) {
+      this.isCloseConfirmOpen = true;
+    } else {
+      this.cancelled.emit();
+    }
+  }
+
+  isCloseConfirmOpen = false;
+
+  confirmCloseAndClear(): void {
+    this.clearDraftStorage();
+    this.isCloseConfirmOpen = false;
     this.cancelled.emit();
+  }
+
+  confirmCloseAndKeep(): void {
+    this.isCloseConfirmOpen = false;
+    this.cancelled.emit();
+  }
+
+  cancelClose(): void {
+    this.isCloseConfirmOpen = false;
   }
 
   canPrintQuotationFromForm(): boolean {
@@ -863,6 +968,7 @@ export class SalesOrderMaterialFormComponent implements OnInit {
 
       // No issues, proceed with submission
       await this.performSubmission(status);
+      this.clearDraftStorage();
     } finally {
       this.isSubmitting = false;
     }
@@ -880,6 +986,7 @@ export class SalesOrderMaterialFormComponent implements OnInit {
         this.notificationService.success('Success', 'Sales order created successfully.');
       }
 
+      this.clearDraftStorage();
       this.saved.emit();
     } catch (error: any) {
       const message =
@@ -944,6 +1051,7 @@ export class SalesOrderMaterialFormComponent implements OnInit {
       this.notificationService.success('Success', 'Order completed successfully.');
       this.completedOrderId = resultOrderId;
       this.isPostCompleteDialogOpen = true;
+      this.clearDraftStorage();
     } catch (error: any) {
       const message =
         error?.response?.data?.message ?? error?.message ?? 'An unexpected error occurred. Please try again later.';
@@ -960,6 +1068,7 @@ export class SalesOrderMaterialFormComponent implements OnInit {
   closePostCompleteDialog(): void {
     this.isPostCompleteDialogOpen = false;
     this.completedOrderId = null;
+    this.clearDraftStorage();
     this.saved.emit();
   }
 
@@ -967,6 +1076,7 @@ export class SalesOrderMaterialFormComponent implements OnInit {
     this.isPostCompleteDialogOpen = false;
 
     if (!this.completedOrderId) {
+      this.clearDraftStorage();
       this.saved.emit();
       return;
     }
@@ -985,6 +1095,7 @@ export class SalesOrderMaterialFormComponent implements OnInit {
       this.notificationService.error('Error', 'Failed to generate print PDF.');
       this.isPrintModalOpen = false;
       this.printPdfUrl = null;
+      this.clearDraftStorage();
       this.saved.emit();
     } finally {
       this.isPrintLoading = false;

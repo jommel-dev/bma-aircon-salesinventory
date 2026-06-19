@@ -21,11 +21,6 @@ type OpsItem = {
   level: OpsLevel;
 };
 
-type MarginItem = {
-  label: string;
-  margin: number;
-};
-
 type ActivityItem = {
   time: string;
   text: string;
@@ -40,22 +35,16 @@ type DashboardResponse = {
     topKpis: KpiCard[];
     operations: OpsItem[];
     salesSummary: KpiCard[];
-    topCustomers: Array<{ name: string; orders: number; balance: string }>;
-    topCapacities: Array<{ label: string; units: number; sellThrough: number }>;
-    marginByBrand: MarginItem[];
-    marginByVendor: MarginItem[];
+    topCustomers: Array<{ rank: number; name: string; totalAmount: number; orderCount: number }>;
+    topSuppliers: Array<{ rank: number; name: string; totalAmount: number; poCount: number }>;
+    topEmployees: Array<{ rank: number; name: string; totalSales: number; orderCount: number }>;
+    netoData: { gross: number; discounts: number; returns: number; neto: number; outstanding: number };
     activityFeed: ActivityItem[];
     todayFocus: string;
   };
 };
 
 type CountRow = { count: string };
-type SalesRow = { todaySales: string; yesterdaySales: string; mtdSales: string; prevMtdSales: string };
-type GrossMarginRow = { marginPercent: string };
-type ReceivableRow = { amount: string };
-type TopCustomerRow = { name: string; orders: string; balance: string };
-type TopCapacityRow = { label: string; units: string; sellThrough: string };
-type MarginRow = { label: string; margin: string };
 type ActivityRow = { eventAt: string | null; text: string; status: 'received' | 'dispatch' | 'install' | 'payment' };
 type SalesFinancialSummaryRow = {
   settledAmount: string;
@@ -551,112 +540,261 @@ export class DashboardService {
     try {
       const branchParam = branchId ? String(branchId) : null;
 
-      const inStockCountResult = await this.databaseService.query<CountRow>(
-        `WITH serial_scope AS (
-           SELECT
-             COALESCE(to_jsonb(sn)->>'serialNumber', to_jsonb(sn)->>'serial_number', '') AS serial_number,
-             REPLACE(REPLACE(LOWER(TRIM(COALESCE(to_jsonb(sn)->>'status', ''))), '_', '-'), ' ', '-') AS normalized_status,
-             COALESCE(to_jsonb(sn)->>'branchId', to_jsonb(sn)->>'branch_id', to_jsonb(sn)->>'branchid', '') AS branch_id
-           FROM tblserial_numbers sn
-         )
-         SELECT COUNT(*)::text AS count
-         FROM serial_scope ss
-         WHERE ss.serial_number <> ''
-           AND ss.normalized_status NOT IN (
-             'scanned', 'reserved', 'delivered', 'installed', 'sold', 'released', 'out', 'outbound'
-           )
-           AND ($1::text IS NULL OR ss.branch_id = $1::text)`,
-        [branchParam],
-      );
+      // --- Top KPIs: Sales Order counts ---
+      let activePendingSoCount = 0;
+      let completedSoCount = 0;
+      let draftQuotationCount = 0;
+      let totalSalesOrdersCount = 0;
 
-      const openPoCountResult = await this.databaseService.query<CountRow>(
-        `SELECT COUNT(*)::text AS count
-         FROM tblpurchase_orders po
-         WHERE REPLACE(REPLACE(LOWER(TRIM(COALESCE(to_jsonb(po)->>'status', 'pending'))), '_', '-'), ' ', '-') NOT IN (
-           'approved', 'completed', 'cancelled', 'rejected'
-         )`,
-      );
+      try {
+        const activePendingResult = await this.databaseService.query<CountRow>(
+          `SELECT COUNT(*)::text AS count FROM tblsales_order WHERE status = 'pending' AND "salesType" = 'sales'`,
+        );
+        activePendingSoCount = this.toNumber(activePendingResult.rows[0]?.count);
+      } catch { /* fault-tolerant */ }
 
-      const dispatchCountResult = await this.databaseService.query<CountRow>(
-        `WITH sales_scope AS (
-           SELECT
-             REPLACE(REPLACE(LOWER(TRIM(COALESCE(to_jsonb(so)->>'status', 'pending'))), '_', '-'), ' ', '-') AS normalized_status,
-             COALESCE(to_jsonb(so)->>'branchId', to_jsonb(so)->>'branch_id', '') AS branch_id
+      try {
+        const completedResult = await this.databaseService.query<CountRow>(
+          `SELECT COUNT(*)::text AS count FROM tblsales_order WHERE status = 'complete' AND "salesType" = 'sales'`,
+        );
+        completedSoCount = this.toNumber(completedResult.rows[0]?.count);
+      } catch { /* fault-tolerant */ }
+
+      try {
+        const draftResult = await this.databaseService.query<CountRow>(
+          `SELECT COUNT(*)::text AS count FROM tblsales_order WHERE status = 'draft' AND "salesType" = 'sales'`,
+        );
+        draftQuotationCount = this.toNumber(draftResult.rows[0]?.count);
+      } catch { /* fault-tolerant */ }
+
+      try {
+        const totalResult = await this.databaseService.query<CountRow>(
+          `SELECT COUNT(*)::text AS count FROM tblsales_order WHERE "salesType" = 'sales' AND status != 'voided'`,
+        );
+        totalSalesOrdersCount = this.toNumber(totalResult.rows[0]?.count);
+      } catch { /* fault-tolerant */ }
+
+      // --- Operations: PO-based ---
+      let totalPurchaseOrdersAmount = 0;
+      let totalCreditTermsAmount = 0;
+      let totalPaidPosAmount = 0;
+      let stockAlertCount = 0;
+
+      try {
+        const totalPoResult = await this.databaseService.query<{ amount: string }>(
+          `SELECT COALESCE(SUM(total_amount), 0)::text AS amount
+           FROM tblpurchase_orders
+           WHERE status != 'voided' AND created_at >= date_trunc('year', CURRENT_DATE)`,
+        );
+        totalPurchaseOrdersAmount = this.toNumber(totalPoResult.rows[0]?.amount);
+      } catch { /* fault-tolerant */ }
+
+      try {
+        const creditTermsResult = await this.databaseService.query<{ amount: string }>(
+          `SELECT COALESCE(SUM(pp.amount), 0)::text AS amount
+           FROM tblpo_payments pp
+           INNER JOIN tblpurchase_orders po ON po.id = pp.purchase_order_id
+           WHERE pp.method IN ('Terms', 'Terms with DP', 'Installment')
+             AND po.created_at >= date_trunc('year', CURRENT_DATE)`,
+        );
+        totalCreditTermsAmount = this.toNumber(creditTermsResult.rows[0]?.amount);
+      } catch { /* fault-tolerant */ }
+
+      try {
+        const paidPosResult = await this.databaseService.query<{ amount: string }>(
+          `SELECT COALESCE(SUM(total_amount), 0)::text AS amount
+           FROM tblpurchase_orders
+           WHERE status IN ('complete', 'completed')
+             AND created_at >= date_trunc('year', CURRENT_DATE)`,
+        );
+        totalPaidPosAmount = this.toNumber(paidPosResult.rows[0]?.amount);
+      } catch { /* fault-tolerant */ }
+
+      try {
+        const stockAlertResult = await this.databaseService.query<CountRow>(
+          `SELECT COUNT(*)::text AS count
+           FROM tblmaterials
+           WHERE on_hand_stock <= reorder_level
+             AND on_hand_stock >= 0
+             AND deleted_at IS NULL`,
+        );
+        stockAlertCount = this.toNumber(stockAlertResult.rows[0]?.count);
+      } catch { /* fault-tolerant */ }
+
+      // --- Top Customers (annual ranking) ---
+      let topCustomers: Array<{ rank: number; name: string; totalAmount: number; orderCount: number }> = [];
+      try {
+        const topCustomersResult = await this.databaseService.query<{ name: string; order_count: string; total_amount: string }>(
+          `SELECT c.name, COUNT(so.id)::text AS order_count, COALESCE(SUM(so.total_amount), 0)::text AS total_amount
            FROM tblsales_order so
-         )
-         SELECT COUNT(*)::text AS count
-         FROM sales_scope ss
-         WHERE ss.normalized_status IN ('pending', 'for-delivery', 'to-remit', 'released', 'in-progress')
-           AND ($1::text IS NULL OR ss.branch_id = $1::text)`,
-        [branchParam],
-      );
+           LEFT JOIN tblcustomer c ON c.id::text = COALESCE(to_jsonb(so)->>'customer_id', to_jsonb(so)->>'customerId')
+           WHERE so."salesType" = 'sales' AND so.status = 'complete'
+             AND so.created_at >= date_trunc('year', CURRENT_DATE)
+           GROUP BY c.name
+           ORDER BY COALESCE(SUM(so.total_amount), 0) DESC
+           LIMIT 10`,
+        );
+        topCustomers = topCustomersResult.rows.map((row, index) => ({
+          rank: index + 1,
+          name: String(row.name || 'Unknown Customer').trim(),
+          totalAmount: this.toNumber(row.total_amount),
+          orderCount: this.toNumber(row.order_count),
+        }));
+      } catch { /* fault-tolerant */ }
 
-      const installQueueCountResult = await this.databaseService.query<CountRow>(
-        `WITH sales_scope AS (
-           SELECT
-             REPLACE(REPLACE(LOWER(TRIM(COALESCE(to_jsonb(so)->>'status', 'pending'))), '_', '-'), ' ', '-') AS normalized_status,
-             COALESCE(to_jsonb(so)->>'branchId', to_jsonb(so)->>'branch_id', '') AS branch_id
+      // --- Top Suppliers (annual ranking by PO amount) ---
+      let topSuppliers: Array<{ rank: number; name: string; totalAmount: number; poCount: number }> = [];
+      try {
+        const topSuppliersResult = await this.databaseService.query<{ name: string; po_count: string; total_amount: string }>(
+          `SELECT v.name, COUNT(po.id)::text AS po_count, COALESCE(SUM(po.total_amount), 0)::text AS total_amount
+           FROM tblpurchase_orders po
+           LEFT JOIN tblvendors v ON v.id::text = po.vendor_id::text
+           WHERE po.status != 'voided' AND po.created_at >= date_trunc('year', CURRENT_DATE)
+           GROUP BY v.name
+           ORDER BY COALESCE(SUM(po.total_amount), 0) DESC
+           LIMIT 5`,
+        );
+        topSuppliers = topSuppliersResult.rows.map((row, index) => ({
+          rank: index + 1,
+          name: String(row.name || 'Unknown Supplier').trim(),
+          totalAmount: this.toNumber(row.total_amount),
+          poCount: this.toNumber(row.po_count),
+        }));
+      } catch { /* fault-tolerant */ }
+
+      // --- Top Employees (annual ranking by sales amount) ---
+      let topEmployees: Array<{ rank: number; name: string; totalSales: number; orderCount: number }> = [];
+      try {
+        const topEmployeesResult = await this.databaseService.query<{ username: string; name: string; order_count: string; total_sales: string }>(
+          `SELECT u.username, COALESCE(u.full_name, u.username) AS name,
+             COUNT(so.id)::text AS order_count, COALESCE(SUM(so.total_amount), 0)::text AS total_sales
            FROM tblsales_order so
-         )
-         SELECT COUNT(*)::text AS count
-         FROM sales_scope ss
-         WHERE ss.normalized_status LIKE '%install%'
-           AND ss.normalized_status NOT IN ('installed', 'completed', 'cancelled')
-           AND ($1::text IS NULL OR ss.branch_id = $1::text)`,
-        [branchParam],
-      );
+           LEFT JOIN tblusers u ON u.id = so.created_by
+           WHERE so."salesType" = 'sales' AND so.status = 'complete'
+             AND so.created_at >= date_trunc('year', CURRENT_DATE)
+           GROUP BY u.username, u.full_name
+           ORDER BY COALESCE(SUM(so.total_amount), 0) DESC
+           LIMIT 10`,
+        );
+        topEmployees = topEmployeesResult.rows.map((row, index) => ({
+          rank: index + 1,
+          name: String(row.name || row.username || 'Unknown').trim(),
+          totalSales: this.toNumber(row.total_sales),
+          orderCount: this.toNumber(row.order_count),
+        }));
+      } catch { /* fault-tolerant */ }
 
-      const stockAlertsResult = await this.databaseService.query<CountRow>(
-        `WITH serial_scope AS (
-           SELECT
-             COALESCE(to_jsonb(sn)->>'productId', to_jsonb(sn)->>'product_id', '') AS product_id,
-             COALESCE(to_jsonb(sn)->>'capacityId', to_jsonb(sn)->>'capacity_id', '') AS capacity_id,
-             REPLACE(REPLACE(LOWER(TRIM(COALESCE(to_jsonb(sn)->>'status', ''))), '_', '-'), ' ', '-') AS normalized_status,
-             COALESCE(to_jsonb(sn)->>'branchId', to_jsonb(sn)->>'branch_id', '') AS branch_id
-           FROM tblserial_numbers sn
-         ),
-         grouped AS (
-           SELECT
-             product_id,
-             capacity_id,
-             COUNT(*) FILTER (
-               WHERE normalized_status NOT IN (
-                 'scanned', 'reserved', 'delivered', 'installed', 'sold', 'released', 'out', 'outbound'
-               )
-             )::int AS in_stock
-           FROM serial_scope
-           WHERE product_id <> ''
-             AND capacity_id <> ''
-             AND ($1::text IS NULL OR branch_id = $1::text)
-           GROUP BY product_id, capacity_id
-         )
-         SELECT COUNT(*)::text AS count
-         FROM grouped
-         WHERE in_stock <= 5`,
-        [branchParam],
-      );
+      // // --- NETO (Gross, Net, Outstanding) ---
+      // let netoData = { gross: 0, discounts: 0, returns: 0, neto: 0, outstanding: 0 };
+      // try {
+      //   // Gross = SUM(total_amount) from completed SO this year (the invoice total)
+      //   // This uses the same source as "Collected Sales" for consistency
+      //   // const grossResult = await this.databaseService.query<{ gross: string }>(
+      //   //   `SELECT COALESCE(SUM(
+      //   //      CASE WHEN so.total_amount > 0 THEN so.total_amount
+      //   //           ELSE (SELECT COALESCE(SUM(GREATEST(soi.rate - COALESCE(soi.discount, 0), 0) * soi.qty), 0) FROM tblsales_order_items soi WHERE soi.sales_order_id = so.id)
+      //   //      END
+      //   //    ), 0)::text AS gross
+      //   //    FROM tblsales_order so
+      //   //    WHERE so."salesType" = 'sales' AND so.status = 'complete'
+      //   //      AND so.created_at >= date_trunc('year', CURRENT_DATE)`,
+      //   // );
+      //   const grossResult = await this.databaseService.query<{ gross: string }>(
+      //     `SELECT COALESCE(SUM(
+      //         CASE WHEN so.total_amount > 0 THEN 
+      //           (SELECT COALESCE(SUM(GREATEST(soi.cost, 0) * soi.qty), 0) FROM tblsales_order_items soi WHERE soi.sales_order_id = so.id)
+      //         ELSE 
+      //           so.total_amount
+      //         END
+      //       ), 0)::text AS gross
+      //     FROM tblsales_order so
+      //     WHERE so."salesType" = 'sales' AND so.status = 'complete'
+      //       AND so.created_at >= date_trunc('year', CURRENT_DATE)`,
+      //   );
+      //   // Discounts = SUM(discount * qty) from completed SO items this year
+      //   const discountsResult = await this.databaseService.query<{ discounts: string }>(
+      //     `SELECT COALESCE(SUM(soi.discount * soi.qty), 0)::text AS discounts
+      //      FROM tblsales_order_items soi
+      //      JOIN tblsales_order so ON so.id = soi.sales_order_id
+      //      WHERE so."salesType" = 'sales' AND so.status = 'complete'
+      //        AND so.created_at >= date_trunc('year', CURRENT_DATE)`,
+      //   );
 
-      const receivingTodayResult = await this.databaseService.query<CountRow>(
-        `SELECT COUNT(*)::text AS count
-         FROM tblpurchase_orders po
-         WHERE (COALESCE(NULLIF(to_jsonb(po)->>'created_at', ''), NULLIF(to_jsonb(po)->>'createdAt', ''))::timestamptz AT TIME ZONE 'UTC')::date = CURRENT_DATE`,
-      );
+      //   // Payments Made = SUM of payment amounts for completed SOs this year
+      //   const paymentsResult = await this.databaseService.query<{ paid: string }>(
+      //     `SELECT COALESCE(SUM(sp.amount), 0)::text AS paid
+      //      FROM tblsales_order_payments sp
+      //      JOIN tblsales_order so ON so.id = sp.sales_order_id
+      //      WHERE so."salesType" = 'sales' AND so.status = 'complete'
+      //        AND so.created_at >= date_trunc('year', CURRENT_DATE)`,
+      //   );
 
-      const scannedTodayResult = await this.databaseService.query<CountRow>(
-        `WITH serial_scope AS (
-           SELECT
-             COALESCE(to_jsonb(sn)->>'purchaseId', to_jsonb(sn)->>'purchase_id', to_jsonb(sn)->>'po_id', '') AS purchase_id,
-             COALESCE(to_jsonb(sn)->>'branchId', to_jsonb(sn)->>'branch_id', '') AS branch_id,
-             COALESCE(NULLIF(to_jsonb(sn)->>'created_at', ''), NULLIF(to_jsonb(sn)->>'createdAt', '')) AS created_at
-           FROM tblserial_numbers sn
-         )
-         SELECT COUNT(*)::text AS count
-         FROM serial_scope ss
-         WHERE ss.purchase_id <> ''
-           AND ($1::text IS NULL OR ss.branch_id = $1::text)
-           AND (ss.created_at::timestamptz AT TIME ZONE 'UTC')::date = CURRENT_DATE`,
-        [branchParam],
-      );
+      //   const gross = this.toNumber(grossResult.rows[0]?.gross);
+      //   const discounts = this.toNumber(discountsResult.rows[0]?.discounts);
+      //   const neto = gross - discounts;
+      //   const paid = this.toNumber(paymentsResult.rows[0]?.paid);
+      //   const outstanding = neto - paid;
+
+      //   netoData = { gross, discounts, returns: 0, neto, outstanding };
+      // } catch { /* fault-tolerant */ }
+
+      // --- NETO (Gross, Net, Outstanding reflecting Validated Payments) ---
+let netoData = { gross: 0, discounts: 0, returns: 0, neto: 0, outstanding: 0 };
+try {
+  const costCalculations = await this.databaseService.query<{ gross_cost: string; paid_cost: string; outstanding_cost: string }>(
+    `SELECT 
+        -- 1. Gross Material Cost
+        COALESCE(SUM(item_costs.material_cost), 0)::text AS gross_cost,
+        
+        -- 2. Net Cost (Only counts material cost covered by paid/validated collections)
+        COALESCE(SUM(
+          item_costs.material_cost * CASE 
+            WHEN COALESCE(so.total_amount, 0) <= 0 THEN 0
+            WHEN COALESCE(payments.total_paid, 0) >= so.total_amount THEN 1
+            ELSE COALESCE(payments.total_paid, 0) / so.total_amount
+          END
+        ), 0)::text AS paid_cost,
+        
+        -- 3. Outstanding Cost (Unpaid terms or remaining balance)
+        COALESCE(SUM(
+          item_costs.material_cost * CASE 
+            WHEN COALESCE(so.total_amount, 0) <= 0 THEN 1
+            WHEN COALESCE(payments.total_paid, 0) >= so.total_amount THEN 0
+            ELSE 1 - (COALESCE(payments.total_paid, 0) / so.total_amount)
+          END
+        ), 0)::text AS outstanding_cost
+     FROM tblsales_order so
+     
+     -- Subquery: Calculate exact material cost for this sales order safely
+     CROSS JOIN LATERAL (
+        SELECT COALESCE(SUM(GREATEST(soi.cost, 0) * soi.qty), 0) AS material_cost
+        FROM tblsales_order_items soi 
+        WHERE soi.sales_order_id = so.id
+     ) item_costs
+     
+     -- Subquery: Sum up payments but CRITICALLY ignore 'unpaid' records
+     CROSS JOIN LATERAL (
+        SELECT COALESCE(SUM(sp.amount), 0) AS total_paid
+        FROM tblsales_order_payments sp
+        WHERE sp.sales_order_id = so.id
+          -- Only count money that has actually been cleared/paid
+          AND LOWER(sp.status) != 'unpaid' 
+     ) payments
+     
+     WHERE so."salesType" = 'sales' 
+       AND LOWER(so.status) = 'complete'
+       AND so.created_at >= date_trunc('year', CURRENT_DATE)`
+  );
+
+  const row = costCalculations.rows[0];
+  const gross = this.toNumber(row?.gross_cost);
+  const neto = this.toNumber(row?.paid_cost);            
+  const outstanding = this.toNumber(row?.outstanding_cost); 
+
+  netoData = { gross, discounts: 0, returns: 0, neto, outstanding };
+} catch (error) {
+  console.error("Dashboard NETO query failed:", error);
+}
 
       const recordedSalesPredicate = this.getRecordedSalesPredicate('ss');
       const recordedSalesAmountExpression = this.getRecordedSalesAmountExpression('ss');
@@ -676,268 +814,6 @@ export class DashboardService {
            COALESCE(SUM(ss.outstanding_receivable_count) FILTER (WHERE ss.normalized_status IN ('remitted', 'complete', 'completed')), 0)::text AS "chequeCount"
          FROM sales_scope ss
          WHERE ($1::text IS NULL OR ss.branch_id = $1::text)`,
-        [branchParam],
-      );
-
-      const grossMarginResult = await this.databaseService.query<GrossMarginRow>(
-        `WITH item_scope AS (
-           SELECT
-             CASE
-               WHEN COALESCE(to_jsonb(tpi)->>'unitPrice', to_jsonb(tpi)->>'unit_price', '0') ~ '^-?\\d+(\\.\\d+)?$'
-                 THEN COALESCE(to_jsonb(tpi)->>'unitPrice', to_jsonb(tpi)->>'unit_price', '0')::numeric
-               ELSE 0
-             END AS unit_price,
-             CASE
-               WHEN COALESCE(to_jsonb(tpi)->>'sellPrice', to_jsonb(tpi)->>'sell_price', '0') ~ '^-?\\d+(\\.\\d+)?$'
-                 THEN COALESCE(to_jsonb(tpi)->>'sellPrice', to_jsonb(tpi)->>'sell_price', '0')::numeric
-               ELSE 0
-             END AS sell_price,
-             CASE
-               WHEN COALESCE(to_jsonb(tpi)->>'discountPrice', to_jsonb(tpi)->>'discount_price', '0') ~ '^-?\\d+(\\.\\d+)?$'
-                 THEN COALESCE(to_jsonb(tpi)->>'discountPrice', to_jsonb(tpi)->>'discount_price', '0')::numeric
-               ELSE 0
-             END AS discount_price,
-             CASE
-               WHEN COALESCE(to_jsonb(tpi)->>'totalSetQty', to_jsonb(tpi)->>'total_set_qty', '0') ~ '^-?\\d+(\\.\\d+)?$'
-                 THEN COALESCE(to_jsonb(tpi)->>'totalSetQty', to_jsonb(tpi)->>'total_set_qty', '0')::numeric
-               ELSE 0
-             END AS qty,
-             LOWER(COALESCE(to_jsonb(tpi)->>'transType', to_jsonb(tpi)->>'trans_type', 'sales')) AS trans_type
-           FROM tbltransaction_product_items tpi
-         ),
-         totals AS (
-           SELECT
-             SUM((CASE WHEN discount_price > 0 THEN discount_price ELSE sell_price END) * qty) AS gross_sales,
-             SUM(((CASE WHEN discount_price > 0 THEN discount_price ELSE sell_price END) - unit_price) * qty) AS gross_margin
-           FROM item_scope
-           WHERE trans_type = 'sales'
-         )
-         SELECT
-           COALESCE((gross_margin / NULLIF(gross_sales, 0)) * 100, 0)::text AS "marginPercent"
-         FROM totals`,
-      );
-
-      const receivableResult = await this.databaseService.query<ReceivableRow>(
-        `WITH payment_totals AS (
-           SELECT
-             COALESCE(to_jsonb(sp)->>'so_id', to_jsonb(sp)->>'soId') AS so_id,
-             SUM(
-               CASE
-                WHEN COALESCE(to_jsonb(sp)->>'amount', '0') ~ '^-?\d+(\.\d+)?$'
-                 AND REPLACE(REPLACE(LOWER(TRIM(COALESCE(to_jsonb(sp)->>'status', ''))), '_', '-'), ' ', '-') IN ('paid', 'posted', 'cleared', 'complete', 'completed', 'remitted')
-                   THEN COALESCE(to_jsonb(sp)->>'amount', '0')::numeric
-                 ELSE 0
-               END
-             ) AS paid_amount
-           FROM tblso_payments sp
-           GROUP BY COALESCE(to_jsonb(sp)->>'so_id', to_jsonb(sp)->>'soId')
-         ),
-         sales_scope AS (
-           SELECT
-             so.id::text AS so_id,
-             CASE
-               WHEN COALESCE(to_jsonb(so)->>'total_amount', to_jsonb(so)->>'totalAmount', '0') ~ '^-?\\d+(\\.\\d+)?$'
-                 THEN COALESCE(to_jsonb(so)->>'total_amount', to_jsonb(so)->>'totalAmount', '0')::numeric
-               ELSE 0
-             END AS total_amount,
-             REPLACE(REPLACE(LOWER(TRIM(COALESCE(to_jsonb(so)->>'status', 'pending'))), '_', '-'), ' ', '-') AS normalized_status,
-             COALESCE(to_jsonb(so)->>'branchId', to_jsonb(so)->>'branch_id', '') AS branch_id
-           FROM tblsales_order so
-         )
-         SELECT COALESCE(SUM(GREATEST(ss.total_amount - COALESCE(pt.paid_amount, 0), 0)), 0)::text AS amount
-         FROM sales_scope ss
-         LEFT JOIN payment_totals pt
-           ON pt.so_id = ss.so_id
-         WHERE ss.normalized_status IN ('approved', 'released', 'delivered', 'partial', 'remitted', 'paid')
-           AND ($1::text IS NULL OR ss.branch_id = $1::text)`,
-        [branchParam],
-      );
-
-      const topCustomersResult = await this.databaseService.query<TopCustomerRow>(
-        `WITH payment_totals AS (
-           SELECT
-             COALESCE(to_jsonb(sp)->>'so_id', to_jsonb(sp)->>'soId') AS so_id,
-             SUM(
-               CASE
-                 WHEN COALESCE(to_jsonb(sp)->>'amount', '0') ~ '^-?\\d+(\\.\\d+)?$'
-                   THEN COALESCE(to_jsonb(sp)->>'amount', '0')::numeric
-                 ELSE 0
-               END
-             ) AS paid_amount
-           FROM tblso_payments sp
-           GROUP BY COALESCE(to_jsonb(sp)->>'so_id', to_jsonb(sp)->>'soId')
-         ),
-         sales_scope AS (
-           SELECT
-             so.id::text AS so_id,
-             COALESCE(to_jsonb(so)->>'customer_id', to_jsonb(so)->>'customerId', '') AS customer_id,
-             CASE
-               WHEN COALESCE(to_jsonb(so)->>'total_amount', to_jsonb(so)->>'totalAmount', '0') ~ '^-?\\d+(\\.\\d+)?$'
-                 THEN COALESCE(to_jsonb(so)->>'total_amount', to_jsonb(so)->>'totalAmount', '0')::numeric
-               ELSE 0
-             END AS total_amount,
-             COALESCE(NULLIF(to_jsonb(so)->>'created_at', ''), NULLIF(to_jsonb(so)->>'createdAt', ''))::timestamptz AS created_at,
-             COALESCE(to_jsonb(so)->>'branchId', to_jsonb(so)->>'branch_id', '') AS branch_id
-           FROM tblsales_order so
-         )
-         SELECT
-           COALESCE(to_jsonb(c)->>'name', 'Unknown Customer') AS name,
-           COUNT(*)::text AS orders,
-           COALESCE(SUM(GREATEST(ss.total_amount - COALESCE(pt.paid_amount, 0), 0)), 0)::text AS balance
-         FROM sales_scope ss
-         LEFT JOIN tblcustomer c
-           ON c.id::text = ss.customer_id
-         LEFT JOIN payment_totals pt
-           ON pt.so_id = ss.so_id
-         WHERE ss.created_at >= (CURRENT_DATE - INTERVAL '30 day')::timestamp
-           AND ($1::text IS NULL OR ss.branch_id = $1::text)
-         GROUP BY COALESCE(to_jsonb(c)->>'name', 'Unknown Customer')
-         ORDER BY COUNT(*) DESC, SUM(ss.total_amount) DESC
-         LIMIT 3`,
-        [branchParam],
-      );
-
-      const topCapacitiesResult = await this.databaseService.query<TopCapacityRow>(
-        `WITH sold_units AS (
-           SELECT
-             COALESCE(to_jsonb(tpi)->>'productId', to_jsonb(tpi)->>'product_id', '') AS product_id,
-             COALESCE(to_jsonb(tpi)->>'capacityId', to_jsonb(tpi)->>'capacity_id', '') AS capacity_id,
-             SUM(
-               CASE
-                 WHEN COALESCE(to_jsonb(tpi)->>'totalSetQty', to_jsonb(tpi)->>'total_set_qty', '0') ~ '^-?\\d+(\\.\\d+)?$'
-                   THEN COALESCE(to_jsonb(tpi)->>'totalSetQty', to_jsonb(tpi)->>'total_set_qty', '0')::numeric
-                 ELSE 0
-               END
-             ) AS units
-           FROM tbltransaction_product_items tpi
-           WHERE LOWER(COALESCE(to_jsonb(tpi)->>'transType', to_jsonb(tpi)->>'trans_type', 'sales')) = 'sales'
-           GROUP BY
-             COALESCE(to_jsonb(tpi)->>'productId', to_jsonb(tpi)->>'product_id', ''),
-             COALESCE(to_jsonb(tpi)->>'capacityId', to_jsonb(tpi)->>'capacity_id', '')
-         ),
-         in_stock_units AS (
-           SELECT
-             COALESCE(to_jsonb(sn)->>'productId', to_jsonb(sn)->>'product_id', '') AS product_id,
-             COALESCE(to_jsonb(sn)->>'capacityId', to_jsonb(sn)->>'capacity_id', '') AS capacity_id,
-             COUNT(*) FILTER (
-               WHERE REPLACE(REPLACE(LOWER(TRIM(COALESCE(to_jsonb(sn)->>'status', ''))), '_', '-'), ' ', '-') NOT IN (
-                 'scanned', 'reserved', 'delivered', 'installed', 'sold', 'released', 'out', 'outbound'
-               )
-             )::numeric AS in_stock,
-             COALESCE(to_jsonb(sn)->>'branchId', to_jsonb(sn)->>'branch_id', '') AS branch_id
-           FROM tblserial_numbers sn
-           GROUP BY
-             COALESCE(to_jsonb(sn)->>'productId', to_jsonb(sn)->>'product_id', ''),
-             COALESCE(to_jsonb(sn)->>'capacityId', to_jsonb(sn)->>'capacity_id', ''),
-             COALESCE(to_jsonb(sn)->>'branchId', to_jsonb(sn)->>'branch_id', '')
-         )
-         SELECT
-           TRIM(CONCAT(
-             COALESCE(to_jsonb(p)->>'productName', to_jsonb(p)->>'product_name', to_jsonb(p)->>'productname', 'Unknown Product'),
-             ' ',
-             COALESCE(to_jsonb(c)->>'capacity', to_jsonb(c)->>'capacityValue', to_jsonb(c)->>'capacity_value', '')
-           )) AS label,
-           COALESCE(su.units, 0)::text AS units,
-           COALESCE(
-             ROUND((su.units / NULLIF(su.units + COALESCE(SUM(isu.in_stock), 0), 0)) * 100),
-             0
-           )::text AS "sellThrough"
-         FROM sold_units su
-         LEFT JOIN tblproducts p
-           ON p.id::text = su.product_id
-         LEFT JOIN tblcapacity c
-           ON c.id::text = su.capacity_id
-         LEFT JOIN in_stock_units isu
-           ON isu.product_id = su.product_id
-          AND isu.capacity_id = su.capacity_id
-          AND ($1::text IS NULL OR isu.branch_id = $1::text)
-         GROUP BY label, su.units
-         ORDER BY su.units DESC
-         LIMIT 4`,
-        [branchParam],
-      );
-
-      const marginByBrandResult = await this.databaseService.query<MarginRow>(
-        `WITH item_scope AS (
-           SELECT
-             COALESCE(to_jsonb(tpi)->>'productId', to_jsonb(tpi)->>'product_id', '') AS product_id,
-             CASE
-               WHEN COALESCE(to_jsonb(tpi)->>'unitPrice', to_jsonb(tpi)->>'unit_price', '0') ~ '^-?\\d+(\\.\\d+)?$'
-                 THEN COALESCE(to_jsonb(tpi)->>'unitPrice', to_jsonb(tpi)->>'unit_price', '0')::numeric
-               ELSE 0
-             END AS unit_price,
-             CASE
-               WHEN COALESCE(to_jsonb(tpi)->>'sellPrice', to_jsonb(tpi)->>'sell_price', '0') ~ '^-?\\d+(\\.\\d+)?$'
-                 THEN COALESCE(to_jsonb(tpi)->>'sellPrice', to_jsonb(tpi)->>'sell_price', '0')::numeric
-               ELSE 0
-             END AS sell_price,
-             CASE
-               WHEN COALESCE(to_jsonb(tpi)->>'discountPrice', to_jsonb(tpi)->>'discount_price', '0') ~ '^-?\\d+(\\.\\d+)?$'
-                 THEN COALESCE(to_jsonb(tpi)->>'discountPrice', to_jsonb(tpi)->>'discount_price', '0')::numeric
-               ELSE 0
-             END AS discount_price,
-             CASE
-               WHEN COALESCE(to_jsonb(tpi)->>'totalSetQty', to_jsonb(tpi)->>'total_set_qty', '0') ~ '^-?\\d+(\\.\\d+)?$'
-                 THEN COALESCE(to_jsonb(tpi)->>'totalSetQty', to_jsonb(tpi)->>'total_set_qty', '0')::numeric
-               ELSE 0
-             END AS qty
-           FROM tbltransaction_product_items tpi
-           WHERE LOWER(COALESCE(to_jsonb(tpi)->>'transType', to_jsonb(tpi)->>'trans_type', 'sales')) = 'sales'
-         )
-         SELECT
-           COALESCE(to_jsonb(b)->>'name', 'Unknown Brand') AS label,
-           COALESCE(
-             (SUM(((CASE WHEN item_scope.discount_price > 0 THEN item_scope.discount_price ELSE item_scope.sell_price END) - item_scope.unit_price) * item_scope.qty)
-               / NULLIF(SUM((CASE WHEN item_scope.discount_price > 0 THEN item_scope.discount_price ELSE item_scope.sell_price END) * item_scope.qty), 0)
-             ) * 100,
-             0
-           )::text AS margin
-         FROM item_scope
-         LEFT JOIN tblproducts p
-           ON p.id::text = item_scope.product_id
-         LEFT JOIN tblbrands b
-           ON b.id::text = COALESCE(to_jsonb(p)->>'brand_id', to_jsonb(p)->>'brandId', '')
-         GROUP BY COALESCE(to_jsonb(b)->>'name', 'Unknown Brand')
-         ORDER BY margin DESC
-         LIMIT 4`,
-      );
-
-      const marginByVendorResult = await this.databaseService.query<MarginRow>(
-        `WITH serial_scope AS (
-           SELECT
-             COALESCE(to_jsonb(sn)->>'productId', to_jsonb(sn)->>'product_id', '') AS product_id,
-             COALESCE(to_jsonb(sn)->>'capacityId', to_jsonb(sn)->>'capacity_id', '') AS capacity_id,
-             COALESCE(to_jsonb(sn)->>'purchaseId', to_jsonb(sn)->>'purchase_id', to_jsonb(sn)->>'po_id', '') AS purchase_id,
-             REPLACE(REPLACE(LOWER(TRIM(COALESCE(to_jsonb(sn)->>'status', ''))), '_', '-'), ' ', '-') AS normalized_status,
-             COALESCE(to_jsonb(sn)->>'branchId', to_jsonb(sn)->>'branch_id', '') AS branch_id
-           FROM tblserial_numbers sn
-         )
-         SELECT
-           COALESCE(to_jsonb(v)->>'name', 'Unknown Vendor') AS label,
-           COALESCE(SUM(
-             COALESCE(NULLIF(to_jsonb(c)->>'srp', '')::numeric, 0)
-             - COALESCE(NULLIF(COALESCE(to_jsonb(tpi)->>'unitPrice', to_jsonb(tpi)->>'unit_price', ''), '')::numeric, 0)
-           ), 0)::text AS margin
-         FROM serial_scope ss
-         LEFT JOIN tblcapacity c
-           ON c.id::text = ss.capacity_id
-         LEFT JOIN tblpurchase_orders po
-           ON po.id::text = ss.purchase_id
-         LEFT JOIN tblvendors v
-           ON v.id::text = COALESCE(to_jsonb(po)->>'vendor_id', to_jsonb(po)->>'vendorId', '')
-         LEFT JOIN tbltransaction_product_items tpi
-           ON COALESCE(to_jsonb(tpi)->>'purchaseId', to_jsonb(tpi)->>'purchase_id', to_jsonb(tpi)->>'po_id', '') = ss.purchase_id
-          AND COALESCE(to_jsonb(tpi)->>'productId', to_jsonb(tpi)->>'product_id', '') = ss.product_id
-          AND COALESCE(to_jsonb(tpi)->>'capacityId', to_jsonb(tpi)->>'capacity_id', '') = ss.capacity_id
-          AND LOWER(COALESCE(to_jsonb(tpi)->>'transType', to_jsonb(tpi)->>'trans_type', 'purchase')) = 'purchase'
-         WHERE ss.purchase_id <> ''
-           AND ss.normalized_status NOT IN (
-             'scanned', 'reserved', 'delivered', 'installed', 'sold', 'released', 'out', 'outbound'
-           )
-           AND ($1::text IS NULL OR ss.branch_id = $1::text)
-         GROUP BY COALESCE(to_jsonb(v)->>'name', 'Unknown Vendor')
-         ORDER BY margin DESC
-         LIMIT 4`,
         [branchParam],
       );
 
@@ -984,14 +860,6 @@ export class DashboardService {
         [branchParam],
       );
 
-      const inStockCount = this.toNumber(inStockCountResult.rows[0]?.count);
-      const openPoCount = this.toNumber(openPoCountResult.rows[0]?.count);
-      const dispatchCount = this.toNumber(dispatchCountResult.rows[0]?.count);
-      const installQueueCount = this.toNumber(installQueueCountResult.rows[0]?.count);
-      const stockAlertsCount = this.toNumber(stockAlertsResult.rows[0]?.count);
-      const poTodayCount = this.toNumber(receivingTodayResult.rows[0]?.count);
-      const scannedTodayCount = this.toNumber(scannedTodayResult.rows[0]?.count);
-
       const settledSalesAmount = this.toNumber(salesSummaryResult.rows[0]?.settledAmount);
       const settledSalesCount = this.toNumber(salesSummaryResult.rows[0]?.settledCount);
       const unpaidSalesAmount = this.toNumber(salesSummaryResult.rows[0]?.unpaidAmount);
@@ -1000,64 +868,58 @@ export class DashboardService {
       const overdueSalesCount = this.toNumber(salesSummaryResult.rows[0]?.overdueCount);
       const chequeReceivableAmount = this.toNumber(salesSummaryResult.rows[0]?.chequeAmount);
       const chequeReceivableCount = this.toNumber(salesSummaryResult.rows[0]?.chequeCount);
-      const grossMarginPercent = this.toNumber(grossMarginResult.rows[0]?.marginPercent);
-      const unpaidReceivable = this.toNumber(receivableResult.rows[0]?.amount);
 
-      const inStockDelta = this.buildDelta(inStockCount, inStockCount);
-      const openPoDelta = this.buildDelta(openPoCount, openPoCount);
-      const dispatchDelta = this.buildDelta(dispatchCount, dispatchCount);
-      const installDelta = this.buildDelta(installQueueCount, installQueueCount);
       const topKpis: KpiCard[] = [
         {
-          label: 'In-Stock Units',
-          value: this.formatInteger(inStockCount),
-          change: inStockDelta.change,
-          trend: inStockDelta.trend,
+          label: 'Active Pending SO',
+          value: this.formatInteger(activePendingSoCount),
+          change: `${this.formatInteger(activePendingSoCount)} pending`,
+          trend: 'up',
         },
         {
-          label: 'Open Purchase Orders',
-          value: this.formatInteger(openPoCount),
-          change: openPoDelta.change,
-          trend: openPoDelta.trend,
+          label: 'Completed SO',
+          value: this.formatInteger(completedSoCount),
+          change: `${this.formatInteger(completedSoCount)} complete`,
+          trend: 'up',
         },
         {
-          label: 'Dispatch Today',
-          value: this.formatInteger(dispatchCount),
-          change: dispatchDelta.change,
-          trend: dispatchDelta.trend,
+          label: 'Draft / Quotation',
+          value: this.formatInteger(draftQuotationCount),
+          change: `${this.formatInteger(draftQuotationCount)} drafts`,
+          trend: 'up',
         },
         {
-          label: 'Install Queue',
-          value: this.formatInteger(installQueueCount),
-          change: installDelta.change,
-          trend: installDelta.trend,
+          label: 'Total Sales Orders',
+          value: this.formatInteger(totalSalesOrdersCount),
+          change: `${this.formatInteger(totalSalesOrdersCount)} total`,
+          trend: 'up',
         },
       ];
 
       const operations: OpsItem[] = [
         {
-          label: 'Receiving Today',
-          value: `${this.formatInteger(poTodayCount)} PO / ${this.formatInteger(scannedTodayCount)} Serials`,
-          hint: 'Live from purchase and serial logs',
+          label: 'Total Purchase Orders',
+          value: this.formatCurrency(totalPurchaseOrdersAmount),
+          hint: 'Year-to-date PO total',
           level: 'normal',
         },
         {
-          label: 'For Dispatch',
-          value: `${this.formatInteger(dispatchCount)} Orders`,
-          hint: 'Statuses: pending, for-delivery, to-remit',
-          level: dispatchCount > 10 ? 'warning' : 'normal',
+          label: 'Total Credit Terms',
+          value: this.formatCurrency(totalCreditTermsAmount),
+          hint: 'Terms, Terms with DP, Installment',
+          level: totalCreditTermsAmount > 0 ? 'warning' : 'normal',
         },
         {
-          label: 'For Installation',
-          value: `${this.formatInteger(installQueueCount)} Bookings`,
-          hint: 'Statuses containing installation steps',
-          level: installQueueCount > 8 ? 'warning' : 'normal',
+          label: 'Total Paid POs',
+          value: this.formatCurrency(totalPaidPosAmount),
+          hint: 'Completed purchase orders this year',
+          level: 'normal',
         },
         {
-          label: 'Stock Alerts',
-          value: `${this.formatInteger(stockAlertsCount)} capacities low`,
-          hint: 'Threshold: <= 5 in-stock units',
-          level: stockAlertsCount > 0 ? 'critical' : 'normal',
+          label: 'Stock Alert',
+          value: `${this.formatInteger(stockAlertCount)} materials`,
+          hint: 'On-hand stock at or below reorder level',
+          level: stockAlertCount > 0 ? 'critical' : 'normal',
         },
       ];
 
@@ -1088,28 +950,6 @@ export class DashboardService {
         },
       ];
 
-      const topCustomers = topCustomersResult.rows.map((row) => ({
-        name: String(row.name || 'Unknown Customer').trim(),
-        orders: this.toNumber(row.orders),
-        balance: this.formatCurrency(this.toNumber(row.balance)),
-      }));
-
-      const topCapacities = topCapacitiesResult.rows.map((row) => ({
-        label: String(row.label || 'Unknown Capacity').trim(),
-        units: this.toNumber(row.units),
-        sellThrough: Math.max(0, Math.min(100, this.toNumber(row.sellThrough))),
-      }));
-
-      const marginByBrand = marginByBrandResult.rows.map((row) => ({
-        label: String(row.label || 'Unknown Brand').trim(),
-        margin: this.toNumber(row.margin),
-      }));
-
-      const marginByVendor = marginByVendorResult.rows.map((row) => ({
-        label: String(row.label || 'Unknown Vendor').trim(),
-        margin: this.toNumber(row.margin) / 1000000,
-      }));
-
       const activityFeed = activityResult.rows
         .map((row) => ({
           time: this.formatActivityTime(row.eventAt),
@@ -1122,17 +962,11 @@ export class DashboardService {
         .map(({ time, text, status }) => ({ time, text, status }));
 
       const focusSegments: string[] = [];
-      if (dispatchCount > 0) {
-        focusSegments.push(`${this.formatInteger(dispatchCount)} dispatch orders`);
+      if (stockAlertCount > 0) {
+        focusSegments.push(`${this.formatInteger(stockAlertCount)} low-stock materials`);
       }
-      if (stockAlertsCount > 0) {
-        focusSegments.push(`${this.formatInteger(stockAlertsCount)} low-stock capacities`);
-      }
-      if (installQueueCount > 0) {
-        focusSegments.push(`${this.formatInteger(installQueueCount)} installs in queue`);
-      }
-      if (unpaidReceivable > 0) {
-        focusSegments.push(`${this.formatCurrency(unpaidReceivable)} still collectible`);
+      if (unpaidSalesAmount > 0) {
+        focusSegments.push(`${this.formatCurrency(unpaidSalesAmount)} still collectible`);
       }
 
       return {
@@ -1143,9 +977,9 @@ export class DashboardService {
           operations,
           salesSummary,
           topCustomers,
-          topCapacities,
-          marginByBrand,
-          marginByVendor,
+          topSuppliers,
+          topEmployees,
+          netoData,
           activityFeed,
           todayFocus: focusSegments.length > 0 ? focusSegments.join(', ') : 'All core queues are stable today',
         },
