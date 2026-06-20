@@ -5,7 +5,7 @@ import { BusinessSettingsService } from './business-settings.service';
 
 @Injectable()
 export class AppTitleStrategy extends TitleStrategy {
-  private websiteTabName = 'HVAC Warehouse and Sales';
+  private websiteTabName = '3BMA Aircondition Inveentory and Sales Management';
   private routingTabName = '{route}';
   private hasRequestedProfile = false;
   private currentRouteTitle = 'Home';
@@ -23,31 +23,11 @@ export class AppTitleStrategy extends TitleStrategy {
 
     this.applyTitle();
 
-    if (!this.hasRequestedProfile) {
-      this.hasRequestedProfile = true;
-      void this.loadProfileTitles();
-    }
+    // Business profile API call disabled — use default title to avoid slow load
   }
 
   private async loadProfileTitles(): Promise<void> {
-    try {
-      const profile = await this.businessSettingsService.getPublicBusinessProfile();
-
-      const configuredWebsiteTabName = String(profile?.websiteTabName ?? '').trim();
-      const configuredRoutingTabName = String(profile?.routingTabName ?? '').trim();
-
-      if (configuredWebsiteTabName) {
-        this.websiteTabName = configuredWebsiteTabName;
-      }
-
-      if (configuredRoutingTabName) {
-        this.routingTabName = configuredRoutingTabName;
-      }
-
-      this.applyTitle();
-    } catch {
-      this.applyTitle();
-    }
+    // Disabled — was causing login page timeout
   }
 
   private applyTitle(): void {

@@ -438,13 +438,12 @@ export class QuotationPdfService {
     const minY = config.marginBottom + 30; // Minimum Y threshold above disclaimer/footer
     const newPages: PDFPage[] = [];
 
-    // Column layout (x positions relative to marginLeft)
+    // Column layout (x positions relative to marginLeft) — no Discount column
     const columns = {
       itemNo: { x: config.marginLeft, width: 35, align: 'left' as const, label: 'Item #' },
-      description: { x: config.marginLeft + 35, width: contentWidth - 35 - 50 - 70 - 70 - 70, align: 'left' as const, label: 'Description' },
-      qty: { x: config.marginLeft + contentWidth - 50 - 70 - 70 - 70, width: 50, align: 'right' as const, label: 'Qty' },
-      rate: { x: config.marginLeft + contentWidth - 70 - 70 - 70, width: 70, align: 'right' as const, label: 'Rate' },
-      discount: { x: config.marginLeft + contentWidth - 70 - 70, width: 70, align: 'right' as const, label: 'Discount' },
+      description: { x: config.marginLeft + 35, width: contentWidth - 35 - 50 - 70 - 70, align: 'left' as const, label: 'Description' },
+      qty: { x: config.marginLeft + contentWidth - 50 - 70 - 70, width: 50, align: 'right' as const, label: 'Qty' },
+      rate: { x: config.marginLeft + contentWidth - 70 - 70, width: 70, align: 'right' as const, label: 'Rate' },
       total: { x: config.marginLeft + contentWidth - 70, width: 70, align: 'right' as const, label: 'Total' },
     };
 
@@ -491,7 +490,6 @@ export class QuotationPdfService {
 
       drawRightAligned(p, columns.qty.label, columns.qty.x, columns.qty.width, y, fonts.bold);
       drawRightAligned(p, columns.rate.label, columns.rate.x, columns.rate.width, y, fonts.bold);
-      drawRightAligned(p, columns.discount.label, columns.discount.x, columns.discount.width, y, fonts.bold);
       drawRightAligned(p, columns.total.label, columns.total.x, columns.total.width, y, fonts.bold);
 
       // Draw separator line below headers
@@ -560,11 +558,9 @@ export class QuotationPdfService {
       // Draw qty
       drawRightAligned(currentPage, String(item.qty), columns.qty.x, columns.qty.width, currentY, fonts.regular);
 
-      // Draw rate
-      drawRightAligned(currentPage, this.formatMoney(item.rate), columns.rate.x, columns.rate.width, currentY, fonts.regular);
-
-      // Draw discount
-      drawRightAligned(currentPage, this.formatMoney(item.discount), columns.discount.x, columns.discount.width, currentY, fonts.regular);
+      // Draw effective rate (rate - discount, so discount is absorbed into the price)
+      const effectiveRate = Math.max(0, item.rate - item.discount);
+      drawRightAligned(currentPage, this.formatMoney(effectiveRate), columns.rate.x, columns.rate.width, currentY, fonts.regular);
 
       // Draw line total
       drawRightAligned(currentPage, this.formatMoney(lineTotal), columns.total.x, columns.total.width, currentY, fonts.regular);

@@ -950,20 +950,25 @@ export class SalesOrderMaterialFormComponent implements OnInit, OnDestroy {
         return;
       }
 
-      // Validate stock availability
-      const { warnings: stockWarnings, errors: stockErrors } = this.validateStockAvailability();
+      // Skip stock and payment validation for draft status
+      const isDraft = status === 'draft';
 
-      // Validate payment setup
-      const { errors: paymentErrors } = this.validatePaymentSetup();
+      if (!isDraft) {
+        // Validate stock availability
+        const { warnings: stockWarnings, errors: stockErrors } = this.validateStockAvailability();
 
-      // Combine all errors
-      const allErrors = [...stockErrors, ...paymentErrors];
+        // Validate payment setup
+        const { errors: paymentErrors } = this.validatePaymentSetup();
 
-      // If there are warnings or errors, show modal
-      if (allErrors.length > 0 || stockWarnings.length > 0) {
-        this.isSubmitting = false;
-        this.openValidationModal(status, stockWarnings, allErrors);
-        return;
+        // Combine all errors
+        const allErrors = [...stockErrors, ...paymentErrors];
+
+        // If there are warnings or errors, show modal
+        if (allErrors.length > 0 || stockWarnings.length > 0) {
+          this.isSubmitting = false;
+          this.openValidationModal(status, stockWarnings, allErrors);
+          return;
+        }
       }
 
       // No issues, proceed with submission
@@ -1016,16 +1021,19 @@ export class SalesOrderMaterialFormComponent implements OnInit, OnDestroy {
         return;
       }
 
-      const { warnings: stockWarnings, errors: stockErrors } = this.validateStockAvailability();
-      const { errors: paymentErrors } = this.validatePaymentSetup();
-      const allErrors = [...stockErrors, ...paymentErrors];
+      const isDraft = status === 'draft';
 
-      if (allErrors.length > 0 || stockWarnings.length > 0) {
-        this.isSubmitting = false;
-        // Store that we want post-complete behavior after validation proceed
-        this.pendingPostComplete = true;
-        this.openValidationModal(status, stockWarnings, allErrors);
-        return;
+      if (!isDraft) {
+        const { warnings: stockWarnings, errors: stockErrors } = this.validateStockAvailability();
+        const { errors: paymentErrors } = this.validatePaymentSetup();
+        const allErrors = [...stockErrors, ...paymentErrors];
+
+        if (allErrors.length > 0 || stockWarnings.length > 0) {
+          this.isSubmitting = false;
+          this.pendingPostComplete = true;
+          this.openValidationModal(status, stockWarnings, allErrors);
+          return;
+        }
       }
 
       await this.performSubmissionWithPostComplete(status);

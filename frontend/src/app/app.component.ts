@@ -4,7 +4,6 @@ import { IdleSessionService } from './shared/services/idle-session.service';
 import { NotificationToastComponent } from './shared/components/common/notification-toast/notification-toast.component';
 import { RbacService } from './shared/services/rbac.service';
 import { Title } from '@angular/platform-browser';
-import { BusinessSettingsService } from './shared/services/business-settings.service';
 
 @Component({
   selector: 'app-root',
@@ -20,7 +19,6 @@ export class AppComponent implements OnInit {
   constructor(
     private readonly idleSessionService: IdleSessionService,
     private readonly rbacService: RbacService,
-    private readonly businessSettingsService: BusinessSettingsService,
     private readonly titleService: Title,
   ) { }
 
