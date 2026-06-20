@@ -8,6 +8,16 @@ import { UpdateLoginDto } from './dto/update-login.dto';
 import { RefreshTokenDto } from './dto/refresh-token.dto';
 import { DatabaseService } from 'src/database/database.service';
 
+function normalizeJwtExpiresIn(value: string, fallback: string): string | number {
+  const trimmed = String(value ?? fallback).trim();
+  if (/^\d+$/.test(trimmed)) {
+    // jsonwebtoken treats numeric strings as milliseconds, convert to number for seconds.
+    return Number(trimmed);
+  }
+
+  return trimmed || fallback;
+}
+
 @Injectable()
 export class LoginService {
   constructor(
@@ -23,8 +33,11 @@ export class LoginService {
     );
   }
 
-  private getRefreshExpiry(): string {
-    return this.configService.get<string>('JWT_REFRESH_EXPIRES_IN', '7d');
+  private getRefreshExpiry(): string | number {
+    return normalizeJwtExpiresIn(
+      this.configService.get<string>('JWT_REFRESH_EXPIRES_IN', '7d') ?? '7d',
+      '7d',
+    );
   }
 
   async create(createLoginDto: CreateLoginDto) {

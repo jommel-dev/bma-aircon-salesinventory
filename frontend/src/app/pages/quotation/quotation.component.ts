@@ -6,6 +6,7 @@ import { DomSanitizer, SafeResourceUrl } from '@angular/platform-browser';
 import { PDFDocument, StandardFonts, rgb } from 'pdf-lib';
 import { PageBreadcrumbComponent } from '../../shared/components/common/page-breadcrumb/page-breadcrumb.component';
 import { ProductOption, SalesCustomerOption } from '../../shared/services/sales-order.service';
+import { MaterialSalesOrderDetail } from '../../shared/services/sales-order-material.service';
 import {
   BusinessProfileSettings,
   BusinessSettingsService,
@@ -17,6 +18,7 @@ import {
   QuotationService,
   QuotationTermsConditions,
 } from '../../shared/services/quotation.service';
+import { QuotationPdfService } from '../../shared/services/quotation-pdf.service';
 import { RbacService } from '../../shared/services/rbac.service';
 import axios from 'axios';
 
@@ -106,6 +108,7 @@ export class QuotationComponent implements OnInit, OnDestroy {
     private readonly rbacService: RbacService,
     private readonly sanitizer: DomSanitizer,
     private readonly router: Router,
+    private readonly quotationPdfService: QuotationPdfService,
   ) {}
 
   private businessProfileSettings: BusinessProfileSettings | null = null;
@@ -349,20 +352,8 @@ export class QuotationComponent implements OnInit, OnDestroy {
     this.router.navigate(['/users/quotation/create']);
   }
 
-  async openEditDrawer(item: QuotationListItem): Promise<void> {
-    this.drawerMode = 'edit';
-    this.editingQuotationId = item.id;
-    this.uiMessage = '';
-    this.uiError = '';
-    this.isDrawerOpen = true;
-
-    const detail = await this.quotationService.getQuotationById(item.id);
-    if (!detail) {
-      this.uiError = 'Unable to load quotation details';
-      return;
-    }
-
-    this.applyDetailToForm(detail);
+  openEditDrawer(item: QuotationListItem): void {
+    this.router.navigate(['/users/quotation/edit', item.id]);
   }
 
   closeDrawer(): void {
@@ -911,247 +902,56 @@ export class QuotationComponent implements OnInit, OnDestroy {
       return;
     }
 
-    const groupedItems = new Map<string, Array<{
-      model: string;
-      description: string;
-      frequency: string;
-      capacity: string;
-      phvHz: string;
-      qty: number;
-      price?: number;
-      discPrice: number;
-      miscTotal: number;
-      lineTotal: number;
-    }>>();
-    const pdfRows: QuotationPreviewPdfRow[] = [];
-    const miscRows: QuotationPreviewMiscRow[] = [];
-
-    for (const productItem of detail.productItems) {
-      const meta = this.parseItemMeta(productItem.remarks || '');
-      const groupName = meta.grouping || 'UNSPECIFIED AREA';
-      const sell = Number(productItem.sellPrice ?? 0);
-      const discountAmt = Number(productItem.discountPrice ?? 0);
-      const unit = Number(productItem.unitPrice ?? 0);
-      const price = sell > 0 ? sell : unit;
-      const disc = sell > 0 ? Math.min(discountAmt, sell) : (discountAmt > 0 ? discountAmt : 0);
-      const priceForDisplay = price;
-
-      const installLines = (meta.installationDetails ?? [])
-        .map((install) => {
-          const unitPrice = Number(install.unitPrice ?? 0);
-          const excessQty = Number(install.excessQty ?? 0);
-          const freeQty = Number(install.freeQty ?? 0);
-          const unit = String(install.unit || 'FT').trim() || 'FT';
-          const baseRaw = String(install.description || '').trim();
-          // skip completely empty installation entries (no description and no numeric values)
-          if (!baseRaw && unitPrice <= 0 && excessQty <= 0 && freeQty <= 0) {
-            return '';
-          }
-
-          const base = baseRaw || '';
-          const parts: string[] = [];
-          if (base) parts.push(base);
-          if (unitPrice > 0 && baseRaw) parts.push(`Unit Price: ${this.formatAmount(unitPrice)}`);
-          if (excessQty > 0 && baseRaw) parts.push(`Excess: ${excessQty}`);
-          if (freeQty > 0 && baseRaw) parts.push(`Free: ${freeQty} ${this.escapeHtml(unit)}`);
-          return parts.join(' | ');
-        })
-        .filter(Boolean)
-        .join('<br/>');
-
-      // include indoor/outdoor models beside product name when available
-      const capacityModel = (() => {
-        try {
-          const prod = this.catalogProducts.find((p) => String(p.id) === String(productItem.productId));
-          const cap = prod?.capacities?.find((c) => String(c.id) === String(productItem.capacityId));
-          const indoor = String(cap?.indoorModel ?? '').trim();
-          const outdoor = String(cap?.outdoorModel ?? '').trim();
-          const parts = [indoor, outdoor].filter(Boolean);
-          return parts.length > 0 ? ` (${parts.join(' / ')})` : '';
-        } catch {
-          return '';
-        }
-      })();
-
-      const descriptionParts = [
-        this.escapeHtml(String(productItem.productName || '-') + capacityModel),
-        meta.itemRemarks ? this.escapeHtml(meta.itemRemarks) : '',
-        installLines,
-      ].filter((part) => String(part).trim().length > 0);
-      const miscTotal = (meta.installationDetails ?? []).reduce((sum, install) => {
-        const unitPrice = Number(install.unitPrice ?? 0);
-        const excessQty = Number(install.excessQty ?? 0);
-        return sum + unitPrice * Math.max(0, excessQty);
-      }, 0);
-      const quantity = Number(productItem.totalSetQty ?? 0);
-      const totalPerLine = Math.max(0, price * quantity - disc) + miscTotal;
-
-      if (!groupedItems.has(groupName)) {
-        groupedItems.set(groupName, []);
-      }
-
-      groupedItems.get(groupName)?.push({
-        model: this.escapeHtml(productItem.productName || '-'),
-        description: descriptionParts.join('<br/>'),
-        frequency: 'N/A',
-        capacity: this.escapeHtml(productItem.capacityName || '-'),
-        phvHz: '1/230/60',
-        qty: quantity,
-        price: priceForDisplay,
-        // show price in discPrice for legacy consumers; pdf rendering uses table cells
-        discPrice: disc,
-        miscTotal,
-        lineTotal: totalPerLine,
-      });
-
-      pdfRows.push({
-        groupName,
-        model: String(productItem.productName || '-'),
-        description: [
-          String(productItem.productName || '-'),
-          meta.itemRemarks ? String(meta.itemRemarks) : '',
-          (meta.installationDetails ?? [])
-            .map((install) => {
-              const unitPrice = Number(install.unitPrice ?? 0);
-              const excessQty = Number(install.excessQty ?? 0);
-              const freeQty = Number(install.freeQty ?? 0);
-              const unit = String(install.unit || 'FT').trim() || 'FT';
-              const baseRaw = String(install.description || '').trim();
-              // skip completely empty installation entries (no description and no numeric values)
-              if (!baseRaw && unitPrice <= 0 && excessQty <= 0 && freeQty <= 0) return '';
-
-              const base = baseRaw || '';
-              const parts: string[] = [];
-              if (base) parts.push(base);
-              if (unitPrice > 0 && base) parts.push(`Unit Price: ${this.formatAmountPdf(unitPrice)}`);
-              if (excessQty > 0 && base) parts.push(`Excess: ${excessQty}`);
-              if (freeQty > 0 && base) parts.push(`Free: ${freeQty} ${unit}`);
-              return parts.join(' | ');
-            })
-            .filter(Boolean)
-            .join(' | '),
-        ]
-          .filter((part) => part.trim().length > 0)
-          .join(' | '),
-        capacity: String(productItem.capacityName || '-'),
-        price: priceForDisplay,
-        qty: quantity,
-        discPrice: disc,
-        miscTotal,
-        lineTotal: totalPerLine,
-      });
-
-      for (const install of meta.installationDetails ?? []) {
-        const unitPrice = Number(install.unitPrice ?? 0);
-        const excessQty = Number(install.excessQty ?? 0);
-        const amount = unitPrice * Math.max(0, excessQty);
-        if (amount <= 0) {
-          continue;
-        }
-
-        miscRows.push({
-          groupName,
-          model: String(productItem.productName || '-'),
-          description: String(install.description || '').trim() || 'Miscellaneous',
-          unitPrice,
-          excessQty,
-          amount,
-        });
-      }
+    this.uiError = '';
+    try {
+      const orderData = this.buildOrderDetailForListPreview(detail);
+      const businessProfile = await this.businessSettingsService.getBusinessProfile();
+      const dataUri = await this.quotationPdfService.generateQuotationPdf(orderData, businessProfile);
+      this.openQuotationPreview(dataUri, `Quotation-${detail.quoteNo || detail.id}.pdf`);
+    } catch (error: unknown) {
+      const message =
+        axios.isAxiosError(error)
+          ? (error.response?.data as { message?: string } | undefined)?.message
+          : undefined;
+      this.uiError = message ?? 'Failed to generate quotation PDF preview';
     }
+  }
 
-    const tableRowsHtml = [...groupedItems.entries()]
-      .map(([groupName, rows]) => {
-        const sectionRow = `
-          <tr>
-            <td colspan="9" class="section-row">${this.escapeHtml(groupName)}</td>
-          </tr>
-        `;
-
-        const itemRows = rows
-          .map((row) => `
-            <tr>
-              <td>${row.model}</td>
-              <td>${row.description}</td>
-              <td class="center">${row.frequency}</td>
-              <td class="center">${row.capacity}</td>
-              <td class="center">${row.phvHz}</td>
-              <td class="center">${row.qty}</td>
-              <td class="right">${this.formatAmount(row.price ?? 0)}</td>
-              <td class="right">${this.formatAmount(row.discPrice)}</td>
-              <td class="right">${this.formatAmount(row.lineTotal)}</td>
-            </tr>
-          `)
-          .join('');
-
-        return `${sectionRow}${itemRows}`;
-      })
-      .join('');
-
-    const businessProfile = await this.loadBusinessProfileSettings();
-    const headerProfile = await this.buildQuotationHeaderProfile(businessProfile);
-    const miscTableRowsHtml = miscRows.length > 0
-      ? miscRows
-          .map((row) => `
-            <tr>
-              <td>${this.escapeHtml(row.groupName)}</td>
-              <td>${this.escapeHtml(row.model)}</td>
-              <td>${this.escapeHtml(row.description)}</td>
-              <td class="right">${this.formatAmount(row.unitPrice)}</td>
-              <td class="right">${row.excessQty}</td>
-              <td class="right">${this.formatAmount(row.amount)}</td>
-            </tr>
-          `)
-          .join('')
-      : '<tr><td colspan="6" class="center">No miscellaneous costs</td></tr>';
-
-    const totalAmount = pdfRows.reduce((sum, row) => sum + Number(row.lineTotal ?? 0), 0);
-    const totalDiscount = pdfRows.reduce((sum, row) => sum + Number(row.discPrice ?? 0), 0);
-
-    const html = this.buildQuotationPreviewHtml({
-      quoteNo: String(detail.quoteNo || '').trim() || 'AUTO GENERATED',
-      quoteDate: detail.quoteDate,
-      customerName: detail.customerName,
-      customerContactPerson: detail.customerContactPerson,
-      customerContactNumber: detail.customerContactNumber,
-      customerAddress: detail.customerAddress,
-      headerBusinessName: headerProfile.businessName,
-      headerAddress: headerProfile.addressDetails,
-      headerContact: headerProfile.contactDetails,
-      headerEmail: headerProfile.emailDetails,
-      headerColor: headerProfile.headerColor,
-      paymentTerms: headerProfile.paymentTerms,
-      paymentInstruction: headerProfile.paymentInstruction,
-      bankAccount: headerProfile.bankAccount,
-      preparedSignature: headerProfile.preparedSignature,
-      preparedByName: String(detail.createdByName || '').trim() || undefined,
-      checkedSignature: headerProfile.checkedSignature,
-      approvedSignature: headerProfile.approvedSignature,
-      totalAmount,
-      discountAmount: totalDiscount,
-      logoSrc: headerProfile.logoSrc,
-      tableRowsHtml,
-      miscTableRowsHtml,
-      termsConditions: detail.termsConditions,
-    });
-
-    this.quotationPreviewPdfData = {
-      quoteNo: String(detail.quoteNo || '').trim() || 'AUTO GENERATED',
-      quoteDate: detail.quoteDate,
-      customerName: detail.customerName,
-      customerContactPerson: detail.customerContactPerson,
-      customerContactNumber: detail.customerContactNumber,
-      customerAddress: detail.customerAddress,
-      totalAmount,
-      discountAmount: totalDiscount,
-      rows: pdfRows,
-      miscRows,
-      preparedByName: String(detail.createdByName || '').trim() || undefined,
+  private buildOrderDetailForListPreview(detail: QuotationDetailItem): MaterialSalesOrderDetail {
+    return {
+      id: Number(detail.id ?? 0),
+      soNumber: null,
+      customerId: detail.customerId ?? null,
+      customerName: detail.customerName ?? null,
+      customerAddress: detail.customerAddress ?? null,
+      customerContactPerson: detail.customerContactPerson ?? null,
+      customerContactNumber: detail.customerContactNumber ?? null,
+      totalAmount: Number(detail.totalAmount ?? 0),
+      status: String(detail.status ?? 'draft'),
+      salesType: 'quotation',
+      scheduleDate: detail.quoteDate ?? null,
+      deliveryDate: detail.quoteDate ?? null,
+      remarks: detail.remarks ?? null,
+      createdAt: detail.createdAt ?? null,
+      productItems: (detail.productItems ?? []).map((item, index) => {
+        const rate = Number(item.sellPrice ?? item.unitPrice ?? 0);
+        const qty = Number(item.totalSetQty ?? 0);
+        return {
+          id: Number(item.id ?? index + 1),
+          materialId: item.productId ? Number(item.productId) : null,
+          description: String(item.productName || '-'),
+          itemCode: null,
+          brand: null,
+          cost: Number(item.unitPrice ?? 0),
+          rate,
+          discount: Number(item.discountPrice ?? 0),
+          qty,
+          total: Number(item.lineTotal ?? rate * qty),
+          isNonInventory: false,
+        };
+      }),
+      paymentDetails: [],
     };
-
-    const blob = new Blob([html], { type: 'text/html;charset=utf-8' });
-    const blobUrl = URL.createObjectURL(blob);
-    this.openQuotationPreview(blobUrl, `Quotation-${detail.quoteNo || detail.id}.pdf`);
   }
 
   async previewQuotationFromDrawer(): Promise<void> {
@@ -2041,10 +1841,10 @@ export class QuotationComponent implements OnInit, OnDestroy {
     });
   }
 
-  private openQuotationPreview(blobUrl: string, filename: string): void {
+  private openQuotationPreview(previewUrl: string, filename: string): void {
     this.revokeQuotationPreviewUrl();
-    this.quotationPreviewObjectUrl = blobUrl;
-    this.quotationPreviewUrl = this.sanitizer.bypassSecurityTrustResourceUrl(blobUrl);
+    this.quotationPreviewObjectUrl = previewUrl.startsWith('blob:') ? previewUrl : null;
+    this.quotationPreviewUrl = this.sanitizer.bypassSecurityTrustResourceUrl(previewUrl);
     this.quotationPreviewFilename = filename;
     this.isQuotationPreviewOpen = true;
   }

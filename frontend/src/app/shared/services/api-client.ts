@@ -48,6 +48,11 @@ function notifyRefreshQueue(token: string | null): void {
   refreshQueue = [];
 }
 
+function isAuthEndpoint(url: unknown): boolean {
+  const normalizedUrl = String(url ?? '').toLowerCase();
+  return normalizedUrl.includes('/login') || normalizedUrl.includes('/login/refresh');
+}
+
 function extractUserIdFromJwt(token: string): number | null {
   const parts = token.split('.');
   if (parts.length !== 3) {
@@ -153,35 +158,45 @@ async function refreshAccessToken(): Promise<string | null> {
 }
 
 apiClient.interceptors.request.use((config) => {
-  const token = getAccessToken();
-  const activeBranchId = getActiveBranchIdFromStorage();
-
-  config.headers ??= new AxiosHeaders();
-
-  if (config.headers instanceof AxiosHeaders) {
-    if (token) {
-      config.headers.set('Authorization', `Bearer ${token}`);
-    }
-
-    if (activeBranchId) {
-      config.headers.set('x-active-branch-id', String(activeBranchId));
-    } else {
-      config.headers.delete('x-active-branch-id');
-    }
-  } else {
-    const headers = config.headers as Record<string, string>;
-    if (token) {
-      headers['Authorization'] = `Bearer ${token}`;
-    }
-
-    if (activeBranchId) {
-      headers['x-active-branch-id'] = String(activeBranchId);
-    } else {
-      delete headers['x-active-branch-id'];
-    }
+  if (isAuthEndpoint(config.url)) {
+    return config;
   }
 
-  return config;
+  const activeBranchId = getActiveBranchIdFromStorage();
+
+  return Promise.resolve().then(async () => {
+    let token = getAccessToken();
+    if (!token && getRefreshToken()) {
+      token = await refreshAccessToken();
+    }
+
+    config.headers ??= new AxiosHeaders();
+
+    if (config.headers instanceof AxiosHeaders) {
+      if (token) {
+        config.headers.set('Authorization', `Bearer ${token}`);
+      }
+
+      if (activeBranchId) {
+        config.headers.set('x-active-branch-id', String(activeBranchId));
+      } else {
+        config.headers.delete('x-active-branch-id');
+      }
+    } else {
+      const headers = config.headers as Record<string, string>;
+      if (token) {
+        headers['Authorization'] = `Bearer ${token}`;
+      }
+
+      if (activeBranchId) {
+        headers['x-active-branch-id'] = String(activeBranchId);
+      } else {
+        delete headers['x-active-branch-id'];
+      }
+    }
+
+    return config;
+  });
 });
 
 apiClient.interceptors.response.use(
@@ -190,10 +205,11 @@ apiClient.interceptors.response.use(
     const status = error?.response?.status as number | undefined;
     const originalRequest = error?.config as RetryConfig | undefined;
 
-    if (status !== 401 || !originalRequest || originalRequest._retry) {
-      if (status === 401) {
-        clearAccessToken();
-      }
+    if (status !== 401) {
+      return Promise.reject(error);
+    }
+
+    if (!originalRequest || isAuthEndpoint(originalRequest.url) || originalRequest._retry) {
       return Promise.reject(error);
     }
 
