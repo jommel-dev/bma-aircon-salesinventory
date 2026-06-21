@@ -598,6 +598,12 @@ export class UsersService {
       const addressColumn = this.pickColumn(columns, ['address']);
       const emailColumn = this.pickColumn(columns, ['email']);
       const contactColumn = this.pickColumn(columns, ['contact']);
+      const profileImageColumn = this.pickColumn(columns, [
+        'profileImage',
+        'profile_image',
+        'avatar',
+        'avatar_url',
+      ]);
       const statusColumn = this.pickColumn(columns, ['status']);
       const isDeletedColumn = this.pickColumn(columns, ['is_deleted', 'isDeleted']);
       const createdByColumn = this.pickColumn(columns, [
@@ -622,6 +628,9 @@ export class UsersService {
       }
       if (contactColumn && createUserDto.contact) {
         record[contactColumn] = createUserDto.contact;
+      }
+      if (profileImageColumn && createUserDto.profileImage) {
+        record[profileImageColumn] = createUserDto.profileImage;
       }
       if (statusColumn) {
         record[statusColumn] = createUserDto.status ?? 1;
@@ -763,6 +772,13 @@ export class UsersService {
           COALESCE(to_jsonb(u)->>'address', '') AS address,
           COALESCE(to_jsonb(u)->>'contact', '') AS contact,
           COALESCE(
+            to_jsonb(u)->>'profileImage',
+            to_jsonb(u)->>'profile_image',
+            to_jsonb(u)->>'avatar',
+            to_jsonb(u)->>'avatar_url',
+            ''
+          ) AS "profileImage",
+          COALESCE(
             to_jsonb(u)->>'status',
             '1'
           )::int AS status,
@@ -856,6 +872,12 @@ export class UsersService {
       const addressColumn = this.pickColumn(columns, ['address']);
       const emailColumn = this.pickColumn(columns, ['email']);
       const contactColumn = this.pickColumn(columns, ['contact']);
+      const profileImageColumn = this.pickColumn(columns, [
+        'profileImage',
+        'profile_image',
+        'avatar',
+        'avatar_url',
+      ]);
       const statusColumn = this.pickColumn(columns, ['status']);
       const isDeletedColumn = this.pickColumn(columns, ['is_deleted', 'isDeleted']);
       const createdByColumn = this.pickColumn(columns, ['created_by', 'createdBy']);
@@ -929,6 +951,9 @@ export class UsersService {
       if (contactColumn && updateUserDto.contact != null) {
         updates[contactColumn] = String(updateUserDto.contact).trim();
       }
+      if (profileImageColumn && updateUserDto.profileImage != null) {
+        updates[profileImageColumn] = String(updateUserDto.profileImage).trim();
+      }
       if (statusColumn && updateUserDto.status != null) {
         updates[statusColumn] = updateUserDto.status;
       }
@@ -981,6 +1006,118 @@ export class UsersService {
       return {
         success: false,
         message: error instanceof Error ? error.message : 'Unable to update user',
+      };
+    }
+  }
+
+  async changePassword(id: number, currentPasswordRaw: string, newPasswordRaw: string) {
+    if (!Number.isFinite(id) || id <= 0) {
+      return {
+        success: false,
+        message: 'Invalid user id',
+      };
+    }
+
+    const currentPassword = String(currentPasswordRaw ?? '').trim();
+    const newPassword = String(newPasswordRaw ?? '').trim();
+
+    if (!currentPassword) {
+      return {
+        success: false,
+        message: 'Current password is required',
+      };
+    }
+
+    if (!newPassword) {
+      return {
+        success: false,
+        message: 'New password is required',
+      };
+    }
+
+    if (newPassword.length < 6) {
+      return {
+        success: false,
+        message: 'New password must be at least 6 characters',
+      };
+    }
+
+    try {
+      const columns = await this.getTableColumns('tblusers');
+      if (columns.length === 0) {
+        return {
+          success: false,
+          message: 'tblusers table was not found in current schema',
+        };
+      }
+
+      const passwordColumn = this.pickColumn(columns, ['password']);
+      if (!passwordColumn) {
+        return {
+          success: false,
+          message: 'Password column was not found in tblusers',
+        };
+      }
+
+      const existingUser = await this.databaseService.query<{ id: number; password: string | null }>(
+        `SELECT id, "${passwordColumn}"::text AS password
+         FROM tblusers
+         WHERE id = $1
+         LIMIT 1`,
+        [id],
+      );
+
+      if (existingUser.rowCount === 0) {
+        return {
+          success: false,
+          message: 'User not found',
+        };
+      }
+
+      const currentPasswordHash = createHash('sha1').update(currentPassword).digest('hex');
+      const storedPasswordHash = String(existingUser.rows[0].password ?? '');
+
+      if (!storedPasswordHash || storedPasswordHash !== currentPasswordHash) {
+        return {
+          success: false,
+          message: 'Current password is incorrect',
+        };
+      }
+
+      if (currentPassword === newPassword) {
+        return {
+          success: false,
+          message: 'New password must be different from current password',
+        };
+      }
+
+      const newPasswordHash = createHash('sha1').update(newPassword).digest('hex');
+      const result = await this.databaseService.query<{ id: number }>(
+        `UPDATE tblusers
+         SET "${passwordColumn}" = $1
+         WHERE id = $2
+         RETURNING id`,
+        [newPasswordHash, id],
+      );
+
+      if (result.rowCount === 0) {
+        return {
+          success: false,
+          message: 'Failed to update password',
+        };
+      }
+
+      return {
+        success: true,
+        message: 'Password changed successfully',
+      };
+    } catch (error) {
+      return {
+        success: false,
+        message:
+          error instanceof Error
+            ? error.message
+            : 'Unable to change password',
       };
     }
   }

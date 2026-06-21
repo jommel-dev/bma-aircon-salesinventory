@@ -28,6 +28,10 @@ export interface UserApiItem {
   birthdate?: string | null;
   address?: string | null;
   contact?: string | null;
+  profileImage?: string | null;
+  profile_image?: string | null;
+  avatar?: string | null;
+  avatarUrl?: string | null;
 }
 
 export interface RoleApiItem {
@@ -84,6 +88,7 @@ export interface CreateUserPayload {
   address?: string;
   email?: string;
   contact?: string;
+  profileImage?: string;
   status?: number;
   roleId?: number;
   branchId?: number;
@@ -99,6 +104,11 @@ interface ApiCreateResponse {
   success: boolean;
   message?: string;
   id?: number;
+}
+
+interface ChangePasswordPayload {
+  currentPassword: string;
+  newPassword: string;
 }
 
 interface ApiItemResponse<TItem> {
@@ -189,6 +199,11 @@ export class UserManagementService {
 
   async restoreUser(userId: number): Promise<ApiCreateResponse> {
     const response = await apiClient.patch<ApiCreateResponse>(`/users/${userId}/restore`, {});
+    return response.data;
+  }
+
+  async changePassword(userId: number, payload: ChangePasswordPayload): Promise<ApiCreateResponse> {
+    const response = await apiClient.patch<ApiCreateResponse>(`/users/${userId}/change-password`, payload);
     return response.data;
   }
 }

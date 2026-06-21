@@ -47,6 +47,8 @@ interface JwtPayload {
   providedIn: 'root',
 })
 export class RbacService {
+  private readonly profileNameStorageKey = 'user_profile_name';
+  private readonly profileEmailStorageKey = 'user_profile_email';
   private cachedToken: string | null = null;
   private cachedPayload: JwtPayload | null = null;
   private cachedMenus = new Set<string>();
@@ -371,11 +373,21 @@ export class RbacService {
   }
 
   getDisplayName(): string {
+    const savedName = localStorage.getItem(this.profileNameStorageKey);
+    if (savedName && String(savedName).trim()) {
+      return String(savedName).trim();
+    }
+
     const payload = this.getPayload();
     return payload?.fullname ?? payload?.username ?? 'User';
   }
 
   getEmail(): string {
+    const savedEmail = localStorage.getItem(this.profileEmailStorageKey);
+    if (savedEmail && String(savedEmail).trim()) {
+      return String(savedEmail).trim();
+    }
+
     return this.getPayload()?.email ?? '-';
   }
 

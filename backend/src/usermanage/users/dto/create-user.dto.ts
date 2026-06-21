@@ -6,6 +6,7 @@ export class CreateUserDto {
 	address?: string;
 	email?: string;
 	contact?: string;
+	profileImage?: string;
 	status?: number;
 	is_deleted?: boolean;
 	created_by?: number;

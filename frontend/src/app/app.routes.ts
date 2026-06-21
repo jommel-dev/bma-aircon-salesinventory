@@ -21,6 +21,7 @@ import { AccountingComponent } from './pages/accounting/accounting.component';
 import { ProjectsComponent } from './pages/projects/projects.component';
 import { PayrollComponent } from './payroll/payroll.component';
 import { SetupComponent } from './pages/setup/setup.component';
+import { ProfileComponent } from './pages/profile/profile.component';
 
 
 export const routes: Routes = [
@@ -231,6 +232,11 @@ export const routes: Routes = [
           permission: 'canRead',
         },
         title: 'Settings',
+      },
+      {
+        path: 'profile',
+        component: ProfileComponent,
+        title: 'Profile',
       },
     ]
   },

@@ -12,6 +12,7 @@ import { RbacService } from '../../../services/rbac.service';
   imports:[CommonModule,RouterModule,DropdownComponent,DropdownItemTwoComponent]
 })
 export class UserDropdownComponent {
+  private readonly profileImageStorageKey = 'user_profile_image';
   readonly defaultAvatar = '/images/user/faceless-avatar.svg';
 
   constructor(
@@ -36,6 +37,10 @@ export class UserDropdownComponent {
 
   get email(): string {
     return this.rbacService.getEmail();
+  }
+
+  get avatarSrc(): string {
+    return localStorage.getItem(this.profileImageStorageKey) || this.defaultAvatar;
   }
 
   async onSignOut() {
