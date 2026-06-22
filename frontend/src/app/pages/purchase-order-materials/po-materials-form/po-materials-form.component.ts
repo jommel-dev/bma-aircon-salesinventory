@@ -350,6 +350,17 @@ export class PoMaterialsFormComponent implements OnInit, OnDestroy {
    * Sets vendorValidationError if invalid.
    */
   validateVendor(): boolean {
+    // Vendor is optional when creating a purchase order.
+    if (this.mode === 'create') {
+      const vendorName = this.vendorSearch.trim() || this.vendorForm.name.trim();
+      if (vendorName.length > 200) {
+        this.vendorValidationError = 'Vendor name must not exceed 200 characters.';
+        return false;
+      }
+      this.vendorValidationError = '';
+      return true;
+    }
+
     if (this.vendorMode === 'existing') {
       if (!this.selectedVendorId) {
         this.vendorValidationError = 'Please select a vendor from the search results.';
@@ -585,16 +596,19 @@ export class PoMaterialsFormComponent implements OnInit, OnDestroy {
       status: this.mode === 'edit' ? this.orderStatus : 'for_approval',
     };
 
-    // Vendor
-    if (this.vendorMode === 'existing' && this.selectedVendorId) {
+    // Vendor (optional on create, required by edit validation rules)
+    if (this.selectedVendorId) {
       payload.vendorId = this.selectedVendorId;
-    } else if (this.vendorMode === 'new') {
+    } else {
+      const vendorName = this.vendorSearch.trim() || this.vendorForm.name.trim();
+      if (vendorName) {
       payload.vendor = {
-        name: this.vendorForm.name.trim(),
+        name: vendorName,
         address: this.vendorForm.address?.trim() || undefined,
         contact_person: this.vendorForm.contact_person?.trim() || undefined,
         contact_number: this.vendorForm.contact_number?.trim() || undefined,
       };
+      }
     }
 
     // Payment details (only include entries with a method)
