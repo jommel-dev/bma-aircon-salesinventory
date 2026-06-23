@@ -1,0 +1,16 @@
+# Firebase local cache and logs
+.firebase/
+firebase-debug.log
+firebase-debug.*.log
+
+# Project dependencies and build caches
+node_modules/
+
+# VCS and editor files
+.git/
+.gitignore
+.vscode/
+
+# OS files
+.DS_Store
+Thumbs.db

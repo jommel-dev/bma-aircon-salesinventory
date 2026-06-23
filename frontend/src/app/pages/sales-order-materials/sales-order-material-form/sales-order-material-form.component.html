@@ -303,6 +303,20 @@
               </select>
             </div>
 
+            <!-- Method of GCASH or MAYA -->
+            <div *ngIf="shouldShowPaymentField(payment.method, 'e-wallet')">
+              <label class="mb-1 block text-xs font-medium text-gray-600 dark:text-gray-300">Account</label>
+              <select
+                [(ngModel)]="payment.bankName"
+                [name]="'payment_bankName_' + i"
+                class="w-full rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm dark:border-gray-700 dark:bg-gray-900 dark:text-gray-200"
+              >
+                @for (account of paymentAccounts; track account) {
+                  <option [value]="account">{{ account }}</option>
+                }
+              </select>
+            </div>
+
             <!-- Amount (always shown) -->
             <div *ngIf="shouldShowPaymentField(payment.method, 'amount')">
               <label class="mb-1 block text-xs font-medium text-gray-600 dark:text-gray-300">Amount</label>

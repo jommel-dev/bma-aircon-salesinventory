@@ -72,7 +72,8 @@ export class SalesOrderMaterialFormComponent implements OnInit, OnDestroy {
 
   // ─── Payment Details ────────────────────────────────────────────────────────
   paymentDetails: PaymentDetail[] = [];
-  paymentMethods: PaymentDetail['method'][] = ['Cash', 'GCash', 'Bank Transfer', 'Terms', 'Terms with DP', 'Cheque', 'Credit Card', 'Installment'];
+  paymentMethods: PaymentDetail['method'][] = ['Cash', 'GCash', 'Maya', 'Bank Transfer', 'Terms', 'Terms with DP', 'Cheque', 'Credit Card', 'Installment'];
+  paymentAccounts: string[] = ['0909-507-27922 (GCASH)', '0981-008-8453 (GCASH)', '0963-084-4199 (GCASH)', '0909-507-2792 (MAYA)'];
 
   // ─── Order Status (for edit mode buttons) ───────────────────────────────────
   orderStatus: string = '';
@@ -509,7 +510,7 @@ export class SalesOrderMaterialFormComponent implements OnInit, OnDestroy {
     const payment = this.paymentDetails[index];
     if (!payment) return;
     // Auto-set status
-    payment.status = (payment.method === 'Cash' || payment.method === 'GCash' || payment.method === 'Bank Transfer') ? 'paid' : 'unpaid';
+    payment.status = (payment.method === 'Cash' || payment.method === 'GCash' || payment.method === 'Maya' || payment.method === 'Bank Transfer') ? 'paid' : 'unpaid';
     // Clear irrelevant fields
     if (payment.method !== 'Terms' && payment.method !== 'Terms with DP' && payment.method !== 'Installment') {
       payment.terms = '';
@@ -575,7 +576,8 @@ export class SalesOrderMaterialFormComponent implements OnInit, OnDestroy {
   shouldShowPaymentField(method: PaymentDetail['method'], field: string): boolean {
     const map: Record<PaymentDetail['method'], string[]> = {
       'Cash': ['amount', 'paymentDate'],
-      'GCash': ['amount', 'referenceNo', 'paymentDate'],
+      'GCash': ['e-wallet', 'amount', 'referenceNo', 'paymentDate'],
+      'Maya': ['e-wallet', 'amount', 'referenceNo', 'paymentDate'],
       'Bank Transfer': ['amount', 'bankName', 'referenceNo'],
       'Terms': ['amount', 'terms', 'termsDueDate'],
       'Terms with DP': ['amount', 'terms', 'termsDueDate', 'downPayment'],

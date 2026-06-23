@@ -74,7 +74,7 @@ export class PrintSalesOrderService {
 
       // Draw total on last page
       if (pageIndex === pages.length - 1) {
-        const totalY = isHighSales ? height - 800 : height - 670;
+        const totalY =  height - 670;
         const totalX = width - 110;
         page.drawText(this.formatNumber(data.totalAmount), {
           x: totalX,

@@ -30,6 +30,8 @@ type SalesMode =
 
 type SalesPaymentMethod =
   | 'Cash'
+  | 'GCash'
+  | 'Maya'
   | 'Bank Transfer'
   | 'Terms'
   | 'Terms with DP'
@@ -903,7 +905,9 @@ export class SalesOrderService {
     if (!text) return undefined;
 
     if (text.includes('cash')) return 'Cash';
-    if (text.includes('bank transfer') || text.includes('online') || text.includes('gcash')) return 'Bank Transfer';
+    if (text.includes('maya')) return 'Maya';
+    if (text.includes('gcash')) return 'GCash';
+    if (text.includes('bank transfer') || text.includes('online')) return 'Bank Transfer';
     if (text.includes('terms with dp') || text.includes(' dp')) return 'Terms with DP';
     if (text.includes('terms')) return 'Terms';
     if (text.includes('cheque') || text.includes('check')) return 'Cheque';
@@ -1584,9 +1588,10 @@ export class SalesOrderService {
     index: number,
   ): SalesPaymentMethod {
     const method = this.toSalesPaymentMethod(paymentDetails.method);
-
     const allowedFieldsByMethod: Record<SalesPaymentMethod, Set<string>> = {
       Cash: new Set(['amount', 'paymentDate']),
+      'GCash': new Set(['amount', 'referenceNo', 'paymentDate']),
+      'Maya': new Set(['amount', 'referenceNo', 'paymentDate']),
       'Bank Transfer': new Set(['amount', 'bankName', 'referenceNo']),
       Terms: new Set(['amount', 'terms', 'termsDueDate']),
       'Terms with DP': new Set(['amount', 'terms', 'termsDueDate', 'downPayment']),
@@ -7164,6 +7169,7 @@ export class SalesOrderService {
       'BANK TRANSFER': 'Bank Transfer',
       'CASH': 'Cash',
       'GCASH': 'GCash',
+      'MAYA': 'Maya',
       'TERMS': 'Terms',
       'CHEQUE': 'Cheque',
       'CREDIT CARD': 'Credit Card',

@@ -6,7 +6,7 @@ import { apiClient } from './api-client';
 export type SalesOrderStatus = 'draft' | 'pending' | 'complete' | 'voided';
 
 export interface PaymentDetail {
-  method: 'Cash' | 'GCash' | 'Bank Transfer' | 'Terms' | 'Terms with DP' | 'Cheque' | 'Credit Card' | 'Installment';
+  method: 'Cash' | 'GCash' | 'Maya' | 'Bank Transfer' | 'Terms' | 'Terms with DP' | 'Cheque' | 'Credit Card' | 'Installment';
   amount: number;
   terms: string;
   termsDueDate: string;
