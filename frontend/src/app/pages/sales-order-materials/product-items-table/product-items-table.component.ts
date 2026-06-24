@@ -76,7 +76,7 @@ export class ProductItemsTableComponent {
    */
   onQtyChange(index: number, value: string): void {
     const parsed = parseInt(value, 10);
-    if (isNaN(parsed) || parsed < 1 || parsed > 99999) {
+    if (isNaN(parsed) || parsed < 1 || parsed > 999999999) {
       return;
     }
 

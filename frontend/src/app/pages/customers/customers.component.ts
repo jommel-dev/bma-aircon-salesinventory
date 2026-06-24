@@ -668,7 +668,7 @@ export class CustomersComponent implements OnInit {
       const bizEmail = String(biz?.businessEmail ?? '').trim();
       const nameX = logoDrawn ? margin + 90 : margin;
 
-      txt(bizName, nameX, y - 12, { size: 14, font: bold, color: brand });
+      // txt(bizName, nameX, y - 12, { size: 14, font: bold, color: brand });
       if (bizAddr) txt(bizAddr, nameX, y - 26, { size: 8, color: gray });
       if (bizContact || bizEmail) txt([bizContact, bizEmail].filter(Boolean).join('  |  '), nameX, y - 38, { size: 8, color: gray });
 
