@@ -44,7 +44,7 @@ export class PoItemsTableComponent {
    */
   onCostChange(index: number, value: string): void {
     const parsed = parseFloat(value);
-    if (isNaN(parsed) || parsed < 0.01 || parsed > 999999.99) {
+    if (isNaN(parsed) || parsed < 0.01 || parsed > 99999999.99) {
       return;
     }
 
@@ -66,7 +66,7 @@ export class PoItemsTableComponent {
    */
   onRateChange(index: number, value: string): void {
     const parsed = parseFloat(value);
-    if (isNaN(parsed) || parsed < 0 || parsed > 999999.99) {
+    if (isNaN(parsed) || parsed < 0 || parsed > 99999999.99) {
       return;
     }
 

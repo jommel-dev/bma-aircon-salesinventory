@@ -30,7 +30,7 @@ export class ProductItemsTableComponent {
    */
   onRateChange(index: number, value: string): void {
     const parsed = parseFloat(value);
-    if (isNaN(parsed) || parsed < 0.01 || parsed > 999999.99) {
+    if (isNaN(parsed) || parsed < 0.01 || parsed > 99999999.99) {
       return;
     }
 
@@ -53,7 +53,7 @@ export class ProductItemsTableComponent {
    */
   onDiscountChange(index: number, value: string): void {
     const parsed = parseFloat(value);
-    if (isNaN(parsed) || parsed < 0 || parsed > 999999.99) {
+    if (isNaN(parsed) || parsed < 0 || parsed > 99999999.99) {
       return;
     }
 
@@ -156,7 +156,7 @@ export class ProductItemsTableComponent {
    */
   isValidRate(value: number | null | undefined): boolean {
     if (value == null) return false;
-    return value >= 0.01 && value <= 999999.99;
+    return value >= 0.01 && value <= 99999999.99;
   }
 
   /**
@@ -164,6 +164,6 @@ export class ProductItemsTableComponent {
    */
   isValidQty(value: number | null | undefined): boolean {
     if (value == null) return false;
-    return Number.isInteger(value) && value >= 1 && value <= 99999;
+    return Number.isInteger(value) && value >= 1 && value <= 999999999;
   }
 }
