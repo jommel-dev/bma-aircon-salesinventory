@@ -459,9 +459,10 @@ export class MaterialsService {
     let query = `
       SELECT 
         m.*,
-        b."brandName" as brand_name
+        c."brandName" as brand_name
       FROM tblmaterials m
-      LEFT JOIN tblbrands b ON m.brand_id = b.id
+      LEFT JOIN tblproducttypes b ON m."product_type_id" = b."id"
+      LEFT JOIN tblbrands c ON m.brand_id = c.id
       WHERE m.deleted_at IS NULL
     `;
 
@@ -484,7 +485,7 @@ export class MaterialsService {
 
     // Add product type filter — get all materials whose brand belongs to this product type
     if (productTypeId !== undefined && productTypeId !== null) {
-      query += ` AND b.product_type_id = $${paramIndex}`;
+      query += ` AND b.id = $${paramIndex}`;
       params.push(productTypeId);
       paramIndex++;
     }
@@ -759,19 +760,17 @@ export class MaterialsService {
 
     // Query 3: Material count per product type (via brand's product_type_id)
     const materialCountQuery = `
-      SELECT b.product_type_id, COUNT(m.id)::int AS material_count
+      SELECT m.product_type_id, COUNT(m.id)::int AS material_count
       FROM tblmaterials m
-      JOIN tblbrands b ON m.brand_id = b.id
-      WHERE m.deleted_at IS NULL AND b.product_type_id IS NOT NULL
-      GROUP BY b.product_type_id
+      WHERE m.deleted_at IS NULL AND m.product_type_id IS NOT NULL
+      GROUP BY m.product_type_id;
     `;
 
     // Query 4: Material count for uncategorized (brands without product_type_id)
     const uncategorizedCountQuery = `
       SELECT COUNT(m.id)::int AS material_count
       FROM tblmaterials m
-      JOIN tblbrands b ON m.brand_id = b.id
-      WHERE m.deleted_at IS NULL AND b.product_type_id IS NULL
+      WHERE m.deleted_at IS NULL AND m.product_type_id IS NULL;
     `;
 
     const [treeResult, uncategorizedResult, countResult, uncatCountResult] = await Promise.all([

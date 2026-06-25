@@ -24,6 +24,7 @@ interface AllInOneMaterialRow {
   on_hand_stock: number;
   reorder_level: number;
   brand_name: string;
+  product_type_id: number | null;
   brandSuggestions: { id: number; brandName: string; prefix: string; product_type_id?: number | null }[];
   isBrandDropdownOpen: boolean;
 }
@@ -1026,6 +1027,7 @@ export class InventoryComponent implements OnInit, AfterViewChecked {
       reorder_level: 0,
       brand_name: '',
       brandSuggestions: [],
+      product_type_id: null,
       isBrandDropdownOpen: false,
     };
   }
@@ -1144,8 +1146,6 @@ export class InventoryComponent implements OnInit, AfterViewChecked {
   selectBrandSuggestion(row: AllInOneMaterialRow, brand: { id: number; brandName: string; prefix: string }): void {
     row.brand_name = brand.brandName;
     row.isBrandDropdownOpen = false;
-    // Auto-generate code for this row based on brand prefix
-    void this.generateCodeForRow(row, brand.id);
   }
 
   /**
@@ -1182,7 +1182,7 @@ export class InventoryComponent implements OnInit, AfterViewChecked {
     }
     // Find the next sequence number for this prefix (checks DB + local rows)
     const seq = await this.getNextSequenceForPrefixAsync(prefix);
-    row.material_code = `${prefix}${String(seq).padStart(5, '0')}`;
+    row.material_code = `${prefix}${String(seq).padStart(4, '0')}`;
   }
 
   /**
@@ -1404,6 +1404,18 @@ export class InventoryComponent implements OnInit, AfterViewChecked {
           }
         }
 
+
+        console.log({
+          material_name: row.material_name.trim(),
+          material_code: row.material_code.trim() || null,
+          unit: row.unit.trim() || 'pcs',
+          unit_price: Number(row.unit_price) || 0,
+          sell_price: Number(row.sell_price) || 0,
+          on_hand_stock: Number(row.on_hand_stock) || 0,
+          reorder_level: Number(row.reorder_level) || 0,
+          brand_id: brandId,
+          product_type_id: productTypeId,
+        })
         // Create the material (with product_type_id, brand is optional)
         await this.materialInventoryService.createMaterial({
           material_name: row.material_name.trim(),
