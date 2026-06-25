@@ -28,6 +28,16 @@ export class ProductItemsTableComponent {
    * Validates and applies a new Rate value for a line item.
    * Rate must be numeric, 0.01–999999.99, max 2 decimal places.
    */
+  onDescriptionChange(index: number, value: string): void {
+    const item = this.items[index];
+    item.description = value;
+    this.itemChanged.emit({ index, item: { ...item } });
+  }
+
+  /**
+   * Validates and applies a new Rate value for a line item.
+   * Rate must be numeric, 0.01–999999.99, max 2 decimal places.
+   */
   onRateChange(index: number, value: string): void {
     const parsed = parseFloat(value);
     if (isNaN(parsed) || parsed < 0.01 || parsed > 99999999.99) {
@@ -99,6 +109,14 @@ export class ProductItemsTableComponent {
    */
   removeItem(index: number): void {
     this.itemRemoved.emit(index);
+  }
+
+  /**
+   * Handles rate change from input element (for spinner arrows support).
+   */
+  onDescriptionChangeEvent(index: number, event: Event): void {
+    const value = (event.target as HTMLInputElement).value;
+    this.onDescriptionChange(index, value);
   }
 
   /**

@@ -356,11 +356,39 @@ export class SalesOrderMaterialFormComponent implements OnInit, OnDestroy {
   private async performMaterialSearch(query: string): Promise<void> {
     try {
       const results = await this.salesOrderMaterialService.searchMaterials(query, 50);
-      this.materialSearchResults = results;
+      // Always add "Others" as the first option
+      const othersOption: MaterialSearchResult = {
+        id: -1, // use a sentinel ID that won’t conflict with real materials
+        material_name: 'Others',
+        material_code: 'Others',
+        product_type: '',
+        brand_name: null,
+        unit: '',
+        unit_price: 0,
+        sell_price: 0,
+        on_hand_stock: 0,
+        reorder_level: 0,
+      };
+
+      this.materialSearchResults = [othersOption, ...results];
       this.isMaterialDropdownOpen = true;
       this.materialSearchNoResults = results.length === 0;
     } catch {
-      this.materialSearchResults = [];
+      // Always add "Others" as the first option
+      const othersOption: MaterialSearchResult = {
+        id: -1, // use a sentinel ID that won’t conflict with real materials
+        material_name: 'Others',
+        material_code: 'Others',
+        product_type: '',
+        brand_name: null,
+        unit: '',
+        unit_price: 0,
+        sell_price: 0,
+        on_hand_stock: 0,
+        reorder_level: 0,
+      };
+
+      this.materialSearchResults = [othersOption];
       this.materialSearchNoResults = true;
     } finally {
       this.isMaterialSearching = false;

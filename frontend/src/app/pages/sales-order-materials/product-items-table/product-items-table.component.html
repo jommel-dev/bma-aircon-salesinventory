@@ -49,13 +49,23 @@
             </td>
 
             <!-- Description -->
-            <td class="px-4 py-2.5 text-sm text-gray-700 dark:text-gray-300">
+            <td *ngIf="item.itemCode !== 'Others'" class="px-4 py-2.5 text-sm text-gray-700 dark:text-gray-300">
               <span class="block max-w-[200px] truncate" [title]="item.description">
                 {{ item.description }}
               </span>
               @if (item.itemCode) {
                 <span class="block text-xs text-gray-400 dark:text-gray-500">{{ item.itemCode }}</span>
               }
+            </td>
+            <td *ngIf="item.itemCode === 'Others'" class="px-4 py-2.5 text-sm text-gray-700 dark:text-gray-300">
+              <input
+                type="text"
+                [ngModel]="item.description"
+                (ngModelChange)="onDescriptionChange(i, $event.toString())"
+                (change)="onDescriptionChangeEvent(i, $event)"
+                [name]="'description_' + i"
+                class="w-60 rounded border border-gray-300 bg-white px-2 py-1 text-sm text-gray-700 dark:border-gray-600 dark:bg-gray-900 dark:text-gray-200"
+              />
             </td>
 
             <!-- Cost (admin only) -->

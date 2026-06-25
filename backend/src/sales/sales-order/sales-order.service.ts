@@ -6834,25 +6834,47 @@ export class SalesOrderService {
           const discount = Number(item.discount) || 0;
           const effectiveRate = Math.max(item.rate - discount, 0);
           const lineTotal = Math.round(effectiveRate * item.qty * 100) / 100;
-
-          await client.query(
-            `INSERT INTO tblsales_order_items
-              (sales_order_id, material_id, description, item_code, brand, cost, rate, discount, qty, total, is_non_inventory)
-            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)`,
-            [
-              salesOrderId,
-              item.materialId ?? null,
-              item.description,
-              item.itemCode ?? null,
-              item.brand ?? null,
-              item.cost,
-              item.rate,
-              discount,
-              item.qty,
-              lineTotal,
-              item.isNonInventory,
-            ],
-          );
+          
+          if(!item.itemCode || item.itemCode.trim() === 'Others') {
+            // Insert without material_id (set to NULL)
+            await client.query(
+              `INSERT INTO tblsales_order_items
+                (sales_order_id, description, item_code, brand, cost, rate, discount, qty, total, is_non_inventory)
+              VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)`,
+              [
+                salesOrderId,
+                item.description,
+                item.itemCode ?? null,
+                item.brand ?? null,
+                item.cost,
+                item.rate,
+                discount,
+                item.qty,
+                lineTotal,
+                true, // always true for non-inventory
+              ],
+            );
+          } else {
+            await client.query(
+              `INSERT INTO tblsales_order_items
+                (sales_order_id, material_id, description, item_code, brand, cost, rate, discount, qty, total, is_non_inventory)
+              VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)`,
+              [
+                salesOrderId,
+                item.materialId ?? null,
+                item.description,
+                item.itemCode ?? null,
+                item.brand ?? null,
+                item.cost,
+                item.rate,
+                discount,
+                item.qty,
+                lineTotal,
+                item.isNonInventory,
+              ],
+            );
+          }
+          
         }
 
         // Insert payment details into tblsales_order_payments
