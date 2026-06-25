@@ -4125,8 +4125,8 @@ export class PurchaseService {
               try {
                 await this.materialStockService.recordMovement({
                   materialId: matId,
-                  movementType: 'ADJUSTMENT',
                   qty: Math.abs(diff),
+                  movementType: 'ADJUST',
                   sourceType: 'PO',
                   sourceId: id,
                   sourceLineKey: `PO-${id}-ADJ-${matId}-${Date.now()}`,
