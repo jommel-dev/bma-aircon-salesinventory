@@ -221,6 +221,49 @@ export class SalesOrderService {
     const customerTinColumn = this.pickColumn(customerColumns, ['tin_number', 'tinNumber']);
     const requestedCustomerType = this.normalizeText(payload.customer?.customer_type);
 
+    // Helper inside or outside to update existing customer details
+    const updateExistingCustomerDetails = async (id: string) => {
+      const updateFields: string[] = [];
+      const updateParams: unknown[] = [];
+
+      if (customerTypeColumn && requestedCustomerType) {
+        updateParams.push(requestedCustomerType);
+        updateFields.push(`"${customerTypeColumn}" = $${updateParams.length}`);
+      }
+      if (customerAddressColumn && payload.customer?.address !== undefined) {
+        updateParams.push(this.normalizeText(payload.customer.address));
+        updateFields.push(`"${customerAddressColumn}" = $${updateParams.length}`);
+      }
+      if (customerContactPersonColumn && payload.customer?.contact_person !== undefined) {
+        updateParams.push(this.normalizeText(payload.customer.contact_person));
+        updateFields.push(`"${customerContactPersonColumn}" = $${updateParams.length}`);
+      }
+      if (customerContactNumberColumn && payload.customer?.contact_number !== undefined) {
+        updateParams.push(this.normalizeText(payload.customer.contact_number));
+        updateFields.push(`"${customerContactNumberColumn}" = $${updateParams.length}`);
+      }
+      if (customerEmailColumn && payload.customer?.email !== undefined) {
+        updateParams.push(this.normalizeText(payload.customer.email));
+        updateFields.push(`"${customerEmailColumn}" = $${updateParams.length}`);
+      }
+      if (customerTinColumn && payload.customer?.tin_number !== undefined) {
+        updateParams.push(this.normalizeText(payload.customer.tin_number));
+        updateFields.push(`"${customerTinColumn}" = $${updateParams.length}`);
+      }
+      if (customerNameColumn && payload.customer?.name !== undefined) {
+        updateParams.push(this.normalizeText(payload.customer.name));
+        updateFields.push(`"${customerNameColumn}" = $${updateParams.length}`);
+      }
+
+      if (updateFields.length > 0) {
+        updateParams.push(id);
+        await executor.query(
+          `UPDATE tblcustomer SET ${updateFields.join(', ')} WHERE id::text = $${updateParams.length}`,
+          updateParams,
+        );
+      }
+    };
+
     if (customerId) {
       const existingCustomer = await executor.query<{ id: string }>(
         `SELECT id FROM tblcustomer WHERE id::text = $1 LIMIT 1`,
@@ -228,12 +271,8 @@ export class SalesOrderService {
       );
 
       if (existingCustomer.rowCount > 0) {
-        await this.updateCustomerTypeIfNeeded(
-          executor,
-          customerId,
-          customerTypeColumn,
-          requestedCustomerType,
-        );
+        // ✅ Update all provided details instead of just the customer type
+        await updateExistingCustomerDetails(customerId);
         return customerId;
       }
 
@@ -292,21 +331,17 @@ export class SalesOrderService {
 
     const duplicateCustomer = await executor.query<{ id: string }>(
       `SELECT id::text AS id
-       FROM tblcustomer
-       WHERE ${duplicateWhere.join(' AND ')}
-       ORDER BY id ASC
-       LIMIT 1`,
+      FROM tblcustomer
+      WHERE ${duplicateWhere.join(' AND ')}
+      ORDER BY id ASC
+      LIMIT 1`,
       duplicateParams,
     );
 
     if (duplicateCustomer.rowCount > 0) {
       customerId = this.normalizeText(duplicateCustomer.rows[0]?.id);
-      await this.updateCustomerTypeIfNeeded(
-        executor,
-        customerId,
-        customerTypeColumn,
-        requestedCustomerType,
-      );
+      // ✅ Apply the same comprehensive update flow for name-matched duplicate entries
+      await updateExistingCustomerDetails(customerId);
       return customerId;
     }
 
@@ -343,6 +378,145 @@ export class SalesOrderService {
 
     return this.normalizeText(insertedCustomer.rows[0]?.id);
   }
+  // private async upsertCustomerFromPayload(
+  //   executor: { query: PoolClient['query'] },
+  //   payload: Pick<CreateSalesOrderDto, 'customer_id' | 'customer'>,
+  // ): Promise<string> {
+  //   let customerId = this.normalizeText(payload.customer_id);
+
+  //   const customerColumns = await this.getTableColumns(executor, 'tblcustomer');
+  //   const customerIdColumn = this.pickColumn(customerColumns, ['id']);
+  //   const customerNameColumn = this.pickColumn(customerColumns, ['name', 'customer_name']);
+  //   const customerTypeColumn = this.pickColumn(customerColumns, ['customer_type', 'customerType']);
+  //   const customerAddressColumn = this.pickColumn(customerColumns, ['address']);
+  //   const customerContactPersonColumn = this.pickColumn(customerColumns, ['contact_person', 'contactPerson']);
+  //   const customerContactNumberColumn = this.pickColumn(customerColumns, ['contact_number', 'contactNumber']);
+  //   const customerEmailColumn = this.pickColumn(customerColumns, ['email']);
+  //   const customerTinColumn = this.pickColumn(customerColumns, ['tin_number', 'tinNumber']);
+  //   const requestedCustomerType = this.normalizeText(payload.customer?.customer_type);
+
+  //   if (customerId) {
+  //     const existingCustomer = await executor.query<{ id: string }>(
+  //       `SELECT id FROM tblcustomer WHERE id::text = $1 LIMIT 1`,
+  //       [customerId],
+  //     );
+
+  //     if (existingCustomer.rowCount > 0) {
+  //       await this.updateCustomerTypeIfNeeded(
+  //         executor,
+  //         customerId,
+  //         customerTypeColumn,
+  //         requestedCustomerType,
+  //       );
+  //       return customerId;
+  //     }
+
+  //     customerId = '';
+  //   }
+
+  //   const customerName = this.normalizeText(payload.customer?.name);
+  //   if (!customerName) {
+  //     throw new Error('customer_id or customer.name is required');
+  //   }
+  //   if (!customerNameColumn) {
+  //     throw new Error('tblcustomer name column is missing');
+  //   }
+
+  //   const customerAddress = this.normalizeText(payload.customer?.address);
+  //   const customerContactPerson = this.normalizeText(payload.customer?.contact_person);
+  //   const customerContactNumber = this.normalizeText(payload.customer?.contact_number);
+  //   const customerEmail = this.normalizeText(payload.customer?.email);
+  //   const customerTin = this.normalizeText(payload.customer?.tin_number);
+
+  //   const duplicateParams: string[] = [customerName];
+  //   const duplicateWhere = [
+  //     `LOWER(TRIM(COALESCE("${customerNameColumn}"::text, ''))) = LOWER(TRIM($1))`,
+  //   ];
+
+  //   if (customerAddressColumn && customerAddress) {
+  //     duplicateParams.push(customerAddress);
+  //     duplicateWhere.push(
+  //       `LOWER(TRIM(COALESCE("${customerAddressColumn}"::text, ''))) = LOWER(TRIM($${duplicateParams.length}))`,
+  //     );
+  //   }
+  //   if (customerContactPersonColumn && customerContactPerson) {
+  //     duplicateParams.push(customerContactPerson);
+  //     duplicateWhere.push(
+  //       `LOWER(TRIM(COALESCE("${customerContactPersonColumn}"::text, ''))) = LOWER(TRIM($${duplicateParams.length}))`,
+  //     );
+  //   }
+  //   if (customerContactNumberColumn && customerContactNumber) {
+  //     duplicateParams.push(customerContactNumber);
+  //     duplicateWhere.push(
+  //       `LOWER(TRIM(COALESCE("${customerContactNumberColumn}"::text, ''))) = LOWER(TRIM($${duplicateParams.length}))`,
+  //     );
+  //   }
+  //   if (customerEmailColumn && customerEmail) {
+  //     duplicateParams.push(customerEmail);
+  //     duplicateWhere.push(
+  //       `LOWER(TRIM(COALESCE("${customerEmailColumn}"::text, ''))) = LOWER(TRIM($${duplicateParams.length}))`,
+  //     );
+  //   }
+  //   if (customerTinColumn && customerTin) {
+  //     duplicateParams.push(customerTin);
+  //     duplicateWhere.push(
+  //       `LOWER(TRIM(COALESCE("${customerTinColumn}"::text, ''))) = LOWER(TRIM($${duplicateParams.length}))`,
+  //     );
+  //   }
+
+  //   const duplicateCustomer = await executor.query<{ id: string }>(
+  //     `SELECT id::text AS id
+  //      FROM tblcustomer
+  //      WHERE ${duplicateWhere.join(' AND ')}
+  //      ORDER BY id ASC
+  //      LIMIT 1`,
+  //     duplicateParams,
+  //   );
+
+  //   if (duplicateCustomer.rowCount > 0) {
+  //     customerId = this.normalizeText(duplicateCustomer.rows[0]?.id);
+  //     await this.updateCustomerTypeIfNeeded(
+  //       executor,
+  //       customerId,
+  //       customerTypeColumn,
+  //       requestedCustomerType,
+  //     );
+  //     return customerId;
+  //   }
+
+  //   const customerRecord: Record<string, unknown> = {
+  //     [customerNameColumn]: customerName,
+  //   };
+
+  //   if (customerIdColumn) {
+  //     customerRecord[customerIdColumn] = randomUUID();
+  //   }
+  //   if (customerAddressColumn && customerAddress) {
+  //     customerRecord[customerAddressColumn] = customerAddress;
+  //   }
+  //   if (customerContactPersonColumn && customerContactPerson) {
+  //     customerRecord[customerContactPersonColumn] = customerContactPerson;
+  //   }
+  //   if (customerContactNumberColumn && customerContactNumber) {
+  //     customerRecord[customerContactNumberColumn] = customerContactNumber;
+  //   }
+  //   if (customerEmailColumn && customerEmail) {
+  //     customerRecord[customerEmailColumn] = customerEmail;
+  //   }
+  //   if (customerTinColumn && customerTin) {
+  //     customerRecord[customerTinColumn] = customerTin;
+  //   }
+  //   if (customerTypeColumn && requestedCustomerType) {
+  //     customerRecord[customerTypeColumn] = requestedCustomerType;
+  //   }
+
+  //   const insertedCustomer = await this.runInsert(executor, 'tblcustomer', customerRecord);
+  //   if (insertedCustomer.rowCount === 0) {
+  //     throw new Error('Failed to create customer');
+  //   }
+
+  //   return this.normalizeText(insertedCustomer.rows[0]?.id);
+  // }
 
   private async upsertProjectFromPayload(
     executor: { query: PoolClient['query'] },
