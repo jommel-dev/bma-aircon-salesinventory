@@ -383,25 +383,21 @@ export class PurchaseService {
     const updates: string[] = [];
     const params: unknown[] = [];
 
-    const vendorName = String(input.name ?? '').trim();
-    const vendorAddress = String(input.address ?? '').trim();
-    const contactPerson = String(input.contactPerson ?? '').trim();
-    const contactNumber = String(input.contactNumber ?? '').trim();
-
-    if (vendorNameColumn && vendorName) {
-      params.push(vendorName);
+    // Use undefined checks instead of truthy checks to allow overwriting or clearing info
+    if (vendorNameColumn && input.name !== undefined) {
+      params.push(String(input.name ?? '').trim());
       updates.push(`"${vendorNameColumn}" = $${params.length}`);
     }
-    if (vendorAddressColumn && vendorAddress) {
-      params.push(vendorAddress);
+    if (vendorAddressColumn && input.address !== undefined) {
+      params.push(String(input.address ?? '').trim());
       updates.push(`"${vendorAddressColumn}" = $${params.length}`);
     }
-    if (contactPersonColumn && contactPerson) {
-      params.push(contactPerson);
+    if (contactPersonColumn && input.contactPerson !== undefined) {
+      params.push(String(input.contactPerson ?? '').trim());
       updates.push(`"${contactPersonColumn}" = $${params.length}`);
     }
-    if (contactNumberColumn && contactNumber) {
-      params.push(contactNumber);
+    if (contactNumberColumn && input.contactNumber !== undefined) {
+      params.push(String(input.contactNumber ?? '').trim());
       updates.push(`"${contactNumberColumn}" = $${params.length}`);
     }
     if (updatedAtColumn) {
@@ -416,11 +412,69 @@ export class PurchaseService {
     params.push(vendorId);
     await executor.query(
       `UPDATE tblvendors
-       SET ${updates.join(', ')}
-       WHERE id::text = $${params.length}`,
+      SET ${updates.join(', ')}
+      WHERE id::text = $${params.length}`,
       params,
     );
   }
+  // private async updateVendorRecord(
+  //   executor: { query: PoolClient['query'] },
+  //   vendorId: string,
+  //   vendorColumns: string[],
+  //   input: {
+  //     name?: string;
+  //     address?: string;
+  //     contactPerson?: string;
+  //     contactNumber?: string;
+  //   },
+  // ): Promise<void> {
+  //   const vendorNameColumn = this.pickColumn(vendorColumns, ['name', 'vendor_name']);
+  //   const vendorAddressColumn = this.pickColumn(vendorColumns, ['address']);
+  //   const contactPersonColumn = this.pickColumn(vendorColumns, ['contact_person', 'contactPerson']);
+  //   const contactNumberColumn = this.pickColumn(vendorColumns, ['contact_number', 'contactNumber']);
+  //   const updatedAtColumn = this.pickColumn(vendorColumns, ['updated_at', 'updatedAt']);
+
+  //   const updates: string[] = [];
+  //   const params: unknown[] = [];
+
+  //   const vendorName = String(input.name ?? '').trim();
+  //   const vendorAddress = String(input.address ?? '').trim();
+  //   const contactPerson = String(input.contactPerson ?? '').trim();
+  //   const contactNumber = String(input.contactNumber ?? '').trim();
+
+  //   if (vendorNameColumn && vendorName) {
+  //     params.push(vendorName);
+  //     updates.push(`"${vendorNameColumn}" = $${params.length}`);
+  //   }
+  //   if (vendorAddressColumn && vendorAddress) {
+  //     params.push(vendorAddress);
+  //     updates.push(`"${vendorAddressColumn}" = $${params.length}`);
+  //   }
+  //   if (contactPersonColumn && contactPerson) {
+  //     params.push(contactPerson);
+  //     updates.push(`"${contactPersonColumn}" = $${params.length}`);
+  //   }
+  //   if (contactNumberColumn && contactNumber) {
+  //     params.push(contactNumber);
+  //     updates.push(`"${contactNumberColumn}" = $${params.length}`);
+  //   }
+  //   if (updatedAtColumn) {
+  //     params.push(new Date().toISOString());
+  //     updates.push(`"${updatedAtColumn}" = $${params.length}`);
+  //   }
+
+  //   if (updates.length === 0) {
+  //     return;
+  //   }
+
+  //   params.push(vendorId);
+  //   await executor.query(
+  //     `UPDATE tblvendors
+  //      SET ${updates.join(', ')}
+  //      WHERE id::text = $${params.length}`,
+  //     params,
+  //   );
+  // }
 
   private async resolvePurchaseVendor(
     executor: { query: PoolClient['query'] },
