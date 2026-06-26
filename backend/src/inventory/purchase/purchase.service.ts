@@ -363,60 +363,6 @@ export class PurchaseService {
     return existingVendorResult.rows[0]?.id ? String(existingVendorResult.rows[0].id) : null;
   }
 
-  private async updateVendorRecord(
-    executor: { query: PoolClient['query'] },
-    vendorId: string,
-    vendorColumns: string[],
-    input: {
-      name?: string;
-      address?: string;
-      contactPerson?: string;
-      contactNumber?: string;
-    },
-  ): Promise<void> {
-    const vendorNameColumn = this.pickColumn(vendorColumns, ['name', 'vendor_name']);
-    const vendorAddressColumn = this.pickColumn(vendorColumns, ['address']);
-    const contactPersonColumn = this.pickColumn(vendorColumns, ['contact_person', 'contactPerson']);
-    const contactNumberColumn = this.pickColumn(vendorColumns, ['contact_number', 'contactNumber']);
-    const updatedAtColumn = this.pickColumn(vendorColumns, ['updated_at', 'updatedAt']);
-
-    const updates: string[] = [];
-    const params: unknown[] = [];
-
-    // Use undefined checks instead of truthy checks to allow overwriting or clearing info
-    if (vendorNameColumn && input.name !== undefined) {
-      params.push(String(input.name ?? '').trim());
-      updates.push(`"${vendorNameColumn}" = $${params.length}`);
-    }
-    if (vendorAddressColumn && input.address !== undefined) {
-      params.push(String(input.address ?? '').trim());
-      updates.push(`"${vendorAddressColumn}" = $${params.length}`);
-    }
-    if (contactPersonColumn && input.contactPerson !== undefined) {
-      params.push(String(input.contactPerson ?? '').trim());
-      updates.push(`"${contactPersonColumn}" = $${params.length}`);
-    }
-    if (contactNumberColumn && input.contactNumber !== undefined) {
-      params.push(String(input.contactNumber ?? '').trim());
-      updates.push(`"${contactNumberColumn}" = $${params.length}`);
-    }
-    if (updatedAtColumn) {
-      params.push(new Date().toISOString());
-      updates.push(`"${updatedAtColumn}" = $${params.length}`);
-    }
-
-    if (updates.length === 0) {
-      return;
-    }
-
-    params.push(vendorId);
-    await executor.query(
-      `UPDATE tblvendors
-      SET ${updates.join(', ')}
-      WHERE id::text = $${params.length}`,
-      params,
-    );
-  }
   // private async updateVendorRecord(
   //   executor: { query: PoolClient['query'] },
   //   vendorId: string,
@@ -476,6 +422,157 @@ export class PurchaseService {
   //   );
   // }
 
+  // private async resolvePurchaseVendor(
+  //   executor: { query: PoolClient['query'] },
+  //   vendorColumns: string[],
+  //   input: {
+  //     vendorId?: string | null;
+  //     vendorName?: string;
+  //     vendorAddress?: string;
+  //     contactPerson?: string;
+  //     contactNumber?: string;
+  //   },
+  // ): Promise<string> {
+  //   const vendorIdColumn = this.pickColumn(vendorColumns, ['id']);
+  //   const vendorNameColumn = this.pickColumn(vendorColumns, ['name', 'vendor_name']);
+  //   const createdAtColumn = this.pickColumn(vendorColumns, ['created_at', 'createdAt']);
+  //   const updatedAtColumn = this.pickColumn(vendorColumns, ['updated_at', 'updatedAt']);
+
+  //   let resolvedVendorId = String(input.vendorId ?? '').trim();
+  //   const vendorName = String(input.vendorName ?? '').trim();
+  //   const vendorAddress = String(input.vendorAddress ?? '').trim();
+  //   const contactPerson = String(input.contactPerson ?? '').trim();
+  //   const contactNumber = String(input.contactNumber ?? '').trim();
+
+  //   if (resolvedVendorId) {
+  //     const existingVendorResult = await executor.query<{ id: string }>(
+  //       `SELECT id::text AS id
+  //        FROM tblvendors
+  //        WHERE id::text = $1
+  //        LIMIT 1`,
+  //       [resolvedVendorId],
+  //     );
+
+  //     if (existingVendorResult.rowCount > 0) {
+  //       await this.updateVendorRecord(executor, resolvedVendorId, vendorColumns, {
+  //         name: vendorName,
+  //         address: vendorAddress,
+  //         contactPerson,
+  //         contactNumber,
+  //       });
+  //       return resolvedVendorId;
+  //     }
+  //   }
+
+  //   if (!vendorName) {
+  //     throw new Error('Vendor ID or vendor.name is required');
+  //   }
+
+  //   const matchedVendorId = await this.findVendorIdByName(executor, vendorName);
+  //   if (matchedVendorId) {
+  //     await this.updateVendorRecord(executor, matchedVendorId, vendorColumns, {
+  //       name: vendorName,
+  //       address: vendorAddress,
+  //       contactPerson,
+  //       contactNumber,
+  //     });
+  //     return matchedVendorId;
+  //   }
+
+  //   if (!vendorNameColumn) {
+  //     throw new Error('tblvendors name column is missing');
+  //   }
+
+  //   const vendorRecord: Record<string, unknown> = {
+  //     [vendorNameColumn]: vendorName,
+  //   };
+
+  //   if (vendorIdColumn) {
+  //     vendorRecord[vendorIdColumn] = resolvedVendorId || randomUUID();
+  //   }
+  //   const vendorAddressColumn = this.pickColumn(vendorColumns, ['address']);
+  //   const contactPersonColumn = this.pickColumn(vendorColumns, ['contact_person', 'contactPerson']);
+  //   const contactNumberColumn = this.pickColumn(vendorColumns, ['contact_number', 'contactNumber']);
+
+  //   if (vendorAddressColumn && vendorAddress) {
+  //     vendorRecord[vendorAddressColumn] = vendorAddress;
+  //   }
+  //   if (contactPersonColumn && contactPerson) {
+  //     vendorRecord[contactPersonColumn] = contactPerson;
+  //   }
+  //   if (contactNumberColumn && contactNumber) {
+  //     vendorRecord[contactNumberColumn] = contactNumber;
+  //   }
+  //   if (createdAtColumn) {
+  //     vendorRecord[createdAtColumn] = new Date().toISOString();
+  //   }
+  //   if (updatedAtColumn) {
+  //     vendorRecord[updatedAtColumn] = new Date().toISOString();
+  //   }
+
+  //   const insertedVendor = await this.runInsert(executor, 'tblvendors', vendorRecord);
+  //   if (insertedVendor.rowCount === 0) {
+  //     throw new Error('Failed to create vendor');
+  //   }
+
+  //   return String(insertedVendor.rows[0].id);
+  // }
+
+  private async updateVendorRecord(
+    executor: { query: PoolClient['query'] },
+    vendorId: string,
+    vendorColumns: string[],
+    input: {
+      name?: string;
+      address?: string;
+      contactPerson?: string;
+      contactNumber?: string;
+    },
+  ): Promise<void> {
+    const vendorNameColumn = this.pickColumn(vendorColumns, ['name', 'vendor_name']);
+    const vendorAddressColumn = this.pickColumn(vendorColumns, ['address']);
+    const contactPersonColumn = this.pickColumn(vendorColumns, ['contact_person', 'contactPerson']);
+    const contactNumberColumn = this.pickColumn(vendorColumns, ['contact_number', 'contactNumber']);
+    const updatedAtColumn = this.pickColumn(vendorColumns, ['updated_at', 'updatedAt']);
+
+    const updates: string[] = [];
+    const params: unknown[] = [];
+
+    // Use undefined checks so explicit empty values ('') can be saved/cleared
+    if (vendorNameColumn && input.name !== undefined) {
+      params.push(String(input.name ?? '').trim());
+      updates.push(`"${vendorNameColumn}" = $${params.length}`);
+    }
+    if (vendorAddressColumn && input.address !== undefined) {
+      params.push(String(input.address ?? '').trim());
+      updates.push(`"${vendorAddressColumn}" = $${params.length}`);
+    }
+    if (contactPersonColumn && input.contactPerson !== undefined) {
+      params.push(String(input.contactPerson ?? '').trim());
+      updates.push(`"${contactPersonColumn}" = $${params.length}`);
+    }
+    if (contactNumberColumn && input.contactNumber !== undefined) {
+      params.push(String(input.contactNumber ?? '').trim());
+      updates.push(`"${contactNumberColumn}" = $${params.length}`);
+    }
+    if (updatedAtColumn) {
+      params.push(new Date().toISOString());
+      updates.push(`"${updatedAtColumn}" = $${params.length}`);
+    }
+
+    if (updates.length === 0) {
+      return;
+    }
+
+    params.push(vendorId);
+    await executor.query(
+      `UPDATE tblvendors
+      SET ${updates.join(', ')}
+      WHERE id::text = $${params.length}`,
+      params,
+    );
+  }
+
   private async resolvePurchaseVendor(
     executor: { query: PoolClient['query'] },
     vendorColumns: string[],
@@ -500,19 +597,16 @@ export class PurchaseService {
 
     if (resolvedVendorId) {
       const existingVendorResult = await executor.query<{ id: string }>(
-        `SELECT id::text AS id
-         FROM tblvendors
-         WHERE id::text = $1
-         LIMIT 1`,
+        `SELECT id::text AS id FROM tblvendors WHERE id::text = $1 LIMIT 1`,
         [resolvedVendorId],
       );
 
       if (existingVendorResult.rowCount > 0) {
         await this.updateVendorRecord(executor, resolvedVendorId, vendorColumns, {
-          name: vendorName,
-          address: vendorAddress,
-          contactPerson,
-          contactNumber,
+          name: vendorName || undefined,
+          address: input.vendorAddress,
+          contactPerson: input.contactPerson,
+          contactNumber: input.contactNumber,
         });
         return resolvedVendorId;
       }
@@ -526,9 +620,9 @@ export class PurchaseService {
     if (matchedVendorId) {
       await this.updateVendorRecord(executor, matchedVendorId, vendorColumns, {
         name: vendorName,
-        address: vendorAddress,
-        contactPerson,
-        contactNumber,
+        address: input.vendorAddress,
+        contactPerson: input.contactPerson,
+        contactNumber: input.contactNumber,
       });
       return matchedVendorId;
     }
@@ -548,21 +642,11 @@ export class PurchaseService {
     const contactPersonColumn = this.pickColumn(vendorColumns, ['contact_person', 'contactPerson']);
     const contactNumberColumn = this.pickColumn(vendorColumns, ['contact_number', 'contactNumber']);
 
-    if (vendorAddressColumn && vendorAddress) {
-      vendorRecord[vendorAddressColumn] = vendorAddress;
-    }
-    if (contactPersonColumn && contactPerson) {
-      vendorRecord[contactPersonColumn] = contactPerson;
-    }
-    if (contactNumberColumn && contactNumber) {
-      vendorRecord[contactNumberColumn] = contactNumber;
-    }
-    if (createdAtColumn) {
-      vendorRecord[createdAtColumn] = new Date().toISOString();
-    }
-    if (updatedAtColumn) {
-      vendorRecord[updatedAtColumn] = new Date().toISOString();
-    }
+    if (vendorAddressColumn) vendorRecord[vendorAddressColumn] = vendorAddress;
+    if (contactPersonColumn) vendorRecord[contactPersonColumn] = contactPerson;
+    if (contactNumberColumn) vendorRecord[contactNumberColumn] = contactNumber;
+    if (createdAtColumn) vendorRecord[createdAtColumn] = new Date().toISOString();
+    if (updatedAtColumn) vendorRecord[updatedAtColumn] = new Date().toISOString();
 
     const insertedVendor = await this.runInsert(executor, 'tblvendors', vendorRecord);
     if (insertedVendor.rowCount === 0) {

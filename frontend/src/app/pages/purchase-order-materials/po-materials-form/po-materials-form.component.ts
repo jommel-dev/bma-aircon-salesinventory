@@ -578,6 +578,9 @@ export class PoMaterialsFormComponent implements OnInit, OnDestroy {
   /**
    * Builds the API payload from the current form state.
    */
+  /**
+   * Builds the API payload from the current form state.
+   */
   private buildPayload(): CreatePoMaterialsPayload {
     const payload: CreatePoMaterialsPayload = {
       poType: 'ACM',
@@ -596,19 +599,19 @@ export class PoMaterialsFormComponent implements OnInit, OnDestroy {
       status: this.mode === 'edit' ? this.orderStatus : 'for_approval',
     };
 
-    // Vendor (optional on create, required by edit validation rules)
+    // ✅ FIX: Set vendorId if present, but ALWAYS include the nested vendor details if a name exists!
     if (this.selectedVendorId) {
       payload.vendorId = this.selectedVendorId;
-    } else {
-      const vendorName = this.vendorSearch.trim() || this.vendorForm.name.trim();
-      if (vendorName) {
+    }
+
+    const vendorName = this.vendorSearch.trim() || this.vendorForm.name.trim();
+    if (vendorName) {
       payload.vendor = {
         name: vendorName,
-        address: this.vendorForm.address?.trim() || undefined,
-        contact_person: this.vendorForm.contact_person?.trim() || undefined,
-        contact_number: this.vendorForm.contact_number?.trim() || undefined,
+        address: this.vendorForm.address?.trim() || '',
+        contact_person: this.vendorForm.contact_person?.trim() || '',
+        contact_number: this.vendorForm.contact_number?.trim() || '',
       };
-      }
     }
 
     // Payment details (only include entries with a method)
@@ -632,6 +635,60 @@ export class PoMaterialsFormComponent implements OnInit, OnDestroy {
 
     return payload;
   }
+  // private buildPayload(): CreatePoMaterialsPayload {
+  //   const payload: CreatePoMaterialsPayload = {
+  //     poType: 'ACM',
+  //     productItems: this.productItems.map((item) => ({
+  //       transType: 'purchase' as const,
+  //       materialId: item.materialId,
+  //       materialName: item.description,
+  //       materialCode: item.itemCode,
+  //       materialUnit: item.unit,
+  //       unitPrice: item.cost,
+  //       sellPrice: item.rate,
+  //       discountPrice: item.discount,
+  //       totalSetQty: item.qty,
+  //     })),
+  //     remarks: this.remarks?.trim() || '',
+  //     status: this.mode === 'edit' ? this.orderStatus : 'for_approval',
+  //   };
+
+  //   // Vendor (optional on create, required by edit validation rules)
+  //   if (this.selectedVendorId) {
+  //     payload.vendorId = this.selectedVendorId;
+  //   } else {
+  //     const vendorName = this.vendorSearch.trim() || this.vendorForm.name.trim();
+  //     if (vendorName) {
+  //     payload.vendor = {
+  //       name: vendorName,
+  //       address: this.vendorForm.address?.trim() || undefined,
+  //       contact_person: this.vendorForm.contact_person?.trim() || undefined,
+  //       contact_number: this.vendorForm.contact_number?.trim() || undefined,
+  //     };
+  //     }
+  //   }
+
+  //   // Payment details (only include entries with a method)
+  //   const validPayments = this.paymentDetails.filter((p) => p.method);
+  //   if (validPayments.length > 0) {
+  //     payload.paymentDetails = validPayments.map((p) => ({
+  //       method: p.method,
+  //       amount: p.amount || undefined,
+  //       terms: p.terms || undefined,
+  //       termsDueDate: p.termsDueDate || undefined,
+  //       status: p.status || undefined,
+  //       paymentDate: p.paymentDate || undefined,
+  //       bankName: p.bankName || undefined,
+  //       referenceNo: p.referenceNo || undefined,
+  //       checkNo: p.checkNo || undefined,
+  //       chequeDate: p.chequeDate || undefined,
+  //       issuedBy: p.issuedBy || undefined,
+  //       downPayment: p.downPayment || undefined,
+  //     }));
+  //   }
+
+  //   return payload;
+  // }
 
   // ─── Remarks ────────────────────────────────────────────────────────────────
 
