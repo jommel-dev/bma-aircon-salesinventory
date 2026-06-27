@@ -7941,9 +7941,18 @@ export class SalesOrderService {
         data: responseData,
       };
     } catch (error) {
+      
+
       if (error instanceof NotFoundException) {
         return { success: false, message: error.message };
       }
+      // ✅ ADD THIS: Prints the absolute column/syntax failure directly to your DigitalOcean console logs!
+      console.error('--- CRITICAL MATERIAL SALES ORDER SQL ERROR ---');
+      console.error('Error Message:', error instanceof Error ? error.message : 'Failed to update material sales order');
+      console.error('Error Detail:', error instanceof Error ? (error as any).detail : 'Failed to update material sales order');
+      console.error('Error Code:', error instanceof Error ? (error as any).code : 'N/A'); // e.g., "42703" for undefined column
+      console.error('Stack Trace:', error instanceof Error ? error.stack : 'N/A');
+      console.error('-----------------------------------------------');
       return {
         success: false,
         message: error instanceof Error ? error.message : 'Failed to update material sales order',
