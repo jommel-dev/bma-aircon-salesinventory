@@ -536,7 +536,7 @@
         >
           Save Draft
         </button>
-        <button
+        <!-- <button
           type="button"
           (click)="createOrder()"
           [disabled]="isSubmitting"
@@ -546,6 +546,17 @@
             <div class="h-4 w-4 animate-spin rounded-full border-2 border-white border-t-transparent"></div>
           }
           {{ isSubmitting ? 'Creating...' : 'Create Order' }}
+        </button> -->
+        <button
+          type="button"
+          (click)="completeOrderDirect()"
+          [disabled]="isSubmitting"
+          class="rounded-lg bg-green-600 px-4 py-2 text-sm font-medium text-white hover:bg-green-700 disabled:cursor-not-allowed disabled:opacity-50 flex items-center gap-2"
+        >
+          @if (isSubmitting) {
+            <div class="h-4 w-4 animate-spin rounded-full border-2 border-white border-t-transparent"></div>
+          }
+          {{ isSubmitting ? 'Completing...' : 'Complete Order' }}
         </button>
       }
 

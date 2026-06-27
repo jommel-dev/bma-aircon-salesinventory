@@ -12,6 +12,7 @@ import {
   DashboardService,
 } from '../../../shared/services/dashboard.service';
 import { RbacService } from '../../../shared/services/rbac.service';
+import { PrintUnpaidReportService } from '../../../shared/services/print-unpaid-report.service'; // Adjust path accordingly
 
 @Component({
   selector: 'app-ecommerce',
@@ -89,6 +90,11 @@ export class EcommerceComponent implements OnInit {
   operationDetailItems: Array<{ id?: string | number; [key: string]: unknown }> = [];
   operationDetailLoading = false;
 
+
+  // Export Generation Unpaid
+  isGeneratingPdfReport = false;
+
+
   private readonly operationModes: DashboardOperationDetailMode[] = [
     'receiving',
     'dispatch',
@@ -99,6 +105,7 @@ export class EcommerceComponent implements OnInit {
   constructor(
     private readonly dashboardService: DashboardService,
     private readonly rbacService: RbacService,
+    private readonly printReportService: PrintUnpaidReportService
   ) {}
 
   ngOnInit(): void {
@@ -106,6 +113,45 @@ export class EcommerceComponent implements OnInit {
     this.isSuperAdmin = String(this.rbacService.getPayload()?.roleName ?? '').trim().toLowerCase() === 'superadmin'
       || String(this.rbacService.getPayload()?.roleName ?? '').trim().toLowerCase() === 'super admin';
     void this.loadDashboardOverview();
+  }
+
+  async downloadUnpaidOverviewReport(): Promise<void> {
+    const activeItems = this.salesSummaryDetailItems || [];
+
+    if (activeItems.length === 0) {
+      alert('No records loaded within the active dashboard viewpoint view. Change filters or refresh data.');
+      return;
+    }
+
+    this.isGeneratingPdfReport = true;
+
+    try {
+      // Map the generic array data safely to the strict UnpaidReportRow contract
+      const formattedRows = activeItems.map((item: any) => ({
+        id: item.soNumber ?? '-',
+        customer: String(item.customer ?? 'Walk-in Customer'),
+        method: item.method,
+        totalAmount: Number(item.totalAmount ?? 0),
+        paid: Number(item.paid ?? 0),
+        balance: Number(item.balance ?? 0),
+        dueDate: item.dueDate,
+        status: item.status
+      }));
+
+      const objectUrl = await this.printReportService.generatePdf(formattedRows);
+
+      const anchor = document.createElement('a');
+      anchor.href = objectUrl;
+      anchor.download = `Unpaid_Sales_Summary_Report_${new Date().toISOString().split('T')[0]}.pdf`;
+      document.body.appendChild(anchor);
+      anchor.click();
+      document.body.removeChild(anchor);
+      URL.revokeObjectURL(objectUrl);
+    } catch (error) {
+      console.error('Error constructing custom pdf-lib landscape data export document matrix:', error);
+    } finally {
+      this.isGeneratingPdfReport = false;
+    }
   }
 
   async loadDashboardOverview(): Promise<void> {

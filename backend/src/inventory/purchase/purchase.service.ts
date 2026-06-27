@@ -3378,13 +3378,13 @@ export class PurchaseService {
             method: payment.method ?? '',
             amount: this.toOptionalNumber(payment.amount) ?? 0,
             terms: payment.terms ?? '',
-            termsDueDate: payment.termsDueDate,
+            termsDueDate: this.formatToUiDate(payment.termsDueDate),
             status: payment.status ?? 'unpaid',
-            paymentDate: payment.paymentDate,
+            paymentDate: this.formatToUiDate(payment.paymentDate),
             bankName: payment.bankName ?? '',
             referenceNo: payment.referenceNo ?? '',
             checkNo: payment.checkNo ?? '',
-            chequeDate: payment.chequeDate,
+            chequeDate: this.formatToUiDate(payment.chequeDate),
             issuedBy: payment.issuedBy ?? '',
             downPayment: this.toOptionalNumber(payment.downPayment) ?? 0,
           })),
@@ -3403,6 +3403,13 @@ export class PurchaseService {
         message: error instanceof Error ? error.message : 'Failed to load purchase order detail',
       };
     }
+  }
+
+  // Helper function to extract just the date portion cleanly
+  private formatToUiDate(isoString: string | null): string | null {
+    if (!isoString) return null;
+    // If it's a full ISO string, split by the 'T' separator to get 'YYYY-MM-DD'
+    return isoString.includes('T') ? isoString.split('T')[0] : isoString;
   }
 
   async update(
