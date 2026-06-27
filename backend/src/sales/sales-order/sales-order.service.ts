@@ -7552,361 +7552,464 @@ export class SalesOrderService {
 
     try {
       const result = await this.databaseService.withTransaction(async (client) => {
-        // 1. Fetch existing order to get its current salesType
-        const existingResult = await client.query<{
-          id: number;
-          sales_type: string | null;
-          status: string | null;
-          customer_id: string | null;
-        }>(
-          `SELECT id, "salesType" AS sales_type, status, customer_id::text AS customer_id
-           FROM tblsales_order
-           WHERE id = $1
-           LIMIT 1`,
-          [id],
-        );
-
-        if (existingResult.rowCount === 0) {
-          throw new NotFoundException(`Sales order ${id} not found`);
-        }
-
-        const existingOrder = existingResult.rows[0];
-        const existingSalesType = String(existingOrder.sales_type ?? 'sales').trim();
-
-        // 2. Determine the salesType to persist:
-        //    Preserve original salesType if it differs from 'sales'
-        const salesTypeToUse =
-          existingSalesType && existingSalesType !== 'sales'
-            ? existingSalesType
-            : String(dto.salesType ?? 'sales').trim() || 'sales';
-
-        // 3. Handle customer upsert if customer data is provided
-        let customerId: string | null = existingOrder.customer_id;
-        if (dto.customer_id || dto.customer) {
-          customerId = await this.upsertCustomerFromPayload(client, {
-            customer_id: dto.customer_id,
-            customer: dto.customer as any,
-          });
-        }
-
-        // 4. Compute total from product items (rate - discount) × qty
-        const productItems = Array.isArray(dto.productItems) ? dto.productItems : [];
-        let computedTotal = 0;
-        if (productItems.length > 0) {
-          for (const item of productItems) {
-            const rate = Number(item.rate ?? 0);
-            const discount = Number(item.discount) || 0;
-            const effectiveRate = Math.max(rate - discount, 0);
-            const qty = Number(item.qty ?? 0);
-            computedTotal += Math.round(effectiveRate * qty * 100) / 100;
-          }
-          computedTotal = Math.round(computedTotal * 100) / 100;
-        }
-
-        // 5. Build update fields — explicitly omit 'installer'
-        const updateFields: string[] = [];
-        const updateParams: unknown[] = [];
-
-        // customer_id
-        updateParams.push(customerId);
-        updateFields.push(`customer_id = $${updateParams.length}`);
-
-        // total_amount — only update if productItems were provided (avoid zeroing out on status-only updates)
-        if (productItems.length > 0) {
-          updateParams.push(computedTotal);
-          updateFields.push(`total_amount = $${updateParams.length}`);
-        }
-
-        // status (if provided)
-        if (dto.status) {
-          updateParams.push(dto.status);
-          updateFields.push(`status = $${updateParams.length}`);
-        }
-
-        // sales_type — preserved or updated
-        updateParams.push(salesTypeToUse);
-        updateFields.push(`"salesType" = $${updateParams.length}`);
-
-        // schedule_date (delivery date)
-        if (dto.deliveryDate !== undefined) {
-          updateParams.push(dto.deliveryDate || null);
-          updateFields.push(`"scheduleDate" = $${updateParams.length}`);
-        }
-
-        // remarks
-        if (dto.remarks !== undefined) {
-          updateParams.push(dto.remarks ?? '');
-          updateFields.push(`remarks = $${updateParams.length}`);
-        }
-
-        // NOTE: 'installer' is intentionally NOT included in the update (Req 4.3, 4.4)
-
-        // 6. Execute the update on tblsales_order
-        updateParams.push(id);
-        const updateSql = `
-          UPDATE tblsales_order
-          SET ${updateFields.join(', ')}
-          WHERE id = $${updateParams.length}
-          RETURNING id
-        `;
-
-        const updateResult = await client.query<{ id: number }>(updateSql, updateParams);
-        if (updateResult.rowCount === 0) {
-          throw new Error('Failed to update sales order');
-        }
-
-        // 7a. Stock return: when status transitions from 'complete' to 'voided', return stock BEFORE deleting items
-        const previousStatus = String(existingOrder.status ?? '').trim().toLowerCase();
-        const newStatus = String(dto.status ?? '').trim().toLowerCase();
-        if (
-          newStatus === 'voided' &&
-          (previousStatus === 'complete' || previousStatus === 'completed')
-        ) {
-          // Fetch the line items from DB before they get deleted
-          const existingItemsResult = await client.query<{
-            material_id: number | null;
-            qty: number;
-            is_non_inventory: boolean;
-          }>(
-            `SELECT material_id, qty, is_non_inventory
-             FROM tblsales_order_items
-             WHERE sales_order_id = $1`,
+        try {
+          // 1. Fetch existing order to get its current salesType
+          // const existingResult = await client.query<{
+          //   id: number;
+          //   sales_type: string | null;
+          //   status: string | null;
+          //   customer_id: string | null;
+          // }>(
+          //   `SELECT id, "salesType" AS sales_type, status, customer_id::text AS customer_id
+          //   FROM tblsales_order
+          //   WHERE id = $1
+          //   LIMIT 1`,
+          //   [id],
+          // );
+          const existingResult = await client.query<{ id: number; sales_type: string | null; status: string | null; customer_id: string | null; }>(
+            `SELECT id, "salesType" AS sales_type, status, customer_id::text AS customer_id FROM tblsales_order WHERE id = $1 LIMIT 1`,
             [id],
           );
 
-          for (const row of existingItemsResult.rows) {
-            const materialId = Number(row.material_id);
-            const qty = Number(row.qty ?? 0);
-            const isNonInventory = Boolean(row.is_non_inventory);
+          if (existingResult.rowCount === 0) {
+            throw new NotFoundException(`Sales order ${id} not found`);
+          }
+          console.log('Existing sales order success');
+          const existingOrder = existingResult.rows[0];
+          const existingSalesType = String(existingOrder.sales_type ?? 'sales').trim();
 
-            if (!materialId || materialId <= 0 || qty <= 0 || isNonInventory) {
-              continue;
+          // 2. Determine the salesType to persist:
+          //    Preserve original salesType if it differs from 'sales'
+          const salesTypeToUse =
+            existingSalesType && existingSalesType !== 'sales'
+              ? existingSalesType
+              : String(dto.salesType ?? 'sales').trim() || 'sales';
+
+          console.log('Step 2 success');
+
+          // 3. Handle customer upsert if customer data is provided
+          let customerId: string | null = existingOrder.customer_id;
+          if (dto.customer_id || dto.customer) {
+            customerId = await this.upsertCustomerFromPayload(client, {
+              customer_id: dto.customer_id,
+              customer: dto.customer as any,
+            });
+          }
+          console.log('Step 3 success');
+
+          // 4. Compute total from product items (rate - discount) × qty
+          const productItems = Array.isArray(dto.productItems) ? dto.productItems : [];
+          let computedTotal = 0;
+          if (productItems.length > 0) {
+            for (const item of productItems) {
+              const rate = Number(item.rate ?? 0);
+              const discount = Number(item.discount) || 0;
+              const effectiveRate = Math.max(rate - discount, 0);
+              const qty = Number(item.qty ?? 0);
+              computedTotal += Math.round(effectiveRate * qty * 100) / 100;
             }
+            computedTotal = Math.round(computedTotal * 100) / 100;
+          }
+          console.log('Step 4 success');
 
-            // Check how much was actually deducted (from movement records)
-            const movementResult = await client.query<{ qty: number }>(
-              `SELECT COALESCE(SUM(qty), 0) AS qty
-               FROM tblmaterial_stock_movement
-               WHERE source_type = 'SO'
-                 AND source_id = $1
-                 AND material_id = $2
-                 AND movement_type = 'OUT'`,
-              [id, materialId],
+          // 5. Build update fields — explicitly omit 'installer'
+          const updateFields: string[] = [];
+          const updateParams: unknown[] = [];
+
+          // customer_id
+          updateParams.push(customerId);
+          updateFields.push(`customer_id = $${updateParams.length}`);
+
+          // total_amount — only update if productItems were provided (avoid zeroing out on status-only updates)
+          if (productItems.length > 0) {
+            updateParams.push(computedTotal);
+            updateFields.push(`total_amount = $${updateParams.length}`);
+          }
+
+          // status (if provided)
+          if (dto.status) {
+            updateParams.push(dto.status);
+            updateFields.push(`status = $${updateParams.length}`);
+          }
+
+          // sales_type — preserved or updated
+          updateParams.push(salesTypeToUse);
+          updateFields.push(`"salesType" = $${updateParams.length}`);
+
+          // schedule_date (delivery date)
+          if (dto.deliveryDate !== undefined) {
+            updateParams.push(dto.deliveryDate || null);
+            updateFields.push(`"scheduleDate" = $${updateParams.length}`);
+          }
+
+          // remarks
+          if (dto.remarks !== undefined) {
+            updateParams.push(dto.remarks ?? '');
+            updateFields.push(`remarks = $${updateParams.length}`);
+          }
+
+          console.log('Step 5 success');
+          // 6. Execute the update on tblsales_order
+          updateParams.push(id);
+          const updateSql = `
+            UPDATE tblsales_order
+            SET ${updateFields.join(', ')}
+            WHERE id = $${updateParams.length}
+            RETURNING id
+          `;
+
+          const updateResult = await client.query<{ id: number }>(updateSql, updateParams);
+          if (updateResult.rowCount === 0) {
+            throw new Error('Failed to update sales order');
+          }
+          console.log('Step 6 success');
+
+          // 7a. Stock return: when status transitions from 'complete' to 'voided', return stock BEFORE deleting items
+          const previousStatus = String(existingOrder.status ?? '').trim().toLowerCase();
+          const newStatus = String(dto.status ?? '').trim().toLowerCase();
+          if (
+            newStatus === 'voided' &&
+            (previousStatus === 'complete' || previousStatus === 'completed')
+          ) {
+            // Fetch the line items from DB before they get deleted
+            const existingItemsResult = await client.query<{
+              material_id: number | null;
+              qty: number;
+              is_non_inventory: boolean;
+            }>(
+              `SELECT material_id, qty, is_non_inventory
+              FROM tblsales_order_items
+              WHERE sales_order_id = $1`,
+              [id],
             );
-            const deductedQty = Number(movementResult.rows[0]?.qty ?? 0);
 
-            // Check how much was already returned
-            const returnedResult = await client.query<{ qty: number }>(
-              `SELECT COALESCE(SUM(qty), 0) AS qty
-               FROM tblmaterial_stock_movement
-               WHERE source_type = 'SO'
-                 AND source_id = $1
-                 AND material_id = $2
-                 AND movement_type = 'RETURN'`,
-              [id, materialId],
-            );
-            const alreadyReturned = Number(returnedResult.rows[0]?.qty ?? 0);
+            for (const row of existingItemsResult.rows) {
+              const materialId = Number(row.material_id);
+              const qty = Number(row.qty ?? 0);
+              const isNonInventory = Boolean(row.is_non_inventory);
 
-            const returnQty = Math.max(0, deductedQty - alreadyReturned);
-
-            if (returnQty > 0) {
-              // Record RETURN movement
-              try {
-                await this.materialStockService.recordMovement(
-                  {
-                    materialId,
-                    movementType: 'RETURN',
-                    qty: returnQty,
-                    sourceType: 'SO',
-                    sourceId: id,
-                    sourceLineKey: `SO-${id}-MAT-${materialId}-VOID`,
-                    statusSnapshot: 'voided',
-                    remarks: `Stock returned for voided Material SO #${id}`,
-                  },
-                  { client },
-                );
-              } catch (moveErr: any) {
-                if (moveErr?.message?.includes('unique') || moveErr?.message?.includes('duplicate')) {
-                  // Already recorded — idempotent, skip
-                } else {
-                  throw moveErr;
-                }
+              if (!materialId || materialId <= 0 || qty <= 0 || isNonInventory) {
+                continue;
               }
 
-              // Also add back to tblmaterials.on_hand_stock
-              await client.query(
-                `UPDATE tblmaterials
-                 SET on_hand_stock = COALESCE(on_hand_stock, 0) + $1
-                 WHERE id = $2`,
-                [returnQty, materialId],
+              // Check how much was actually deducted (from movement records)
+              const movementResult = await client.query<{ qty: number }>(
+                `SELECT COALESCE(SUM(qty), 0) AS qty
+                FROM tblmaterial_stock_movement
+                WHERE source_type = 'SO'
+                  AND source_id = $1
+                  AND material_id = $2
+                  AND movement_type = 'OUT'`,
+                [id, materialId],
               );
+              const deductedQty = Number(movementResult.rows[0]?.qty ?? 0);
+
+              // Check how much was already returned
+              const returnedResult = await client.query<{ qty: number }>(
+                `SELECT COALESCE(SUM(qty), 0) AS qty
+                FROM tblmaterial_stock_movement
+                WHERE source_type = 'SO'
+                  AND source_id = $1
+                  AND material_id = $2
+                  AND movement_type = 'RETURN'`,
+                [id, materialId],
+              );
+              const alreadyReturned = Number(returnedResult.rows[0]?.qty ?? 0);
+
+              const returnQty = Math.max(0, deductedQty - alreadyReturned);
+
+              if (returnQty > 0) {
+                // Record RETURN movement
+                try {
+                  await this.materialStockService.recordMovement(
+                    {
+                      materialId,
+                      movementType: 'RETURN',
+                      qty: returnQty,
+                      sourceType: 'SO',
+                      sourceId: id,
+                      sourceLineKey: `SO-${id}-MAT-${materialId}-VOID`,
+                      statusSnapshot: 'voided',
+                      remarks: `Stock returned for voided Material SO #${id}`,
+                    },
+                    { client },
+                  );
+                } catch (moveErr: any) {
+                  if (moveErr?.message?.includes('unique') || moveErr?.message?.includes('duplicate')) {
+                    // Already recorded — idempotent, skip
+                  } else {
+                    throw moveErr;
+                  }
+                }
+
+                // Also add back to tblmaterials.on_hand_stock
+                await client.query(
+                  `UPDATE tblmaterials
+                  SET on_hand_stock = COALESCE(on_hand_stock, 0) + $1
+                  WHERE id = $2`,
+                  [returnQty, materialId],
+                );
+              }
             }
           }
-        }
 
-        // 7b. Replace line items: delete existing + insert new (within same transaction)
-        // Skip item replacement if no productItems provided (e.g., status-only update like void)
-        if (dto.productItems !== undefined && Array.isArray(dto.productItems)) {
-          await client.query(
-            `DELETE FROM tblsales_order_items WHERE sales_order_id = $1`,
-            [id],
-          );
+          console.log('Step 7a success');
 
-          // Insert new line items
-          for (const item of productItems) {
-            const rate = Number(item.rate ?? 0);
-            const discount = Number(item.discount) || 0;
-            const effectiveRate = Math.max(rate - discount, 0);
-            const qty = Number(item.qty ?? 0);
-            const total = Math.round(effectiveRate * qty * 100) / 100;
-
+          // 7b. Replace line items: delete existing + insert new (within same transaction)
+          // Skip item replacement if no productItems provided (e.g., status-only update like void)
+          if (dto.productItems !== undefined && Array.isArray(dto.productItems)) {
             await client.query(
-              `INSERT INTO tblsales_order_items
-                (sales_order_id, material_id, description, item_code, brand, cost, rate, discount, qty, total, is_non_inventory)
-               VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)`,
-              [
-                id,
-              item.materialId ?? null,
-              item.description,
-              item.itemCode ?? null,
-              item.brand ?? null,
-              Number(item.cost ?? 0),
-              rate,
-              discount,
-              qty,
-              total,
-              Boolean(item.isNonInventory),
-            ],
-          );
-        }
-        }
+              `DELETE FROM tblsales_order_items WHERE sales_order_id = $1`,
+              [id],
+            );
 
-        // 8. Replace payment details: delete existing + insert new
-        if (dto.paymentDetails !== undefined) {
-          await client.query(
-            `DELETE FROM tblsales_order_payments WHERE sales_order_id = $1`,
-            [id],
-          );
+            // Insert new line items
+            for (const item of productItems) {
+              const rate = Number(item.rate ?? 0);
+              const discount = Number(item.discount) || 0;
+              const effectiveRate = Math.max(rate - discount, 0);
+              const qty = Number(item.qty ?? 0);
+              const total = Math.round(effectiveRate * qty * 100) / 100;
 
-          const paymentDetailsList = Array.isArray(dto.paymentDetails) ? dto.paymentDetails : [];
-          for (const payment of paymentDetailsList) {
-            const paymentMethod = String(payment.method ?? 'Cash').trim();
-            const paymentStatus = this.getMaterialPaymentAutoStatus(paymentMethod, payment.termsDueDate, payment.postDated) ?? payment.status ?? 'unpaid';
-
-            await client.query(
-              `INSERT INTO tblsales_order_payments
-                (sales_order_id, method, amount, terms, terms_due_date, reference_no, payment_date, issued_by, cc_charge, check_no, bank_name, bank_account, post_dated, down_payment, status)
-              VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15)`,
-              [
-                id,
-                paymentMethod,
-                Number(payment.amount) || 0,
-                payment.terms || null,
-                payment.termsDueDate || null,
-                payment.referenceNo || null,
-                payment.paymentDate || null,
-                payment.issuedBy || null,
-                payment.ccCharge || null,
-                payment.checkNo || null,
-                payment.bankName || null,
-                payment.bankAccount || null,
-                payment.postDated || null,
-                Number(payment.downPayment) || 0,
-                paymentStatus,
+              await client.query(
+                `INSERT INTO tblsales_order_items
+                  (sales_order_id, material_id, description, item_code, brand, cost, rate, discount, qty, total, is_non_inventory)
+                VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)`,
+                [
+                  id,
+                item.materialId ?? null,
+                item.description,
+                item.itemCode ?? null,
+                item.brand ?? null,
+                Number(item.cost ?? 0),
+                rate,
+                discount,
+                qty,
+                total,
+                Boolean(item.isNonInventory),
               ],
             );
           }
-        }
-
-        // 9. Stock deduction: when status transitions to 'complete', deduct material stock
-        if (
-          newStatus === 'complete' &&
-          previousStatus !== 'complete' &&
-          previousStatus !== 'completed'
-        ) {
-          // If productItems were not provided in the DTO, read from the database
-          let itemsToDeduct = productItems;
-          if (itemsToDeduct.length === 0) {
-            const dbItems = await client.query<{ material_id: number | null; qty: number; is_non_inventory: boolean }>(
-              `SELECT material_id, qty, is_non_inventory
-               FROM tblsales_order_items
-               WHERE sales_order_id = $1`,
-              [id],
-            );
-            itemsToDeduct = dbItems.rows.map(row => ({
-              materialId: row.material_id,
-              qty: row.qty,
-              isNonInventory: row.is_non_inventory,
-            }));
           }
 
-          for (const item of itemsToDeduct) {
-            const materialId = Number(item.materialId);
-            const orderedQty = Number(item.qty ?? 0);
-            const isNonInventory = Boolean(item.isNonInventory);
+          console.log('Step 7b success');
 
-            // Only deduct stock for inventory items with a valid materialId
-            if (!materialId || materialId <= 0 || orderedQty <= 0 || isNonInventory) {
-              continue;
-            }
-
-            // Calculate available stock from tblmaterials (source of truth)
-            const stockResult = await client.query(
-              `SELECT COALESCE(on_hand_stock, 0) as available_stock
-               FROM tblmaterials
-               WHERE id = $1`,
-              [materialId],
+          // 8. Replace payment details: delete existing + insert new
+          if (dto.paymentDetails !== undefined) {
+            await client.query(
+              `DELETE FROM tblsales_order_payments WHERE sales_order_id = $1`,
+              [id],
             );
-            const availableStock = Number(stockResult.rows[0]?.available_stock ?? 0);
 
-            // Only deduct what's actually available (not backorder quantity)
-            const deductQty = Math.max(0, Math.min(orderedQty, availableStock));
+            const paymentDetailsList = Array.isArray(dto.paymentDetails) ? dto.paymentDetails : [];
+            for (const payment of paymentDetailsList) {
+              const paymentMethod = String(payment.method ?? 'Cash').trim();
+              const paymentStatus = this.getMaterialPaymentAutoStatus(paymentMethod, payment.termsDueDate, payment.postDated) ?? payment.status ?? 'unpaid';
 
-            if (deductQty > 0) {
-              // Record OUT movement in tblmaterial_stock_movement
-              try {
-                await this.materialStockService.recordMovement(
-                  {
-                    materialId,
-                    movementType: 'OUT',
-                    qty: deductQty,
-                    sourceType: 'SO',
-                    sourceId: id,
-                    sourceLineKey: `SO-${id}-MAT-${materialId}`,
-                    statusSnapshot: 'complete',
-                    remarks: `Stock deducted for Material SO #${id}`,
-                  },
-                  { client },
-                );
-              } catch (moveErr: any) {
-                // Log but don't block the transaction if movement fails (e.g., duplicate)
-                if (moveErr?.message?.includes('unique') || moveErr?.message?.includes('duplicate')) {
-                  // Already recorded — idempotent, skip
-                } else {
-                  throw moveErr;
-                }
-              }
-
-              // Also deduct from tblmaterials.on_hand_stock for consistency
               await client.query(
-                `UPDATE tblmaterials
-                 SET on_hand_stock = GREATEST(COALESCE(on_hand_stock, 0) - $1, 0)
-                 WHERE id = $2`,
-                [deductQty, materialId],
+                `INSERT INTO tblsales_order_payments
+                  (sales_order_id, method, amount, terms, terms_due_date, reference_no, payment_date, issued_by, cc_charge, check_no, bank_name, bank_account, post_dated, down_payment, status)
+                VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15)`,
+                [
+                  id,
+                  paymentMethod,
+                  Number(payment.amount) || 0,
+                  payment.terms || null,
+                  payment.termsDueDate || null,
+                  payment.referenceNo || null,
+                  payment.paymentDate || null,
+                  payment.issuedBy || null,
+                  payment.ccCharge || null,
+                  payment.checkNo || null,
+                  payment.bankName || null,
+                  payment.bankAccount || null,
+                  payment.postDated || null,
+                  Number(payment.downPayment) || 0,
+                  paymentStatus,
+                ],
               );
             }
           }
-        }
 
-        return {
-          salesOrderId: id,
-          customerId,
-          totalAmount: computedTotal,
-          status: dto.status ?? existingOrder.status,
-          salesType: salesTypeToUse,
-          previousStatus: String(existingOrder.status ?? '').trim().toLowerCase(),
-          newStatus: String(dto.status ?? '').trim().toLowerCase(),
-        };
+          console.log('Step 8 success');
+
+          // // 9. Stock deduction: when status transitions to 'complete', deduct material stock
+          // if (
+          //   newStatus === 'complete' &&
+          //   previousStatus !== 'complete' &&
+          //   previousStatus !== 'completed'
+          // ) {
+          //   // If productItems were not provided in the DTO, read from the database
+          //   let itemsToDeduct = productItems;
+          //   if (itemsToDeduct.length === 0) {
+          //     const dbItems = await client.query<{ material_id: number | null; qty: number; is_non_inventory: boolean }>(
+          //       `SELECT material_id, qty, is_non_inventory
+          //       FROM tblsales_order_items
+          //       WHERE sales_order_id = $1`,
+          //       [id],
+          //     );
+          //     itemsToDeduct = dbItems.rows.map(row => ({
+          //       materialId: row.material_id,
+          //       qty: row.qty,
+          //       isNonInventory: row.is_non_inventory,
+          //     }));
+          //   }
+
+          //   for (const item of itemsToDeduct) {
+          //     const materialId = Number(item.materialId);
+          //     const orderedQty = Number(item.qty ?? 0);
+          //     const isNonInventory = Boolean(item.isNonInventory);
+
+          //     // Only deduct stock for inventory items with a valid materialId
+          //     if (!materialId || materialId <= 0 || orderedQty <= 0 || isNonInventory) {
+          //       continue;
+          //     }
+
+          //     // Calculate available stock from tblmaterials (source of truth)
+          //     const stockResult = await client.query(
+          //       `SELECT COALESCE(on_hand_stock, 0) as available_stock
+          //       FROM tblmaterials
+          //       WHERE id = $1`,
+          //       [materialId],
+          //     );
+          //     const availableStock = Number(stockResult.rows[0]?.available_stock ?? 0);
+
+          //     // Only deduct what's actually available (not backorder quantity)
+          //     const deductQty = Math.max(0, Math.min(orderedQty, availableStock));
+
+          //     if (deductQty > 0) {
+          //       // Record OUT movement in tblmaterial_stock_movement
+          //       try {
+          //         await this.materialStockService.recordMovement(
+          //           {
+          //             materialId,
+          //             movementType: 'OUT',
+          //             qty: deductQty,
+          //             sourceType: 'SO',
+          //             sourceId: id,
+          //             sourceLineKey: `SO-${id}-MAT-${materialId}`,
+          //             statusSnapshot: 'complete',
+          //             remarks: `Stock deducted for Material SO #${id}`,
+          //           },
+          //           { client },
+          //         );
+          //       } catch (moveErr: any) {
+          //         // Log but don't block the transaction if movement fails (e.g., duplicate)
+          //         if (moveErr?.message?.includes('unique') || moveErr?.message?.includes('duplicate')) {
+          //           // Already recorded — idempotent, skip
+          //         } else {
+          //           throw moveErr;
+          //         }
+          //       }
+
+          //       // Also deduct from tblmaterials.on_hand_stock for consistency
+          //       await client.query(
+          //         `UPDATE tblmaterials
+          //         SET on_hand_stock = GREATEST(COALESCE(on_hand_stock, 0) - $1, 0)
+          //         WHERE id = $2`,
+          //         [deductQty, materialId],
+          //       );
+          //     }
+          //   }
+          // }
+          // 9. Stock deduction: when status transitions to 'complete', deduct material stock
+          if (
+            newStatus === 'complete' &&
+            previousStatus !== 'complete' &&
+            previousStatus !== 'completed'
+          ) {
+            let itemsToDeduct = productItems;
+            if (itemsToDeduct.length === 0) {
+              const dbItems = await client.query<{ material_id: number | null; qty: number; is_non_inventory: boolean }>(
+                `SELECT material_id, qty, is_non_inventory
+                FROM tblsales_order_items
+                WHERE sales_order_id = $1`,
+                [id],
+              );
+              itemsToDeduct = dbItems.rows.map(row => ({
+                materialId: row.material_id,
+                qty: row.qty,
+                isNonInventory: row.is_non_inventory,
+              }));
+            }
+
+            for (const item of itemsToDeduct) {
+              const materialId = Number(item.materialId);
+              const orderedQty = Number(item.qty ?? 0);
+              const isNonInventory = Boolean(item.isNonInventory);
+
+              if (!materialId || materialId <= 0 || orderedQty <= 0 || isNonInventory) {
+                continue;
+              }
+
+              // Calculate available stock from tblmaterials (source of truth)
+              const stockResult = await client.query(
+                `SELECT COALESCE(on_hand_stock, 0) as available_stock
+                FROM tblmaterials
+                WHERE id = $1`,
+                [materialId],
+              );
+              const availableStock = Number(stockResult.rows[0]?.available_stock ?? 0);
+
+              const deductQty = Math.max(0, Math.min(orderedQty, availableStock));
+
+              if (deductQty > 0) {
+                const sourceLineKey = `SO-${id}-MAT-${materialId}`;
+
+                // ✅ FIX: Check if movement was already recorded to keep the Postgres transaction clean
+                const checkMovement = await client.query(
+                  `SELECT 1 FROM tblmaterial_stock_movement WHERE source_line_key = $1 LIMIT 1`,
+                  [sourceLineKey]
+                );
+
+                if (checkMovement.rowCount === 0) {
+                  // Record OUT movement since it doesn't exist yet
+                  await this.materialStockService.recordMovement(
+                    {
+                      materialId,
+                      movementType: 'OUT',
+                      qty: deductQty,
+                      sourceType: 'SO',
+                      sourceId: id,
+                      sourceLineKey: sourceLineKey,
+                      statusSnapshot: 'complete',
+                      remarks: `Stock deducted for Material SO #${id}`,
+                    },
+                    { client },
+                  );
+
+                  // Also deduct from tblmaterials.on_hand_stock for consistency
+                  await client.query(
+                    `UPDATE tblmaterials
+                    SET on_hand_stock = GREATEST(COALESCE(on_hand_stock, 0) - $1, 0)
+                    WHERE id = $2`,
+                    [deductQty, materialId],
+                  );
+                }
+              }
+            }
+          }
+          console.log('Step 9 success');
+
+          return {
+            salesOrderId: id,
+            customerId,
+            totalAmount: computedTotal,
+            status: dto.status ?? existingOrder.status,
+            salesType: salesTypeToUse,
+            previousStatus: String(existingOrder.status ?? '').trim().toLowerCase(),
+            newStatus: String(dto.status ?? '').trim().toLowerCase(),
+          };
+      
+        } catch (innerError: any) {
+          // ✅ THIS WILL LOG THE ORIGINAL CRASHING SQL QUERY AND COLUMN MISMATCH!
+          console.error('--- THE EXACT INNER SQL QUERY CRASH ---');
+          console.error('Message:', innerError?.message);
+          console.error('Detail:', innerError?.detail);
+          console.error('Hint:', innerError?.hint);
+          console.error('----------------------------------------');
+          throw innerError; // Rethrow to abort transaction properly
+        }
       });
 
       // Process backorders if status is transitioning to pending
