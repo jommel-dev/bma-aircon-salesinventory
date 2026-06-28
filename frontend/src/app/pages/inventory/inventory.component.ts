@@ -1,6 +1,7 @@
 import { Component, OnInit, HostListener, ElementRef, ViewChildren, QueryList, AfterViewChecked } from '@angular/core';
 import { CommonModule } from '@angular/common';
 import { FormsModule } from '@angular/forms';
+import { firstValueFrom } from 'rxjs';
 import { PageBreadcrumbComponent } from '../../shared/components/common/page-breadcrumb/page-breadcrumb.component';
 import {
   MaterialInventoryService,
@@ -801,26 +802,58 @@ export class InventoryComponent implements OnInit, AfterViewChecked {
   /**
    * Confirm and perform the soft delete of the selected material.
    */
-  async confirmDelete(): Promise<void> {
+  // async confirmDelete(): Promise<void> {
+  //   if (!this.materialToDelete) return;
+
+  //   this.isDeleting = true;
+  //   this.deleteError = '';
+
+  //   try {
+  //     await this.materialInventoryService.deleteMaterial(this.materialToDelete.id);
+  //     this.isDeleteDialogOpen = false;
+  //     this.materialToDelete = null;
+
+  //     // Refresh table data
+  //     if (this.selectedBrandId !== null) {
+  //       await this.loadMaterials(this.selectedBrandId);
+  //     }
+  //   } catch (error: any) {
+  //     this.deleteError = error?.response?.data?.message || error?.message || 'Failed to delete material.';
+  //   } finally {
+  //     this.isDeleting = false;
+  //   }
+  // }
+  confirmDelete(): void {
     if (!this.materialToDelete) return;
 
     this.isDeleting = true;
     this.deleteError = '';
 
-    try {
-      await this.materialInventoryService.deleteMaterial(this.materialToDelete.id);
-      this.isDeleteDialogOpen = false;
-      this.materialToDelete = null;
+    // Since deleteMaterial returns a Promise, handle it directly here:
+    this.materialInventoryService.deleteMaterial(this.materialToDelete.id)
+      .then((response: any) => {
+        this.isDeleteDialogOpen = false;
+        this.materialToDelete = null;
 
-      // Refresh table data
-      if (this.selectedBrandId !== null) {
-        await this.loadMaterials(this.selectedBrandId);
-      }
-    } catch (error: any) {
-      this.deleteError = error?.response?.data?.message || error?.message || 'Failed to delete material.';
-    } finally {
-      this.isDeleting = false;
-    }
+        if (response && response.success) {
+          alert(response.message);
+        }
+
+        // Refresh grid table data
+        if (this.selectedBrandId !== null) {
+          this.loadMaterials(this.selectedBrandId);
+        }
+
+        // Refresh your tree view counters
+        this.loadTree();
+
+        this.isDeleting = false;
+      })
+      .catch((error: any) => {
+        this.deleteError = error?.error?.message || error?.message || 'Failed to delete material.';
+        this.isDeleting = false;
+        console.error('Delete operation failed:', error);
+      });
   }
 
   // --- History Modal Methods ---
@@ -1253,7 +1286,7 @@ export class InventoryComponent implements OnInit, AfterViewChecked {
     // But since getNextSequenceForPrefixAsync already accounts for local rows,
     // we clear them first and reassign
     for (let i = 0; i < this.materialRows.length; i++) {
-      this.materialRows[i].material_code = `${prefix}${String(startSeq + i).padStart(5, '0')}`;
+      this.materialRows[i].material_code = `${prefix}${String(startSeq + i).padStart(4, '0')}`;
     }
   }
 

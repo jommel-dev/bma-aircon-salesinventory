@@ -54,12 +54,51 @@ export class MaterialItemsService {
     return res.rows[0] ?? null;
   }
 
+  // async deleteMaterial(id: number) {
+  //   // Soft-delete
+  //   const res = await this.db.query(
+  //     `UPDATE tblmaterial_items SET is_active = false WHERE id = $1 RETURNING id, code, name, is_active`,
+  //     [id],
+  //   );
+  //   return res.rows[0] ?? null;
+  // }
   async deleteMaterial(id: number) {
-    // Soft-delete
-    const res = await this.db.query(
-      `UPDATE tblmaterial_items SET is_active = false WHERE id = $1 RETURNING id, code, name, is_active`,
-      [id],
-    );
-    return res.rows[0] ?? null;
+    // 1. Check if the material is linked to any Sales Orders
+    const checkSOQuery = `SELECT COUNT(*) FROM tblsales_order_items WHERE material_id = $1`;
+    const checkRes = await this.db.query(checkSOQuery, [id]);
+    const hasSalesOrders = parseInt(checkRes.rows[0].count, 10) > 0;
+
+    if (hasSalesOrders) {
+      // SCENARIO A: It has history. Soft-delete but KEEP the code intact 
+      // so historical joins don't break. (Requires the Partial Unique Index fix).
+      const query = `
+        UPDATE tblmaterials 
+        SET deleted_at = NOW()
+        WHERE id = $1 
+        RETURNING id, material_code, material_name;
+      `;
+      const res = await this.db.query(query, [id]);
+      return { 
+        success: true, 
+        message: 'Material has sales history. Archived securely without changing code.', 
+        data: res.rows[0] 
+      };
+    } else {
+      // SCENARIO B: Clean slate. No sales order dependencies. 
+      // We can safely append a timestamp to free up the code immediately.
+      const query = `
+        UPDATE tblmaterials 
+        SET material_code = material_code || '_del_' || EXTRACT(EPOCH FROM NOW()), 
+            deleted_at = NOW()
+        WHERE id = $1 
+        RETURNING id, material_code, material_name;
+      `;
+      const res = await this.db.query(query, [id]);
+      return { 
+        success: true, 
+        message: 'Material deleted. Code freed for immediate reuse.', 
+        data: res.rows[0] 
+      };
+    }
   }
 }
