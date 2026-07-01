@@ -99,7 +99,7 @@ export interface MaterialSalesOrderListItem {
   createdByName: string | null;
   paymentMethod: string;
   paymentStatus: string;
-  payments: Array<{ method: string; status: string; amount: number; terms: string }>;
+  payments: Array<{ method: string; status: string; amount: number; terms: string; bankAccount?: string }>;
 }
 
 export interface MaterialSalesOrderListMeta {

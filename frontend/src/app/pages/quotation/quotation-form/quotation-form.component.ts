@@ -496,9 +496,9 @@ export class QuotationFormComponent implements OnInit {
       this.validityDays = quotation.validityDays ?? 14;
 
       // Populate customer info
+      this.customerSearch = quotation.customerName ?? '';
       if (quotation.customerId) {
         this.selectedCustomerId = quotation.customerId;
-        this.customerSearch = quotation.customerName ?? '';
       }
       this.customerForm.name = quotation.customerName ?? '';
       this.customerForm.address = quotation.customerAddress ?? '';

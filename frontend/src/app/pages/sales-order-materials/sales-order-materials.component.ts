@@ -18,6 +18,7 @@ import { NotificationService } from '../../shared/services/notification.service'
 import { RbacService } from '../../shared/services/rbac.service';
 import { AuthService } from '../../shared/services/auth.service';
 import { PageBreadcrumbComponent } from '../../shared/components/common/page-breadcrumb/page-breadcrumb.component';
+import * as ExcelJS from 'exceljs';
 
 interface TabDefinition {
   key: SalesOrderStatus;
@@ -213,6 +214,22 @@ export class SalesOrderMaterialsComponent implements OnInit {
       case 'installment': return 'border-orange-300 bg-orange-50 text-orange-700 dark:border-orange-600 dark:bg-orange-900/20 dark:text-orange-300';
       default: return 'border-gray-300 bg-gray-50 text-gray-700 dark:border-gray-600 dark:bg-gray-800 dark:text-gray-300';
     }
+  }
+
+  formatPaymentMethodDisplay(payment: { method?: string | null; bankAccount?: string | null }): string {
+    const method = String(payment?.method ?? '').trim();
+    const bankAccount = String(payment?.bankAccount ?? '').trim();
+    const methodLower = method.toLowerCase();
+
+    if ((methodLower === 'gcash' || methodLower === 'maya') && bankAccount) {
+      return bankAccount;
+    }
+
+    if ((methodLower === 'bank transfer' || methodLower === 'bank_transfer') && bankAccount) {
+      return `Bank Transfer - ${bankAccount}`;
+    }
+
+    return method || '—';
   }
 
   getPaymentStatusClass(status: string): string {
@@ -715,7 +732,7 @@ export class SalesOrderMaterialsComponent implements OnInit {
       const dateLabel = fromDate === toDate ? fromDate : `${fromDate} - ${toDate}`;
 
       // Generate Excel using ExcelJS
-      const ExcelJS = await import('exceljs');
+      // const ExcelJS = await import('exceljs');
       const workbook = new ExcelJS.Workbook();
 
       // Sort methods for consistent output
@@ -908,7 +925,7 @@ export class SalesOrderMaterialsComponent implements OnInit {
   }
 
   private async parseMigrateExcel(file: File): Promise<void> {
-    const ExcelJS = await import('exceljs');
+    // const ExcelJS = await import('exceljs');
     const workbook = new ExcelJS.Workbook();
     const arrayBuffer = await file.arrayBuffer();
     await workbook.xlsx.load(arrayBuffer);

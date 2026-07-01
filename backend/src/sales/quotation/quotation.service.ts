@@ -1,4 +1,4 @@
-import { Injectable } from '@nestjs/common';
+import { Injectable, Logger } from '@nestjs/common';
 import { DatabaseService } from 'src/database/database.service';
 import { PoolClient } from 'pg';
 import { createHash, randomUUID } from 'crypto';
@@ -11,6 +11,8 @@ type TableQueryExecutor = { query: PoolClient['query'] };
 
 @Injectable()
 export class QuotationService {
+  private readonly logger = new Logger(QuotationService.name);
+
   constructor(
     private readonly databaseService: DatabaseService,
     private readonly auditLogService: AuditLogService,
@@ -217,6 +219,48 @@ export class QuotationService {
     }
   }
 
+  private parseMaterialMetadataFromRemarks(remarks: unknown): {
+    isMaterial: boolean;
+    materialId: number | null;
+    description: string;
+    itemCode: string | null;
+    brand: string | null;
+    isNonInventory: boolean;
+  } {
+    const fallback = {
+      isMaterial: false,
+      materialId: null,
+      description: '',
+      itemCode: null,
+      brand: null,
+      isNonInventory: false,
+    };
+
+    const raw = String(remarks ?? '').trim();
+    if (!raw || !raw.startsWith('{')) {
+      return fallback;
+    }
+
+    try {
+      const parsed = JSON.parse(raw) as Record<string, unknown>;
+      const type = String(parsed.type ?? '').trim().toLowerCase();
+      if (type !== 'material') {
+        return fallback;
+      }
+
+      return {
+        isMaterial: true,
+        materialId: this.toOptionalNumber(parsed.materialId),
+        description: String(parsed.description ?? '').trim(),
+        itemCode: String(parsed.itemCode ?? '').trim() || null,
+        brand: String(parsed.brand ?? '').trim() || null,
+        isNonInventory: Boolean(parsed.isNonInventory),
+      };
+    } catch {
+      return fallback;
+    }
+  }
+
   private async upsertCustomerFromPayload(
     executor: TableQueryExecutor,
     payload: CreateQuotationDto,
@@ -328,6 +372,58 @@ export class QuotationService {
     return customerId;
   }
 
+  private async getCustomerSnapshotById(
+    executor: TableQueryExecutor,
+    customerId: string,
+  ): Promise<{
+    name: string;
+    address: string;
+    contactPerson: string;
+    contactNumber: string;
+    email: string;
+    tinNumber: string;
+  } | null> {
+    const normalizedId = String(customerId ?? '').trim();
+    if (!normalizedId) {
+      return null;
+    }
+
+    const result = await executor.query<{
+      name: string | null;
+      address: string | null;
+      contactPerson: string | null;
+      contactNumber: string | null;
+      email: string | null;
+      tinNumber: string | null;
+    }>(
+      `SELECT
+         COALESCE(to_jsonb(c)->>'name', to_jsonb(c)->>'customer_name', '') AS name,
+         COALESCE(to_jsonb(c)->>'address', '') AS address,
+         COALESCE(to_jsonb(c)->>'contact_person', to_jsonb(c)->>'contactPerson', '') AS "contactPerson",
+         COALESCE(to_jsonb(c)->>'contact_number', to_jsonb(c)->>'contactNumber', '') AS "contactNumber",
+         COALESCE(to_jsonb(c)->>'email', '') AS email,
+         COALESCE(to_jsonb(c)->>'tin_number', to_jsonb(c)->>'tinNumber', '') AS "tinNumber"
+       FROM tblcustomer c
+       WHERE c.id::text = $1
+       LIMIT 1`,
+      [normalizedId],
+    );
+
+    if (result.rowCount === 0) {
+      return null;
+    }
+
+    const row = result.rows[0];
+    return {
+      name: String(row.name ?? '').trim(),
+      address: String(row.address ?? '').trim(),
+      contactPerson: String(row.contactPerson ?? '').trim(),
+      contactNumber: String(row.contactNumber ?? '').trim(),
+      email: String(row.email ?? '').trim(),
+      tinNumber: String(row.tinNumber ?? '').trim(),
+    };
+  }
+
   async create(
     createQuotationDto: CreateQuotationDto,
     userId?: number,
@@ -355,6 +451,14 @@ export class QuotationService {
         }
 
         const customerId = await this.upsertCustomerFromPayload(client, createQuotationDto);
+        const customerSnapshot = await this.getCustomerSnapshotById(client, customerId);
+
+        const payloadCustomerName = String(createQuotationDto.customer?.name ?? '').trim();
+        const payloadCustomerAddress = String(createQuotationDto.customer?.address ?? '').trim();
+        const payloadCustomerContactPerson = String(createQuotationDto.customer?.contact_person ?? '').trim();
+        const payloadCustomerContactNumber = String(createQuotationDto.customer?.contact_number ?? '').trim();
+        const payloadCustomerEmail = String(createQuotationDto.customer?.email ?? '').trim();
+        const payloadCustomerTinNumber = String(createQuotationDto.customer?.tin_number ?? '').trim();
 
         const computedTotal = productItems.reduce(
           (sum, item) => sum + this.calculateItemLineTotal(item),
@@ -370,13 +474,13 @@ export class QuotationService {
 
         const quotationRecord: Record<string, unknown> = {
           quote_date: quoteDate,
-          customer_id: this.toOptionalNumber(customerId),
-          customer_name: String(createQuotationDto.customer?.name ?? '').trim(),
-          customer_address: String(createQuotationDto.customer?.address ?? '').trim(),
-          customer_contact_person: String(createQuotationDto.customer?.contact_person ?? '').trim(),
-          customer_contact_number: String(createQuotationDto.customer?.contact_number ?? '').trim(),
-          customer_email: String(createQuotationDto.customer?.email ?? '').trim(),
-          customer_tin_number: String(createQuotationDto.customer?.tin_number ?? '').trim(),
+          customer_id: customerId,
+          customer_name: payloadCustomerName || customerSnapshot?.name || '',
+          customer_address: payloadCustomerAddress || customerSnapshot?.address || '',
+          customer_contact_person: payloadCustomerContactPerson || customerSnapshot?.contactPerson || '',
+          customer_contact_number: payloadCustomerContactNumber || customerSnapshot?.contactNumber || '',
+          customer_email: payloadCustomerEmail || customerSnapshot?.email || '',
+          customer_tin_number: payloadCustomerTinNumber || customerSnapshot?.tinNumber || '',
           total_amount: totalAmount,
           validity_days: validityDays,
           expires_at: expiresAt,
@@ -847,13 +951,25 @@ export class QuotationService {
           quoteDate: string | null;
           validityDays: string | null;
           isDeleted: boolean | null;
+          customerName: string | null;
+          customerAddress: string | null;
+          customerContactPerson: string | null;
+          customerContactNumber: string | null;
+          customerEmail: string | null;
+          customerTinNumber: string | null;
         }>(
           `SELECT
              id,
              status,
              quote_date::text AS "quoteDate",
              validity_days::text AS "validityDays",
-             is_deleted AS "isDeleted"
+             is_deleted AS "isDeleted",
+             customer_name AS "customerName",
+             customer_address AS "customerAddress",
+             customer_contact_person AS "customerContactPerson",
+             customer_contact_number AS "customerContactNumber",
+             customer_email AS "customerEmail",
+             customer_tin_number AS "customerTinNumber"
            FROM tblquotation
            WHERE id = $1
            LIMIT 1`,
@@ -904,18 +1020,39 @@ export class QuotationService {
           patchRecord.status = this.normalizeStatus(updateQuotationDto.status);
         }
 
-        if (updateQuotationDto.customer_id !== undefined || updateQuotationDto.customer?.name) {
+        if (updateQuotationDto.customer_id !== undefined || updateQuotationDto.customer !== undefined) {
           const customerId = await this.upsertCustomerFromPayload(client, {
             ...updateQuotationDto,
             productItems: productItems.length > 0 ? productItems : [{ totalSetQty: 0 }],
           } as CreateQuotationDto);
-          patchRecord.customer_id = this.toOptionalNumber(customerId);
-          patchRecord.customer_name = String(updateQuotationDto.customer?.name ?? '').trim();
-          patchRecord.customer_address = String(updateQuotationDto.customer?.address ?? '').trim();
-          patchRecord.customer_contact_person = String(updateQuotationDto.customer?.contact_person ?? '').trim();
-          patchRecord.customer_contact_number = String(updateQuotationDto.customer?.contact_number ?? '').trim();
-          patchRecord.customer_email = String(updateQuotationDto.customer?.email ?? '').trim();
-          patchRecord.customer_tin_number = String(updateQuotationDto.customer?.tin_number ?? '').trim();
+          const customerSnapshot = await this.getCustomerSnapshotById(client, customerId);
+
+          const hasProvidedName = updateQuotationDto.customer?.name !== undefined;
+          const hasProvidedAddress = updateQuotationDto.customer?.address !== undefined;
+          const hasProvidedContactPerson = updateQuotationDto.customer?.contact_person !== undefined;
+          const hasProvidedContactNumber = updateQuotationDto.customer?.contact_number !== undefined;
+          const hasProvidedEmail = updateQuotationDto.customer?.email !== undefined;
+          const hasProvidedTinNumber = updateQuotationDto.customer?.tin_number !== undefined;
+
+          patchRecord.customer_id = customerId;
+          patchRecord.customer_name = hasProvidedName
+            ? String(updateQuotationDto.customer?.name ?? '').trim()
+            : (customerSnapshot?.name || String(existingResult.rows[0].customerName ?? '').trim());
+          patchRecord.customer_address = hasProvidedAddress
+            ? String(updateQuotationDto.customer?.address ?? '').trim()
+            : (customerSnapshot?.address || String(existingResult.rows[0].customerAddress ?? '').trim());
+          patchRecord.customer_contact_person = hasProvidedContactPerson
+            ? String(updateQuotationDto.customer?.contact_person ?? '').trim()
+            : (customerSnapshot?.contactPerson || String(existingResult.rows[0].customerContactPerson ?? '').trim());
+          patchRecord.customer_contact_number = hasProvidedContactNumber
+            ? String(updateQuotationDto.customer?.contact_number ?? '').trim()
+            : (customerSnapshot?.contactNumber || String(existingResult.rows[0].customerContactNumber ?? '').trim());
+          patchRecord.customer_email = hasProvidedEmail
+            ? String(updateQuotationDto.customer?.email ?? '').trim()
+            : (customerSnapshot?.email || String(existingResult.rows[0].customerEmail ?? '').trim());
+          patchRecord.customer_tin_number = hasProvidedTinNumber
+            ? String(updateQuotationDto.customer?.tin_number ?? '').trim()
+            : (customerSnapshot?.tinNumber || String(existingResult.rows[0].customerTinNumber ?? '').trim());
         }
 
         if (Number.isFinite(branchId)) {
@@ -1059,49 +1196,88 @@ export class QuotationService {
       return { success: false, message: 'Invalid quotation id' };
     }
 
+    this.logger.log(
+      `[convertToSalesOrder] START quotationId=${id} userId=${String(userId ?? '')} branchId=${String(branchId ?? '')}`,
+    );
+    console.log(
+      `[convertToSalesOrder] START quotationId=${id} userId=${String(userId ?? '')} branchId=${String(branchId ?? '')}`,
+    );
+
     try {
       const result = await this.databaseService.withTransaction(async (client) => {
+        this.logger.log(`[convertToSalesOrder] [${id}] step=softDeleteExpiredDraftQuotations:start`);
+        console.log(`[convertToSalesOrder] [${id}] step=softDeleteExpiredDraftQuotations:start`);
         await this.softDeleteExpiredDraftQuotations(client);
-
+        this.logger.log(`[convertToSalesOrder] [${id}] step=softDeleteExpiredDraftQuotations:done`);
+        console.log(`[convertToSalesOrder] [${id}] step=softDeleteExpiredDraftQuotations:done`);
+        this.logger.log(`[convertToSalesOrder] [${id}] step=loadQuotation:start`);
+        console.log(`[convertToSalesOrder] [${id}] step=loadQuotation:start`);
         const quotationResult = await client.query<{
           id: number;
-          quote_no: string | null;
-          quote_date: string | null;
-          customer_id: string | null;
-          customer_name: string | null;
-          customer_address: string | null;
-          customer_contact_person: string | null;
-          customer_contact_number: string | null;
-          customer_email: string | null;
-          customer_tin_number: string | null;
-          total_amount: string | null;
+          quoteNo: string | null;
+          quoteDate: string | null;
+          customerId: string | null;
+          customerName: string | null;
+          customerAddress: string | null;
+          customerContactPerson: string | null;
+          customerContactNumber: string | null;
+          customerEmail: string | null;
+          customerTinNumber: string | null;
+          totalAmount: string | null;
           status: string | null;
           remarks: string | null;
-          converted_sales_id: string | null;
-          is_deleted: boolean | null;
+          convertedSalesId: string | null;
+          isDeleted: boolean | null;
         }>(
-          `SELECT *
-           FROM tblquotation
-           WHERE id = $1
+          `SELECT
+             q.id,
+             COALESCE(to_jsonb(q)->>'quote_no', to_jsonb(q)->>'quoteNo', null) AS "quoteNo",
+             COALESCE(to_jsonb(q)->>'quote_date', to_jsonb(q)->>'quoteDate', null) AS "quoteDate",
+             COALESCE(to_jsonb(q)->>'customer_id', to_jsonb(q)->>'customerId', null) AS "customerId",
+             COALESCE(to_jsonb(q)->>'customer_name', to_jsonb(q)->>'customerName', null) AS "customerName",
+             COALESCE(to_jsonb(q)->>'customer_address', to_jsonb(q)->>'customerAddress', null) AS "customerAddress",
+             COALESCE(to_jsonb(q)->>'customer_contact_person', to_jsonb(q)->>'customerContactPerson', null) AS "customerContactPerson",
+             COALESCE(to_jsonb(q)->>'customer_contact_number', to_jsonb(q)->>'customerContactNumber', null) AS "customerContactNumber",
+             COALESCE(to_jsonb(q)->>'customer_email', to_jsonb(q)->>'customerEmail', null) AS "customerEmail",
+             COALESCE(to_jsonb(q)->>'customer_tin_number', to_jsonb(q)->>'customerTinNumber', null) AS "customerTinNumber",
+             COALESCE(to_jsonb(q)->>'total_amount', to_jsonb(q)->>'totalAmount', null) AS "totalAmount",
+             COALESCE(to_jsonb(q)->>'status', null) AS status,
+             COALESCE(to_jsonb(q)->>'remarks', null) AS remarks,
+             COALESCE(to_jsonb(q)->>'converted_sales_id', to_jsonb(q)->>'convertedSalesId', null) AS "convertedSalesId",
+             COALESCE(NULLIF(to_jsonb(q)->>'is_deleted', ''), 'false')::boolean AS "isDeleted"
+           FROM tblquotation q
+           WHERE q.id = $1
            LIMIT 1`,
           [id],
         );
-
+        this.logger.log(
+          `[convertToSalesOrder] [${id}] step=loadQuotation:done rowCount=${quotationResult.rowCount}`,
+        );
+        console.log(
+          `[convertToSalesOrder] [${id}] step=loadQuotation:done rowCount=${quotationResult.rowCount}`,
+        );
         if (quotationResult.rowCount === 0) {
+          this.logger.warn(`[convertToSalesOrder] [${id}] step=loadQuotation:not-found`);
           throw new Error('Quotation not found');
         }
 
         const quotation = quotationResult.rows[0];
         const status = this.normalizeStatus(quotation.status);
+        this.logger.log(
+          `[convertToSalesOrder] [${id}] step=validateQuotationStatus status=${status} isDeleted=${Boolean(quotation.isDeleted)} convertedSalesId=${String(quotation.convertedSalesId ?? '')}`,
+        );
+        console.log(
+          `[convertToSalesOrder] [${id}] step=validateQuotationStatus status=${status} isDeleted=${Boolean(quotation.isDeleted)} convertedSalesId=${String(quotation.convertedSalesId ?? '')}`,
+        );
 
-        if (status === 'expired' || Boolean(quotation.is_deleted)) {
+        if (status === 'expired' || Boolean(quotation.isDeleted)) {
           throw new Error('Expired quotation can no longer be converted to Sales Order');
         }
 
-        if (status === 'converted' && this.toOptionalNumber(quotation.converted_sales_id)) {
+        if (status === 'converted' && this.toOptionalNumber(quotation.convertedSalesId)) {
           return {
             quotationId: id,
-            salesOrderId: this.toOptionalNumber(quotation.converted_sales_id),
+            salesOrderId: this.toOptionalNumber(quotation.convertedSalesId),
             alreadyConverted: true,
           };
         }
@@ -1110,21 +1286,41 @@ export class QuotationService {
           throw new Error('Only finalized quotations can be converted to Sales Order');
         }
 
+        this.logger.log(`[convertToSalesOrder] [${id}] step=loadQuotationItems:start`);
+        console.log(`[convertToSalesOrder] [${id}] step=loadQuotationItems:start`);
         const itemsResult = await client.query<{
           id: number;
-          product_id: string | null;
-          capacity_id: string | null;
-          unit_price: string | null;
-          sell_price: string | null;
-          discount_price: string | null;
-          unit_types_qty: unknown;
-          total_set_qty: string | null;
+          productId: string | null;
+          capacityId: string | null;
+          unitPrice: string | null;
+          sellPrice: string | null;
+          discountPrice: string | null;
+          unitTypesQty: unknown;
+          totalSetQty: string | null;
+          lineTotal: string | null;
+          remarks: string | null;
         }>(
-          `SELECT *
-           FROM tblquotation_items
-           WHERE quotation_id = $1
-           ORDER BY id ASC`,
-          [id],
+          `SELECT
+             qi.id,
+             COALESCE(to_jsonb(qi)->>'product_id', to_jsonb(qi)->>'productId', null) AS "productId",
+             COALESCE(to_jsonb(qi)->>'capacity_id', to_jsonb(qi)->>'capacityId', null) AS "capacityId",
+             COALESCE(to_jsonb(qi)->>'unit_price', to_jsonb(qi)->>'unitPrice', null) AS "unitPrice",
+             COALESCE(to_jsonb(qi)->>'sell_price', to_jsonb(qi)->>'sellPrice', null) AS "sellPrice",
+             COALESCE(to_jsonb(qi)->>'discount_price', to_jsonb(qi)->>'discountPrice', null) AS "discountPrice",
+             COALESCE(to_jsonb(qi)->'unit_types_qty', to_jsonb(qi)->'unitTypesQty', '[]'::jsonb) AS "unitTypesQty",
+             COALESCE(to_jsonb(qi)->>'total_set_qty', to_jsonb(qi)->>'totalSetQty', null) AS "totalSetQty",
+             COALESCE(to_jsonb(qi)->>'line_total', to_jsonb(qi)->>'lineTotal', null) AS "lineTotal",
+             COALESCE(to_jsonb(qi)->>'remarks', null) AS remarks
+           FROM tblquotation_items qi
+           WHERE COALESCE(to_jsonb(qi)->>'quotation_id', to_jsonb(qi)->>'quotationId') = $1
+           ORDER BY qi.id ASC`,
+          [String(id)],
+        );
+        this.logger.log(
+          `[convertToSalesOrder] [${id}] step=loadQuotationItems:done itemCount=${itemsResult.rowCount}`,
+        );
+        console.log(
+          `[convertToSalesOrder] [${id}] step=loadQuotationItems:done itemCount=${itemsResult.rowCount}`,
         );
 
         if (itemsResult.rowCount === 0) {
@@ -1132,20 +1328,25 @@ export class QuotationService {
         }
 
         const customerPayload: CreateQuotationDto = {
-          customer_id: quotation.customer_id,
+          customer_id: quotation.customerId,
           customer: {
-            name: String(quotation.customer_name ?? '').trim(),
-            address: String(quotation.customer_address ?? '').trim(),
-            contact_person: String(quotation.customer_contact_person ?? '').trim(),
-            contact_number: String(quotation.customer_contact_number ?? '').trim(),
-            email: String(quotation.customer_email ?? '').trim(),
-            tin_number: String(quotation.customer_tin_number ?? '').trim(),
+            name: String(quotation.customerName ?? '').trim(),
+            address: String(quotation.customerAddress ?? '').trim(),
+            contact_person: String(quotation.customerContactPerson ?? '').trim(),
+            contact_number: String(quotation.customerContactNumber ?? '').trim(),
+            email: String(quotation.customerEmail ?? '').trim(),
+            tin_number: String(quotation.customerTinNumber ?? '').trim(),
           },
           productItems: [],
         };
 
+        this.logger.log(`[convertToSalesOrder] [${id}] step=upsertCustomer:start`);
         const customerId = await this.upsertCustomerFromPayload(client, customerPayload);
+        this.logger.log(
+          `[convertToSalesOrder] [${id}] step=upsertCustomer:done customerId=${customerId}`,
+        );
 
+        this.logger.log(`[convertToSalesOrder] [${id}] step=resolveSalesColumns:start`);
         const salesColumns = await this.getTableColumns(client, 'tblsales_order');
         const salesCustomerIdColumn = this.pickColumn(salesColumns, ['customer_id', 'customerId']);
         const totalAmountColumn = this.pickColumn(salesColumns, ['total_amount', 'totalAmount']);
@@ -1155,6 +1356,9 @@ export class QuotationService {
         const statusColumn = this.pickColumn(salesColumns, ['status']);
         const createdByColumn = this.pickColumn(salesColumns, ['created_by', 'createdBy']);
         const branchColumn = this.pickColumn(salesColumns, ['branchId', 'branch_id']);
+        this.logger.log(
+          `[convertToSalesOrder] [${id}] step=resolveSalesColumns:done hasCustomerIdColumn=${Boolean(salesCustomerIdColumn)} hasTotalAmountColumn=${Boolean(totalAmountColumn)} hasStatusColumn=${Boolean(statusColumn)}`,
+        );
 
         if (!salesCustomerIdColumn || !totalAmountColumn || !statusColumn) {
           throw new Error('tblsales_order columns are not aligned with expected fields');
@@ -1162,18 +1366,18 @@ export class QuotationService {
 
         const salesRecord: Record<string, unknown> = {
           [salesCustomerIdColumn]: customerId,
-          [totalAmountColumn]: this.toOptionalNumber(quotation.total_amount) ?? 0,
+          [totalAmountColumn]: this.toOptionalNumber(quotation.totalAmount) ?? 0,
           [statusColumn]: 'pending',
         };
 
         if (scheduleDateColumn) {
-          salesRecord[scheduleDateColumn] = this.toIsoDateOrNull(quotation.quote_date) ?? new Date().toISOString();
+          salesRecord[scheduleDateColumn] = this.toIsoDateOrNull(quotation.quoteDate) ?? new Date().toISOString();
         }
         if (salesTypeColumn) {
           salesRecord[salesTypeColumn] = 'sales';
         }
         if (remarksColumn) {
-          salesRecord[remarksColumn] = String(quotation.remarks ?? '').trim() || `Converted from quotation #${quotation.quote_no ?? id}`;
+          salesRecord[remarksColumn] = String(quotation.remarks ?? '').trim() || `Converted from quotation #${quotation.quoteNo ?? id}`;
         }
         if (createdByColumn && Number.isFinite(userId)) {
           salesRecord[createdByColumn] = userId;
@@ -1182,14 +1386,22 @@ export class QuotationService {
           salesRecord[branchColumn] = branchId;
         }
 
+        this.logger.log(`[convertToSalesOrder] [${id}] step=insertSalesOrder:start`);
         const insertedSales = await this.runInsert(client, 'tblsales_order', salesRecord);
         if (insertedSales.rowCount === 0) {
           throw new Error('Failed to create sales order from quotation');
         }
 
         const salesOrderId = Number(insertedSales.rows[0].id);
+        this.logger.log(
+          `[convertToSalesOrder] [${id}] step=insertSalesOrder:done salesOrderId=${salesOrderId}`,
+        );
 
+        this.logger.log(`[convertToSalesOrder] [${id}] step=resolveTransactionItemColumns:start`);
         const transactionItemColumns = await this.getTableColumns(client, 'tbltransaction_product_items');
+        this.logger.log(
+          `[convertToSalesOrder] [${id}] step=resolveTransactionItemColumns:done columnCount=${transactionItemColumns.length}`,
+        );
         if (transactionItemColumns.length === 0) {
           throw new Error('tbltransaction_product_items table is missing');
         }
@@ -1206,35 +1418,170 @@ export class QuotationService {
         const salesIdColumn = this.pickColumn(transactionItemColumns, ['salesId', 'sales_id']);
         const itemStatusColumn = this.pickColumn(transactionItemColumns, ['status']);
 
-        for (const item of itemsResult.rows) {
+        type MaterialSalesOrderItemInsert = {
+          materialId: number | null;
+          description: string;
+          itemCode: string | null;
+          brand: string | null;
+          cost: number;
+          rate: number;
+          discount: number;
+          qty: number;
+          total: number;
+          isNonInventory: boolean;
+        };
+        const materialItems: MaterialSalesOrderItemInsert[] = [];
+
+        for (const [itemIndex, item] of itemsResult.rows.entries()) {
+          const parsedProductId = this.toOptionalNumber(item.productId);
+          const parsedCapacityId = this.toOptionalNumber(item.capacityId);
+          const materialMeta = this.parseMaterialMetadataFromRemarks(item.remarks);
+          const shouldTreatAsMaterial = materialMeta.isMaterial || (parsedProductId === null && parsedCapacityId === null);
+
+          if (shouldTreatAsMaterial) {
+            const qty = this.toOptionalNumber(item.totalSetQty) ?? 0;
+            const cost = this.toOptionalNumber(item.unitPrice) ?? 0;
+            const rate = this.toOptionalNumber(item.sellPrice) ?? 0;
+            const discount = this.toOptionalNumber(item.discountPrice) ?? 0;
+            const total = this.toOptionalNumber(item.lineTotal) ?? Math.max(rate - discount, 0) * qty;
+
+            materialItems.push({
+              materialId: materialMeta.materialId,
+              description: materialMeta.description,
+              itemCode: materialMeta.itemCode,
+              brand: materialMeta.brand,
+              cost,
+              rate,
+              discount,
+              qty,
+              total,
+              isNonInventory: materialMeta.isNonInventory || materialMeta.materialId === null,
+            });
+
+            this.logger.log(
+              `[convertToSalesOrder] [${id}] step=classifyQuotationItem:material index=${itemIndex} materialId=${String(materialMeta.materialId ?? '')}`,
+            );
+            continue;
+          }
+
+          if (parsedProductId === null || parsedCapacityId === null) {
+            throw new Error(
+              `Quotation item index ${itemIndex} is missing product/capacity mapping. If this is a material line, ensure remarks metadata has {"type":"material"}.`,
+            );
+          }
+
+          this.logger.log(
+            `[convertToSalesOrder] [${id}] step=insertTransactionItem:start index=${itemIndex} productId=${parsedProductId} capacityId=${parsedCapacityId}`,
+          );
           const transactionItemRecord: Record<string, unknown> = {};
           if (transTypeColumn) transactionItemRecord[transTypeColumn] = 'sales';
-          if (productIdColumn) transactionItemRecord[productIdColumn] = this.toOptionalNumber(item.product_id);
-          if (capacityIdColumn) transactionItemRecord[capacityIdColumn] = this.toOptionalNumber(item.capacity_id);
-          if (unitPriceColumn) transactionItemRecord[unitPriceColumn] = this.toOptionalNumber(item.unit_price) ?? 0;
-          if (sellPriceColumn) transactionItemRecord[sellPriceColumn] = this.toOptionalNumber(item.sell_price) ?? 0;
-          if (discountPriceColumn) transactionItemRecord[discountPriceColumn] = this.toOptionalNumber(item.discount_price) ?? 0;
+          if (productIdColumn) transactionItemRecord[productIdColumn] = parsedProductId;
+          if (capacityIdColumn) transactionItemRecord[capacityIdColumn] = parsedCapacityId;
+          if (unitPriceColumn) transactionItemRecord[unitPriceColumn] = this.toOptionalNumber(item.unitPrice) ?? 0;
+          if (sellPriceColumn) transactionItemRecord[sellPriceColumn] = this.toOptionalNumber(item.sellPrice) ?? 0;
+          if (discountPriceColumn) transactionItemRecord[discountPriceColumn] = this.toOptionalNumber(item.discountPrice) ?? 0;
           if (unitTypesQtyColumn) {
             transactionItemRecord[unitTypesQtyColumn] =
-              typeof item.unit_types_qty === 'string'
-                ? item.unit_types_qty
-                : JSON.stringify(item.unit_types_qty ?? []);
+              typeof item.unitTypesQty === 'string'
+                ? item.unitTypesQty
+                : JSON.stringify(item.unitTypesQty ?? []);
           }
-          if (totalSetQtyColumn) transactionItemRecord[totalSetQtyColumn] = this.toOptionalNumber(item.total_set_qty) ?? 0;
+          if (totalSetQtyColumn) transactionItemRecord[totalSetQtyColumn] = this.toOptionalNumber(item.totalSetQty) ?? 0;
           if (purchaseIdColumn) transactionItemRecord[purchaseIdColumn] = null;
           if (salesIdColumn) transactionItemRecord[salesIdColumn] = salesOrderId;
           if (itemStatusColumn) transactionItemRecord[itemStatusColumn] = 'pending';
 
           await this.runInsert(client, 'tbltransaction_product_items', transactionItemRecord);
+          this.logger.log(
+            `[convertToSalesOrder] [${id}] step=insertTransactionItem:done index=${itemIndex}`,
+          );
         }
 
+        if (materialItems.length > 0) {
+          this.logger.log(
+            `[convertToSalesOrder] [${id}] step=insertMaterialSalesItems:start count=${materialItems.length}`,
+          );
+
+          for (const [materialIndex, materialItem] of materialItems.entries()) {
+            if (!materialItem.itemCode || materialItem.itemCode.trim().toLowerCase() === 'others') {
+              await client.query(
+                `INSERT INTO tblsales_order_items
+                  (sales_order_id, description, item_code, brand, cost, rate, discount, qty, total, is_non_inventory)
+                 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)`,
+                [
+                  salesOrderId,
+                  materialItem.description,
+                  materialItem.itemCode,
+                  materialItem.brand,
+                  materialItem.cost,
+                  materialItem.rate,
+                  materialItem.discount,
+                  materialItem.qty,
+                  materialItem.total,
+                  true,
+                ],
+              );
+            } else {
+              await client.query(
+                `INSERT INTO tblsales_order_items
+                  (sales_order_id, material_id, description, item_code, brand, cost, rate, discount, qty, total, is_non_inventory)
+                 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)`,
+                [
+                  salesOrderId,
+                  materialItem.materialId,
+                  materialItem.description,
+                  materialItem.itemCode,
+                  materialItem.brand,
+                  materialItem.cost,
+                  materialItem.rate,
+                  materialItem.discount,
+                  materialItem.qty,
+                  materialItem.total,
+                  materialItem.isNonInventory,
+                ],
+              );
+            }
+
+            this.logger.log(
+              `[convertToSalesOrder] [${id}] step=insertMaterialSalesItem:done index=${materialIndex}`,
+            );
+          }
+
+          this.logger.log(`[convertToSalesOrder] [${id}] step=insertMaterialSalesItems:done`);
+        }
+
+        this.logger.log(`[convertToSalesOrder] [${id}] step=markQuotationConverted:start`);
+        const quotationColumns = await this.getTableColumns(client, 'tblquotation');
+        const quotationStatusColumn = this.pickColumn(quotationColumns, ['status']);
+        const convertedSalesIdColumn = this.pickColumn(quotationColumns, ['converted_sales_id', 'convertedSalesId']);
+        const updatedAtColumn = this.pickColumn(quotationColumns, ['updated_at', 'updatedAt']);
+
+        if (!quotationStatusColumn || !convertedSalesIdColumn) {
+          throw new Error('tblquotation columns are not aligned with expected conversion fields');
+        }
+
+        const updateSetClauses: string[] = [
+          `"${quotationStatusColumn}" = $1`,
+          `"${convertedSalesIdColumn}" = $2`,
+        ];
+        const updateParams: unknown[] = ['converted', salesOrderId];
+
+        if (updatedAtColumn) {
+          updateSetClauses.push(`"${updatedAtColumn}" = NOW()`);
+        }
+
+        updateParams.push(id);
         await client.query(
           `UPDATE tblquotation
-           SET status = 'converted', converted_sales_id = $1, updated_at = NOW()
-           WHERE id = $2`,
-          [salesOrderId, id],
+           SET ${updateSetClauses.join(', ')}
+           WHERE id = $${updateParams.length}`,
+          updateParams,
         );
+        this.logger.log(`[convertToSalesOrder] [${id}] step=markQuotationConverted:done`);
 
+        this.logger.log(
+          `[convertToSalesOrder] [${id}] COMPLETE salesOrderId=${salesOrderId}`,
+        );
         return {
           quotationId: id,
           salesOrderId,
@@ -1250,9 +1597,16 @@ export class QuotationService {
         data: result,
       };
     } catch (error) {
+      const message = error instanceof Error ? error.message : 'Unknown conversion error';
+      const stack = error instanceof Error ? error.stack : undefined;
+      this.logger.error(
+        `[convertToSalesOrder] FAILED quotationId=${id} message=${message}`,
+        stack,
+      );
+
       return {
         success: false,
-        message: error instanceof Error ? error.message : 'Failed to convert quotation to Sales Order',
+        message: message || 'Failed to convert quotation to Sales Order',
       };
     }
   }

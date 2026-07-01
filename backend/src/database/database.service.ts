@@ -117,7 +117,11 @@ export class DatabaseService implements OnModuleDestroy {
       await client.query('COMMIT');
       return result;
     } catch (error) {
-      await client.query('ROLLBACK');
+      try {
+        await client.query('ROLLBACK');
+      } catch (rollbackError) {
+        console.error('Transaction rollback failed:', rollbackError);
+      }
       throw error;
     } finally {
       client.release();

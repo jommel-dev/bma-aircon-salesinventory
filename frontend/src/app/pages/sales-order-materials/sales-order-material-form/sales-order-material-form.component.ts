@@ -73,7 +73,7 @@ export class SalesOrderMaterialFormComponent implements OnInit, OnDestroy {
   // ─── Payment Details ────────────────────────────────────────────────────────
   paymentDetails: PaymentDetail[] = [];
   paymentMethods: PaymentDetail['method'][] = ['Cash', 'GCash', 'Maya', 'Bank Transfer', 'Terms', 'Terms with DP', 'Cheque', 'Credit Card', 'Installment'];
-  paymentAccounts: string[] = ['0909-507-27922 (GCASH)', '0981-008-8453 (GCASH)', '0963-084-4199 (GCASH)', '0909-507-2792 (MAYA)'];
+  paymentAccounts: string[] = ['0909-507-2792 (GCASH)', '0981-008-8453 (GCASH)', '0963-084-4199 (GCASH)', '0909-507-2792 (MAYA)'];
 
   // ─── Order Status (for edit mode buttons) ───────────────────────────────────
   orderStatus: string = '';

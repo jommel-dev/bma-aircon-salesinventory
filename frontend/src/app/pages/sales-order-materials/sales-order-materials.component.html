@@ -187,7 +187,7 @@
                       @for (p of order.payments; track $index) {
                         <span class="inline-flex items-center gap-1 rounded-full border px-2.5 py-0.5 text-xs font-medium"
                           [ngClass]="getPaymentMethodChipClass(p.method)">
-                          {{ p.method }}
+                          {{ formatPaymentMethodDisplay(p) }}
                         </span>
                       }
                     </div>
@@ -469,7 +469,7 @@
                   <div class="flex items-center gap-3 rounded-lg border border-gray-200 bg-gray-50 px-4 py-2 dark:border-gray-700 dark:bg-gray-800">
                     <span class="inline-flex items-center rounded-full border px-2.5 py-0.5 text-xs font-medium"
                       [ngClass]="getPaymentMethodChipClass(payment.method)">
-                      {{ payment.method }}
+                      {{ formatPaymentMethodDisplay(payment) }}
                     </span>
                     <span class="text-sm font-medium text-gray-900 dark:text-white">{{ formatCurrency(payment.amount) }}</span>
                     @if (payment.terms) {

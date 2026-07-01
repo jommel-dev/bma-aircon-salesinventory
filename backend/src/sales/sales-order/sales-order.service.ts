@@ -2712,8 +2712,30 @@ export class SalesOrderService {
           ) AS so_id,
           COALESCE(
             STRING_AGG(
-              DISTINCT NULLIF(COALESCE(to_jsonb(sp)->>'method', ''), ''),
-              ', ' ORDER BY NULLIF(COALESCE(to_jsonb(sp)->>'method', ''), '')
+              DISTINCT NULLIF(
+                CASE
+                  WHEN LOWER(COALESCE(to_jsonb(sp)->>'method', '')) IN ('gcash', 'maya')
+                    AND NULLIF(COALESCE(to_jsonb(sp)->>'bank_account', to_jsonb(sp)->>'bankAccount', ''), '') IS NOT NULL
+                    THEN COALESCE(to_jsonb(sp)->>'bank_account', to_jsonb(sp)->>'bankAccount', '')
+                  WHEN LOWER(COALESCE(to_jsonb(sp)->>'method', '')) IN ('bank transfer', 'bank_transfer')
+                    AND NULLIF(COALESCE(to_jsonb(sp)->>'bank_account', to_jsonb(sp)->>'bankAccount', ''), '') IS NOT NULL
+                    THEN 'Bank Transfer - ' || COALESCE(to_jsonb(sp)->>'bank_account', to_jsonb(sp)->>'bankAccount', '')
+                  ELSE COALESCE(to_jsonb(sp)->>'method', '')
+                END,
+                ''
+              ),
+              ', ' ORDER BY NULLIF(
+                CASE
+                  WHEN LOWER(COALESCE(to_jsonb(sp)->>'method', '')) IN ('gcash', 'maya')
+                    AND NULLIF(COALESCE(to_jsonb(sp)->>'bank_account', to_jsonb(sp)->>'bankAccount', ''), '') IS NOT NULL
+                    THEN COALESCE(to_jsonb(sp)->>'bank_account', to_jsonb(sp)->>'bankAccount', '')
+                  WHEN LOWER(COALESCE(to_jsonb(sp)->>'method', '')) IN ('bank transfer', 'bank_transfer')
+                    AND NULLIF(COALESCE(to_jsonb(sp)->>'bank_account', to_jsonb(sp)->>'bankAccount', ''), '') IS NOT NULL
+                    THEN 'Bank Transfer - ' || COALESCE(to_jsonb(sp)->>'bank_account', to_jsonb(sp)->>'bankAccount', '')
+                  ELSE COALESCE(to_jsonb(sp)->>'method', '')
+                END,
+                ''
+              )
             ),
             '-'
           ) AS payment_method,
@@ -6779,7 +6801,7 @@ export class SalesOrderService {
            cc_charge AS "ccCharge",
            check_no AS "checkNo",
            bank_name AS "bankName",
-           bank_account AS "bankAccount",
+           COALESCE(bank_account, bank_name) AS "bankAccount",
            post_dated::text AS "postDated",
            down_payment::text AS "downPayment",
            status
@@ -7481,7 +7503,8 @@ export class SalesOrderService {
               'method', COALESCE(sp.method, ''),
               'status', COALESCE(sp.status, ''),
               'amount', COALESCE(sp.amount, 0),
-              'terms', COALESCE(sp.terms::text, '')
+              'terms', COALESCE(sp.terms::text, ''),
+              'bankAccount', COALESCE(sp.bank_account, sp.bank_name, '')
             ) ORDER BY sp.id ASC
           )
           FROM tblsales_order_payments sp
@@ -7511,7 +7534,7 @@ export class SalesOrderService {
       remarks: string | null;
       firstPaymentMethod: string | null;
       firstPaymentStatus: string | null;
-      payments: Array<{ method: string; status: string; amount: number; terms: string }> | null;
+      payments: Array<{ method: string; status: string; amount: number; terms: string; bankAccount: string }> | null;
     }>(listSql, params);
 
     return {
