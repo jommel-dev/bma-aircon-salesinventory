@@ -912,7 +912,7 @@ export class MaterialsService {
    * =====================================================
    * SEARCH MATERIALS (Smart Search)
    * =====================================================
-   * Searches materials by name, code, product type (brand type), or brand name.
+    * Searches materials by material code only.
    * Used for the smart search dropdown in the sales order form.
    *
    * @param q - Search query string (min 1 char)
@@ -939,13 +939,8 @@ export class MaterialsService {
       FROM tblmaterials m
       LEFT JOIN tblbrands b ON m.brand_id = b.id
       WHERE m.deleted_at IS NULL
-        AND (
-          m.material_name ILIKE $1
-          OR m.material_code ILIKE $1
-          OR b.type ILIKE $1
-          OR b."brandName" ILIKE $1
-        )
-      ORDER BY m.material_name ASC
+        AND m.material_code ILIKE $1
+      ORDER BY m.material_code ASC
       LIMIT $2
     `;
 

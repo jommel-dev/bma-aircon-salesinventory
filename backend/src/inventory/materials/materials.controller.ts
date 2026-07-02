@@ -197,7 +197,7 @@ export class MaterialsController {
    * - q (required): Search term (min 1 character)
    * - limit (optional): Max results, capped at 50, default 50
    * 
-   * Searches by material_name, material_code, product_type (brand type), or brand_name.
+  * Searches by material_code only.
    * Returns MaterialSearchResult[] with fields: id, material_name, material_code,
    * product_type, brand_name, unit, unit_price, sell_price
    * =====================================================

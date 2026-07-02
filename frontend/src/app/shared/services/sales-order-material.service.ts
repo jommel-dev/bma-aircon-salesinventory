@@ -266,7 +266,7 @@ export class SalesOrderMaterialService {
   }
 
   /**
-   * Smart search materials by name, code, product type, or brand.
+    * Smart search materials by material code.
    */
   async searchMaterials(q: string, limit: number = 50): Promise<MaterialSearchResult[]> {
     const response = await apiClient.get<MaterialSearchApiResponse>(
