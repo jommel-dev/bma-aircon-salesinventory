@@ -58,12 +58,9 @@ export class QuotationPdfService {
 
   /**
    * Validates that the order is eligible for quotation PDF generation.
-   * @throws Error if status is not 'draft' or productItems is empty.
+   * @throws Error if productItems is empty.
    */
   validateOrder(order: MaterialSalesOrderDetail): void {
-    if (order.status !== 'draft') {
-      throw new Error('Quotation prints are only available for Draft orders');
-    }
     if (!order.productItems || order.productItems.length === 0) {
       throw new Error('At least one product item is required');
     }
@@ -438,11 +435,11 @@ export class QuotationPdfService {
     const minY = config.marginBottom + 30; // Minimum Y threshold above disclaimer/footer
     const newPages: PDFPage[] = [];
 
-    // Column layout (x positions relative to marginLeft) — no Discount column
+    // Column layout (x positions relative to marginLeft) — keep clear gap between Qty and Description
+    const qtyDescriptionGap = 12;
     const columns = {
-      itemNo: { x: config.marginLeft, width: 35, align: 'left' as const, label: 'Item #' },
-      description: { x: config.marginLeft + 35, width: contentWidth - 35 - 50 - 70 - 70, align: 'left' as const, label: 'Description' },
-      qty: { x: config.marginLeft + contentWidth - 50 - 70 - 70, width: 50, align: 'right' as const, label: 'Qty' },
+      qty: { x: config.marginLeft, width: 50, align: 'right' as const, label: 'Qty' },
+      description: { x: config.marginLeft + 50 + qtyDescriptionGap, width: contentWidth - 50 - qtyDescriptionGap - 70 - 70, align: 'left' as const, label: 'Description' },
       rate: { x: config.marginLeft + contentWidth - 70 - 70, width: 70, align: 'right' as const, label: 'Rate' },
       total: { x: config.marginLeft + contentWidth - 70, width: 70, align: 'right' as const, label: 'Total' },
     };
@@ -472,13 +469,7 @@ export class QuotationPdfService {
     // Helper: draw column headers
     const drawHeaders = (p: PDFPage, y: number): number => {
       // Draw header labels
-      p.drawText(columns.itemNo.label, {
-        x: columns.itemNo.x,
-        y,
-        size: config.tableFontSize,
-        font: fonts.bold,
-        color: rgb(0, 0, 0),
-      });
+      drawRightAligned(p, columns.qty.label, columns.qty.x, columns.qty.width, y, fonts.bold);
 
       p.drawText(columns.description.label, {
         x: columns.description.x,
@@ -488,7 +479,6 @@ export class QuotationPdfService {
         color: rgb(0, 0, 0),
       });
 
-      drawRightAligned(p, columns.qty.label, columns.qty.x, columns.qty.width, y, fonts.bold);
       drawRightAligned(p, columns.rate.label, columns.rate.x, columns.rate.width, y, fonts.bold);
       drawRightAligned(p, columns.total.label, columns.total.x, columns.total.width, y, fonts.bold);
 
@@ -532,15 +522,6 @@ export class QuotationPdfService {
         currentY = config.pageHeight - config.marginTop;
         currentY = drawHeaders(currentPage, currentY);
       }
-
-      // Draw item number
-      currentPage.drawText(String(i + 1), {
-        x: columns.itemNo.x,
-        y: currentY,
-        size: config.tableFontSize,
-        font: fonts.regular,
-        color: rgb(0, 0, 0),
-      });
 
       // Draw description (possibly multi-line)
       let descY = currentY;
@@ -742,7 +723,7 @@ export class QuotationPdfService {
    * @param order The material sales order detail.
    * @param businessProfile The business profile settings (can be null — no header drawn).
    * @returns A base64 data URI string (`data:application/pdf;base64,...`).
-   * @throws Error if order status is not 'draft' or has no product items.
+  * @throws Error if order has no product items.
    */
   async generateQuotationPdf(
     order: MaterialSalesOrderDetail,

@@ -934,20 +934,51 @@ export class QuotationComponent implements OnInit, OnDestroy {
       remarks: detail.remarks ?? null,
       createdAt: detail.createdAt ?? null,
       productItems: (detail.productItems ?? []).map((item, index) => {
+        let materialMeta: {
+          type?: string;
+          materialId?: number | string | null;
+          description?: string;
+          itemCode?: string | null;
+          brand?: string | null;
+          isNonInventory?: boolean;
+        } | null = null;
+
+        const rawRemarks = String(item.remarks ?? '').trim();
+        if (rawRemarks.startsWith('{')) {
+          try {
+            const parsed = JSON.parse(rawRemarks) as Record<string, unknown>;
+            materialMeta = parsed as {
+              type?: string;
+              materialId?: number | string | null;
+              description?: string;
+              itemCode?: string | null;
+              brand?: string | null;
+              isNonInventory?: boolean;
+            };
+          } catch {
+            materialMeta = null;
+          }
+        }
+
+        const isMaterial = String(materialMeta?.type ?? '').trim().toLowerCase() === 'material';
         const rate = Number(item.sellPrice ?? item.unitPrice ?? 0);
         const qty = Number(item.totalSetQty ?? 0);
         return {
           id: Number(item.id ?? index + 1),
-          materialId: item.productId ? Number(item.productId) : null,
-          description: String(item.productName || '-'),
-          itemCode: null,
-          brand: null,
+          materialId: isMaterial
+            ? (materialMeta?.materialId != null ? Number(materialMeta.materialId) : null)
+            : (item.productId ? Number(item.productId) : null),
+          description: isMaterial
+            ? String(materialMeta?.description ?? item.productName ?? '-').trim() || '-'
+            : String(item.productName || '-'),
+          itemCode: isMaterial ? (String(materialMeta?.itemCode ?? '').trim() || null) : null,
+          brand: isMaterial ? (String(materialMeta?.brand ?? '').trim() || null) : null,
           cost: Number(item.unitPrice ?? 0),
           rate,
           discount: Number(item.discountPrice ?? 0),
           qty,
           total: Number(item.lineTotal ?? rate * qty),
-          isNonInventory: false,
+          isNonInventory: isMaterial ? Boolean(materialMeta?.isNonInventory) : false,
         };
       }),
       paymentDetails: [],
