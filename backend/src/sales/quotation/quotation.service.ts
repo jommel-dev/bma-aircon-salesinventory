@@ -261,6 +261,15 @@ export class QuotationService {
     }
   }
 
+  private resolveQuotationItemMaterialId(item: { materialId?: unknown; remarks?: unknown }): number | null {
+    const directMaterialId = this.toOptionalNumber(item.materialId);
+    if (directMaterialId !== null) {
+      return directMaterialId;
+    }
+
+    return this.parseMaterialMetadataFromRemarks(item.remarks).materialId;
+  }
+
   private async upsertCustomerFromPayload(
     executor: TableQueryExecutor,
     payload: CreateQuotationDto,
@@ -535,7 +544,7 @@ export class QuotationService {
             // Store material metadata in remarks as JSON
             const metadata: Record<string, unknown> = {
               type: 'material',
-              materialId: this.toOptionalNumber(item.materialId) ?? null,
+              materialId: this.resolveQuotationItemMaterialId(item),
               description: item.description ?? '',
               itemCode: item.itemCode ?? null,
               brand: item.brand ?? null,
@@ -556,6 +565,7 @@ export class QuotationService {
 
           const itemRecord: Record<string, unknown> = {
             quotation_id: quotationId,
+            material_id: this.resolveQuotationItemMaterialId(item),
             product_id: productId,
             capacity_id: capacityId,
             unit_price: unitPrice,
@@ -818,6 +828,7 @@ export class QuotationService {
     const itemsResult = await this.databaseService.query<{
       id: number;
       productId: string | null;
+      materialId: string | null;
       capacityId: string | null;
       productName: string | null;
       capacityName: string | null;
@@ -831,7 +842,8 @@ export class QuotationService {
     }>(
       `SELECT
          qi.id,
-         qi.product_id::text AS "productId",
+        qi.product_id::text AS "productId",
+        qi.material_id::text AS "materialId",
          qi.capacity_id::text AS "capacityId",
          COALESCE(
            to_jsonb(p)->>'productName',
@@ -898,6 +910,7 @@ export class QuotationService {
         productItems: itemsResult.rows.map((item) => ({
           id: item.id,
           productId: item.productId,
+          materialId: this.toOptionalNumber(item.materialId),
           capacityId: item.capacityId,
           productName: String(item.productName ?? '').trim(),
           capacityName: String(item.capacityName ?? '').trim(),
@@ -1061,7 +1074,22 @@ export class QuotationService {
 
         let totalAmount = this.toOptionalNumber(updateQuotationDto.totalAmount) ?? 0;
         if (productItems.length > 0) {
-          totalAmount = productItems.reduce((sum, item) => sum + this.calculateItemLineTotal(item), 0);
+          const computedTotal = productItems.reduce((sum, item) => {
+            const isMaterialItem = item.description || item.materialId != null || item.rate != null;
+
+            if (isMaterialItem) {
+              const rate = Number(item.rate ?? item.sellPrice ?? 0);
+              const discount = Number(item.discount ?? item.discountPrice ?? 0);
+              const qty = Number(item.qty ?? item.totalSetQty ?? 0);
+              return sum + Math.max(0, rate - discount) * qty;
+            }
+
+            return sum + this.calculateItemLineTotal(item);
+          }, 0);
+
+          totalAmount = computedTotal > 0
+            ? computedTotal
+            : (this.toOptionalNumber(updateQuotationDto.totalAmount) ?? 0);
         }
         patchRecord.total_amount = totalAmount;
         patchRecord.expires_at = this.computeExpiresAt(nextQuoteDate, nextValidityDays);
@@ -1083,23 +1111,58 @@ export class QuotationService {
           await client.query(`DELETE FROM tblquotation_items WHERE quotation_id = $1`, [id]);
 
           for (const item of productItems) {
-            const unitPrice = this.toOptionalNumber(item.unitPrice) ?? 0;
-            const sellPrice = this.toOptionalNumber(item.sellPrice) ?? 0;
-            const discountPrice = this.toOptionalNumber(item.discountPrice) ?? 0;
-            const totalSetQty = this.toOptionalNumber(item.totalSetQty) ?? 0;
-            const lineTotal = this.calculateItemLineTotal(item);
+            const isMaterialItem = item.description || item.materialId != null || item.rate != null;
+
+            let unitPrice: number;
+            let sellPrice: number;
+            let discountPrice: number;
+            let totalSetQty: number;
+            let lineTotal: number;
+            let itemRemarks: string;
+            let productId: number | null;
+            let capacityId: number | null;
+
+            if (isMaterialItem) {
+              unitPrice = Number(item.cost ?? item.unitPrice ?? 0);
+              sellPrice = Number(item.rate ?? item.sellPrice ?? 0);
+              discountPrice = Number(item.discount ?? item.discountPrice ?? 0);
+              totalSetQty = Number(item.qty ?? item.totalSetQty ?? 0);
+              lineTotal = Math.max(0, sellPrice - discountPrice) * totalSetQty;
+              productId = null;
+              capacityId = null;
+
+              const metadata: Record<string, unknown> = {
+                type: 'material',
+                materialId: this.resolveQuotationItemMaterialId(item),
+                description: item.description ?? '',
+                itemCode: item.itemCode ?? null,
+                brand: item.brand ?? null,
+                isNonInventory: item.isNonInventory ?? false,
+              };
+              itemRemarks = JSON.stringify(metadata);
+            } else {
+              unitPrice = this.toOptionalNumber(item.unitPrice) ?? 0;
+              sellPrice = this.toOptionalNumber(item.sellPrice) ?? 0;
+              discountPrice = this.toOptionalNumber(item.discountPrice) ?? 0;
+              totalSetQty = this.toOptionalNumber(item.totalSetQty) ?? 0;
+              lineTotal = this.calculateItemLineTotal(item);
+              productId = this.toOptionalNumber(item.productId);
+              capacityId = this.toOptionalNumber(item.capacityId);
+              itemRemarks = String(item.remarks ?? '').trim();
+            }
 
             await this.runInsert(client, 'tblquotation_items', {
               quotation_id: id,
-              product_id: this.toOptionalNumber(item.productId),
-              capacity_id: this.toOptionalNumber(item.capacityId),
+              material_id: this.resolveQuotationItemMaterialId(item),
+              product_id: productId,
+              capacity_id: capacityId,
               unit_price: unitPrice,
               sell_price: sellPrice,
               discount_price: discountPrice,
               unit_types_qty: JSON.stringify(item.unitTypesQty ?? []),
               total_set_qty: totalSetQty,
               line_total: lineTotal,
-              remarks: String(item.remarks ?? '').trim(),
+              remarks: itemRemarks,
             });
           }
         }
@@ -1290,6 +1353,7 @@ export class QuotationService {
         console.log(`[convertToSalesOrder] [${id}] step=loadQuotationItems:start`);
         const itemsResult = await client.query<{
           id: number;
+          materialId: string | null;
           productId: string | null;
           capacityId: string | null;
           unitPrice: string | null;
@@ -1302,6 +1366,7 @@ export class QuotationService {
         }>(
           `SELECT
              qi.id,
+             COALESCE(to_jsonb(qi)->>'material_id', to_jsonb(qi)->>'materialId', null) AS "materialId",
              COALESCE(to_jsonb(qi)->>'product_id', to_jsonb(qi)->>'productId', null) AS "productId",
              COALESCE(to_jsonb(qi)->>'capacity_id', to_jsonb(qi)->>'capacityId', null) AS "capacityId",
              COALESCE(to_jsonb(qi)->>'unit_price', to_jsonb(qi)->>'unitPrice', null) AS "unitPrice",
@@ -1436,7 +1501,8 @@ export class QuotationService {
           const parsedProductId = this.toOptionalNumber(item.productId);
           const parsedCapacityId = this.toOptionalNumber(item.capacityId);
           const materialMeta = this.parseMaterialMetadataFromRemarks(item.remarks);
-          const shouldTreatAsMaterial = materialMeta.isMaterial || (parsedProductId === null && parsedCapacityId === null);
+          const materialId = this.toOptionalNumber(item.materialId) ?? materialMeta.materialId;
+          const shouldTreatAsMaterial = materialId !== null || materialMeta.isMaterial || (parsedProductId === null && parsedCapacityId === null);
 
           if (shouldTreatAsMaterial) {
             const qty = this.toOptionalNumber(item.totalSetQty) ?? 0;
@@ -1446,7 +1512,7 @@ export class QuotationService {
             const total = this.toOptionalNumber(item.lineTotal) ?? Math.max(rate - discount, 0) * qty;
 
             materialItems.push({
-              materialId: materialMeta.materialId,
+              materialId,
               description: materialMeta.description,
               itemCode: materialMeta.itemCode,
               brand: materialMeta.brand,
@@ -1455,7 +1521,7 @@ export class QuotationService {
               discount,
               qty,
               total,
-              isNonInventory: materialMeta.isNonInventory || materialMeta.materialId === null,
+              isNonInventory: materialMeta.isNonInventory || materialId === null,
             });
 
             this.logger.log(

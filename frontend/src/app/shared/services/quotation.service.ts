@@ -73,6 +73,7 @@ export interface QuotationDetailItem extends QuotationListItem {
   deletedAt?: string | null;
   productItems: Array<{
     id: number;
+    materialId?: number | null;
     productId: string | null;
     capacityId: string | null;
     productName: string;

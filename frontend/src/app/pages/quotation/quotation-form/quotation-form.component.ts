@@ -507,7 +507,7 @@ export class QuotationFormComponent implements OnInit {
 
       // Populate product items from quotation items
       this.productItems = (quotation.productItems ?? []).map((item, index) => {
-        // Parse material metadata from remarks if present
+        // Prefer the dedicated materialId field, then fall back to legacy remarks metadata.
         let metadata: any = {};
         try {
           if (item.remarks && item.remarks.startsWith('{')) {
@@ -515,7 +515,8 @@ export class QuotationFormComponent implements OnInit {
           }
         } catch { /* not JSON, use as-is */ }
 
-        const isMaterial = metadata.type === 'material';
+        const materialId = item.materialId ?? (metadata.materialId ? Number(metadata.materialId) : null);
+        const isMaterial = materialId != null || metadata.type === 'material';
 
         return {
           id: item.id,
@@ -528,7 +529,7 @@ export class QuotationFormComponent implements OnInit {
           discount: item.discountPrice ?? 0,
           qty: item.totalSetQty ?? 0,
           total: item.lineTotal ?? 0,
-          materialId: metadata.materialId ? Number(metadata.materialId) : (item.productId ? Number(item.productId) : null),
+          materialId,
           isNonInventory: metadata.isNonInventory ?? false,
         };
       });

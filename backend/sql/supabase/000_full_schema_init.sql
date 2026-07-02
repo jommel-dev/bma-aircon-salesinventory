@@ -1023,6 +1023,7 @@ CREATE INDEX IF NOT EXISTS idx_tblquotation_expires_at ON public.tblquotation(ex
 CREATE TABLE IF NOT EXISTS public.tblquotation_items (
   id BIGSERIAL PRIMARY KEY,
   quotation_id BIGINT NOT NULL REFERENCES public.tblquotation(id) ON DELETE CASCADE,
+  material_id BIGINT REFERENCES public.tblmaterials(id) ON DELETE SET NULL,
   product_id BIGINT REFERENCES public.tblproducts(id) ON DELETE SET NULL,
   capacity_id BIGINT REFERENCES public.tblcapacity(id) ON DELETE SET NULL,
   unit_price NUMERIC(14, 2) NOT NULL DEFAULT 0,
@@ -1037,6 +1038,7 @@ CREATE TABLE IF NOT EXISTS public.tblquotation_items (
 );
 
 CREATE INDEX IF NOT EXISTS idx_tblquotation_items_quotation_id ON public.tblquotation_items(quotation_id);
+CREATE INDEX IF NOT EXISTS idx_tblquotation_items_material_id ON public.tblquotation_items(material_id);
 CREATE INDEX IF NOT EXISTS idx_tblquotation_items_product_id ON public.tblquotation_items(product_id);
 CREATE INDEX IF NOT EXISTS idx_tblquotation_items_capacity_id ON public.tblquotation_items(capacity_id);
 
