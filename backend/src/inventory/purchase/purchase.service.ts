@@ -177,7 +177,8 @@ export class PurchaseService {
       `);
       console.log('Successfully updated tblpurchase_orders_po_type_check constraint.');
     } catch (error) {
-      console.error('Failed to update tblpurchase_orders_po_type_check constraint:', error.message);
+      const errorMessage = error instanceof Error ? error.message : String(error);
+      console.error('Failed to update tblpurchase_orders_po_type_check constraint:', errorMessage);
     }
   }
 
@@ -1872,38 +1873,15 @@ export class PurchaseService {
                 const unitPrice = this.toOptionalNumber(item.unitPrice) ?? 0;
                 const sellPrice = this.toOptionalNumber(item.sellPrice) ?? 0;
 
-                if (materialCode) {
-                  const insertMaterialResult = await client.query<{ id: string | number }>(
-                    `INSERT INTO tblmaterials (brand_id, material_name, material_code, unit, unit_price, sell_price, created_by, updated_at, updated_by)
-                     VALUES ($1, $2, NULLIF($3, ''), $4, $5, $6, $7, NOW(), $7)
-                     ON CONFLICT (material_code) DO UPDATE
-                       SET brand_id = COALESCE(EXCLUDED.brand_id, tblmaterials.brand_id),
-                           material_name = EXCLUDED.material_name,
-                           unit = COALESCE(EXCLUDED.unit, tblmaterials.unit),
-                           unit_price = EXCLUDED.unit_price,
-                           sell_price = EXCLUDED.sell_price,
-                           updated_at = NOW(),
-                           updated_by = $7
-                     RETURNING id`,
-                    [brandId, materialName, materialCode, materialUnit, unitPrice, sellPrice, userId ?? null],
-                  );
-                  materialId = this.toOptionalNumber(insertMaterialResult.rows[0]?.id);
-                } else {
-                  const insertMaterialResult = await client.query<{ id: string | number }>(
-                    `INSERT INTO tblmaterials (brand_id, material_name, unit, unit_price, sell_price, created_by, updated_at, updated_by)
-                     VALUES ($1, $2, $3, $4, $5, $6, NOW(), $6)
-                     ON CONFLICT (material_name) DO UPDATE
-                       SET brand_id = COALESCE(EXCLUDED.brand_id, tblmaterials.brand_id),
-                           unit = COALESCE(EXCLUDED.unit, tblmaterials.unit),
-                           unit_price = EXCLUDED.unit_price,
-                           sell_price = EXCLUDED.sell_price,
-                           updated_at = NOW(),
-                           updated_by = $6
-                     RETURNING id`,
-                    [brandId, materialName, materialUnit, unitPrice, sellPrice, userId ?? null],
-                  );
-                  materialId = this.toOptionalNumber(insertMaterialResult.rows[0]?.id);
-                }
+                materialId = await this.upsertMaterialRecord(client, {
+                  brandId,
+                  materialName,
+                  materialCode,
+                  materialUnit,
+                  unitPrice,
+                  sellPrice,
+                  userId: userId ?? null,
+                });
 
                 if (!materialId) {
                   throw new Error('Failed to create/retrieve material id for ACM item');
@@ -3412,6 +3390,132 @@ export class PurchaseService {
     return isoString.includes('T') ? isoString.split('T')[0] : isoString;
   }
 
+  private isCompletedLikeStatus(status: string | null | undefined): boolean {
+    const normalized = String(status ?? '').trim().toLowerCase();
+    if (!normalized) return false;
+
+    return [
+      'complete',
+      'completed',
+      'request_completed',
+      'request complete',
+      'request-completed',
+      'request completed',
+    ].includes(normalized);
+  }
+
+  private async upsertMaterialRecord(
+    executor: { query: PoolClient['query'] },
+    input: {
+      brandId: number | null;
+      materialName: string;
+      materialCode?: string | null;
+      materialUnit: string;
+      unitPrice: number;
+      sellPrice: number;
+      userId?: number | null;
+    },
+  ): Promise<number> {
+    const materialName = String(input.materialName ?? '').trim();
+    const materialCode = String(input.materialCode ?? '').trim();
+    const materialUnit = String(input.materialUnit ?? '').trim() || 'PCS';
+    const unitPrice = Number.isFinite(input.unitPrice) ? input.unitPrice : 0;
+    const sellPrice = Number.isFinite(input.sellPrice) ? input.sellPrice : 0;
+    const userId = input.userId ?? null;
+
+    if (!materialName) {
+      throw new Error('materialName is required when creating/updating materials');
+    }
+
+    const lookupResult = materialCode
+      ? await executor.query<{ id: string | number }>(
+          `SELECT id
+           FROM tblmaterials
+           WHERE LOWER(TRIM(COALESCE(material_code, ''))) = LOWER(TRIM($1))
+           LIMIT 1`,
+          [materialCode],
+        )
+      : await executor.query<{ id: string | number }>(
+          `SELECT id
+           FROM tblmaterials
+           WHERE LOWER(TRIM(COALESCE(material_name, ''))) = LOWER(TRIM($1))
+           LIMIT 1`,
+          [materialName],
+        );
+
+    const existingId = this.toOptionalNumber(lookupResult.rows[0]?.id);
+
+    if (existingId) {
+      const updateResult = await executor.query<{ id: string | number }>(
+        `UPDATE tblmaterials
+         SET brand_id = COALESCE($1, brand_id),
+             material_name = $2,
+             unit = COALESCE($3, unit),
+             unit_price = $4,
+             sell_price = $5,
+             updated_at = NOW(),
+             updated_by = $6
+         WHERE id = $7
+         RETURNING id`,
+        [input.brandId, materialName, materialUnit, unitPrice, sellPrice, userId, existingId],
+      );
+
+      const updatedId = this.toOptionalNumber(updateResult.rows[0]?.id);
+      if (updatedId) {
+        return updatedId;
+      }
+    }
+
+    try {
+      const insertResult = materialCode
+        ? await executor.query<{ id: string | number }>(
+            `INSERT INTO tblmaterials (brand_id, material_name, material_code, unit, unit_price, sell_price, created_by, updated_at, updated_by)
+             VALUES ($1, $2, NULLIF($3, ''), $4, $5, $6, $7, NOW(), $7)
+             RETURNING id`,
+            [input.brandId, materialName, materialCode, materialUnit, unitPrice, sellPrice, userId],
+          )
+        : await executor.query<{ id: string | number }>(
+            `INSERT INTO tblmaterials (brand_id, material_name, unit, unit_price, sell_price, created_by, updated_at, updated_by)
+             VALUES ($1, $2, $3, $4, $5, $6, NOW(), $6)
+             RETURNING id`,
+            [input.brandId, materialName, materialUnit, unitPrice, sellPrice, userId],
+          );
+
+      const insertedId = this.toOptionalNumber(insertResult.rows[0]?.id);
+      if (insertedId) {
+        return insertedId;
+      }
+    } catch (error) {
+      const err = error as { code?: string };
+      if (err?.code === '23505') {
+        const fallbackLookup = materialCode
+          ? await executor.query<{ id: string | number }>(
+              `SELECT id
+               FROM tblmaterials
+               WHERE LOWER(TRIM(COALESCE(material_code, ''))) = LOWER(TRIM($1))
+               LIMIT 1`,
+              [materialCode],
+            )
+          : await executor.query<{ id: string | number }>(
+              `SELECT id
+               FROM tblmaterials
+               WHERE LOWER(TRIM(COALESCE(material_name, ''))) = LOWER(TRIM($1))
+               LIMIT 1`,
+              [materialName],
+            );
+
+        const fallbackId = this.toOptionalNumber(fallbackLookup.rows[0]?.id);
+        if (fallbackId) {
+          return fallbackId;
+        }
+      }
+
+      throw error;
+    }
+
+    throw new Error('Failed to create/retrieve material id for ACM item');
+  }
+
   async update(
     id: number,
     updatePurchaseDto: UpdatePurchaseDto,
@@ -3470,13 +3574,14 @@ export class PurchaseService {
         const existingPoType = this.normalizePoType(existingPurchase.po_type);
         const effectivePoType = requestedPoType || existingPoType;
         const currentStatus = String(existingPurchase.status ?? '').trim().toLowerCase();
-        const editableStatuses = ['in-progress', 'in_progress', 'complete', 'completed'];
+        const editableStatuses = ['in-progress', 'in_progress'];
         if (
           effectivePoType === 'ACM' &&
-          !editableStatuses.includes(currentStatus)
+          !editableStatuses.includes(currentStatus) &&
+          !this.isCompletedLikeStatus(currentStatus)
         ) {
           throw new BadRequestException(
-            `Purchase order cannot be edited in its current status '${currentStatus}'. Only orders with status 'in-progress' or 'complete' can be updated.`,
+            `Purchase order cannot be edited in its current status '${currentStatus}'. Only orders with status 'in-progress' or completed-equivalent statuses can be updated.`,
           );
         }
 
@@ -3817,7 +3922,7 @@ export class PurchaseService {
 
           // ─── ACM Stock Adjustment: capture old quantities before deleting items ───
           const oldMaterialQtys = new Map<number, number>();
-          if (poType === 'ACM' && (currentStatus === 'complete' || currentStatus === 'completed')) {
+          if (poType === 'ACM' && this.isCompletedLikeStatus(currentStatus)) {
             try {
               const oldItemsResult = await client.query<{ material_id: string; quantity: string }>(
                 `SELECT material_id::text AS material_id, COALESCE(quantity, 0)::text AS quantity
@@ -3998,38 +4103,15 @@ export class PurchaseService {
                 const unitPrice = this.toOptionalNumber(item.unitPrice) ?? 0;
                 const sellPrice = this.toOptionalNumber(item.sellPrice) ?? 0;
 
-                if (materialCode) {
-                  const insertMaterialResult = await client.query<{ id: string | number }>(
-                    `INSERT INTO tblmaterials (brand_id, material_name, material_code, unit, unit_price, sell_price, created_by, updated_at, updated_by)
-                     VALUES ($1, $2, NULLIF($3, ''), $4, $5, $6, $7, NOW(), $7)
-                     ON CONFLICT (material_code) DO UPDATE
-                       SET brand_id = COALESCE(EXCLUDED.brand_id, tblmaterials.brand_id),
-                           material_name = EXCLUDED.material_name,
-                           unit = COALESCE(EXCLUDED.unit, tblmaterials.unit),
-                           unit_price = EXCLUDED.unit_price,
-                           sell_price = EXCLUDED.sell_price,
-                           updated_at = NOW(),
-                           updated_by = $7
-                     RETURNING id`,
-                    [brandId, materialName, materialCode, materialUnit, unitPrice, sellPrice, userId ?? null],
-                  );
-                  materialId = this.toOptionalNumber(insertMaterialResult.rows[0]?.id);
-                } else {
-                  const insertMaterialResult = await client.query<{ id: string | number }>(
-                    `INSERT INTO tblmaterials (brand_id, material_name, unit, unit_price, sell_price, created_by, updated_at, updated_by)
-                     VALUES ($1, $2, $3, $4, $5, $6, NOW(), $6)
-                     ON CONFLICT (material_name) DO UPDATE
-                       SET brand_id = COALESCE(EXCLUDED.brand_id, tblmaterials.brand_id),
-                           unit = COALESCE(EXCLUDED.unit, tblmaterials.unit),
-                           unit_price = EXCLUDED.unit_price,
-                           sell_price = EXCLUDED.sell_price,
-                           updated_at = NOW(),
-                           updated_by = $6
-                     RETURNING id`,
-                    [brandId, materialName, materialUnit, unitPrice, sellPrice, userId ?? null],
-                  );
-                  materialId = this.toOptionalNumber(insertMaterialResult.rows[0]?.id);
-                }
+                materialId = await this.upsertMaterialRecord(client, {
+                  brandId,
+                  materialName,
+                  materialCode,
+                  materialUnit,
+                  unitPrice,
+                  sellPrice,
+                  userId: userId ?? null,
+                });
 
                 if (!materialId) {
                   throw new Error('Failed to create/retrieve material id for ACM item');
