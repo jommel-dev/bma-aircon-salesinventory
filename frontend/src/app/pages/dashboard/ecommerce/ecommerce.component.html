@@ -645,7 +645,7 @@
     <div class="flex items-center justify-between border-b border-gray-200 bg-gradient-to-r from-brand-50 to-brand-100/50 px-6 py-4 dark:border-gray-800 dark:from-gray-800 dark:to-gray-900">
       <div>
         <h3 class="text-lg font-semibold text-gray-800 dark:text-white/90">{{ getOperationModalTitle() }}</h3>
-        <p class="mt-1 text-xs text-gray-500 dark:text-gray-400">Live queue details for the selected operational lane</p>
+        <p class="mt-1 text-xs text-gray-500 dark:text-gray-400">Purchase and inventory details for the selected card</p>
       </div>
       <button
         type="button"
@@ -672,62 +672,93 @@
           <table class="w-full">
             <thead>
               <tr class="border-b border-gray-200 bg-gray-50 dark:border-gray-700 dark:bg-gray-800/50">
-                @if (expandedOperationMode === 'receiving') {
+                @if (expandedOperationMode === 'purchase-orders' || expandedOperationMode === 'paid-purchases') {
                   <th class="px-4 py-3 text-left text-xs font-medium text-gray-600 dark:text-gray-400">PO Number</th>
                   <th class="px-4 py-3 text-left text-xs font-medium text-gray-600 dark:text-gray-400">Vendor</th>
                   <th class="px-4 py-3 text-right text-xs font-medium text-gray-600 dark:text-gray-400">Amount</th>
-                  <th class="px-4 py-3 text-left text-xs font-medium text-gray-600 dark:text-gray-400">Status</th>
+                  <th class="px-4 py-3 text-left text-xs font-medium text-gray-600 dark:text-gray-400">PO Status</th>
+                  <th class="px-4 py-3 text-left text-xs font-medium text-gray-600 dark:text-gray-400">Payment Status</th>
+                  <th class="px-4 py-3 text-left text-xs font-medium text-gray-600 dark:text-gray-400">Payment Method</th>
                   <th class="px-4 py-3 text-left text-xs font-medium text-gray-600 dark:text-gray-400">Created</th>
                 }
-                @if (expandedOperationMode === 'dispatch') {
-                  <th class="px-4 py-3 text-left text-xs font-medium text-gray-600 dark:text-gray-400">SO Number</th>
-                  <th class="px-4 py-3 text-left text-xs font-medium text-gray-600 dark:text-gray-400">Customer</th>
-                  <th class="px-4 py-3 text-right text-xs font-medium text-gray-600 dark:text-gray-400">Amount</th>
-                  <th class="px-4 py-3 text-left text-xs font-medium text-gray-600 dark:text-gray-400">Status</th>
-                  <th class="px-4 py-3 text-left text-xs font-medium text-gray-600 dark:text-gray-400">Schedule</th>
-                }
-                @if (expandedOperationMode === 'installation') {
-                  <th class="px-4 py-3 text-left text-xs font-medium text-gray-600 dark:text-gray-400">SO Number</th>
-                  <th class="px-4 py-3 text-left text-xs font-medium text-gray-600 dark:text-gray-400">Customer</th>
-                  <th class="px-4 py-3 text-left text-xs font-medium text-gray-600 dark:text-gray-400">Schedule</th>
-                  <th class="px-4 py-3 text-left text-xs font-medium text-gray-600 dark:text-gray-400">Installer</th>
-                  <th class="px-4 py-3 text-left text-xs font-medium text-gray-600 dark:text-gray-400">Status</th>
+                @if (expandedOperationMode === 'credit-terms') {
+                  <th class="px-4 py-3 text-left text-xs font-medium text-gray-600 dark:text-gray-400">PO Number</th>
+                  <th class="px-4 py-3 text-left text-xs font-medium text-gray-600 dark:text-gray-400">Vendor</th>
+                  <th class="px-4 py-3 text-right text-xs font-medium text-gray-600 dark:text-gray-400">Total Amount</th>
+                  <th class="px-4 py-3 text-right text-xs font-medium text-gray-600 dark:text-gray-400">Balance</th>
+                  <th class="px-4 py-3 text-left text-xs font-medium text-gray-600 dark:text-gray-400">Method</th>
+                  <th class="px-4 py-3 text-left text-xs font-medium text-gray-600 dark:text-gray-400">Due Date</th>
+                  <th class="px-4 py-3 text-right text-xs font-medium text-gray-600 dark:text-gray-400">Action</th>
                 }
                 @if (expandedOperationMode === 'stock-alerts') {
-                  <th class="px-4 py-3 text-left text-xs font-medium text-gray-600 dark:text-gray-400">Product</th>
-                  <th class="px-4 py-3 text-left text-xs font-medium text-gray-600 dark:text-gray-400">Capacity</th>
-                  <th class="px-4 py-3 text-right text-xs font-medium text-gray-600 dark:text-gray-400">In Stock</th>
+                  <th class="px-4 py-3 text-left text-xs font-medium text-gray-600 dark:text-gray-400">Material</th>
+                  <th class="px-4 py-3 text-left text-xs font-medium text-gray-600 dark:text-gray-400">Code</th>
+                  <th class="px-4 py-3 text-left text-xs font-medium text-gray-600 dark:text-gray-400">Unit</th>
+                  <th class="px-4 py-3 text-right text-xs font-medium text-gray-600 dark:text-gray-400">On Hand</th>
+                  <th class="px-4 py-3 text-right text-xs font-medium text-gray-600 dark:text-gray-400">Reorder Level</th>
+                  <th class="px-4 py-3 text-left text-xs font-medium text-gray-600 dark:text-gray-400">Status</th>
+                  <th class="px-4 py-3 text-right text-xs font-medium text-gray-600 dark:text-gray-400">Actions</th>
                 }
               </tr>
             </thead>
             <tbody>
               @for (item of operationDetailItems; track trackOperationDetailRow($index, item)) {
                 <tr class="border-b border-gray-100 hover:bg-gray-50 dark:border-gray-800 dark:hover:bg-gray-800/50">
-                  @if (expandedOperationMode === 'receiving') {
+                  @if (expandedOperationMode === 'purchase-orders' || expandedOperationMode === 'paid-purchases') {
                     <td class="px-4 py-3 text-sm text-gray-700 dark:text-gray-300">{{ formatTextValue(item['poNumber']) }}</td>
                     <td class="px-4 py-3 text-sm text-gray-700 dark:text-gray-300">{{ formatTextValue(item['vendor']) }}</td>
                     <td class="px-4 py-3 text-right text-sm font-medium text-gray-800 dark:text-white/90">{{ formatCurrencyValue(item['amount']) }}</td>
-                    <td class="px-4 py-3"><span class="inline-flex rounded-full px-2 py-1 text-xs font-medium" [class]="getOperationStatusClass(item['status'])">{{ formatTextValue(item['status']) }}</span></td>
+                    <td class="px-4 py-3"><span class="inline-flex rounded-full px-2 py-1 text-xs font-medium" [class]="getOperationStatusClass(item['poStatus'])">{{ formatTextValue(item['poStatus']) }}</span></td>
+                    <td class="px-4 py-3"><span class="inline-flex rounded-full px-2 py-1 text-xs font-medium" [class]="getOperationStatusClass(item['paymentStatus'])">{{ formatTextValue(item['paymentStatus']) }}</span></td>
+                    <td class="px-4 py-3 text-sm text-gray-700 dark:text-gray-300">{{ formatTextValue(item['paymentMethod']) }}</td>
                     <td class="px-4 py-3 text-sm text-gray-600 dark:text-gray-400">{{ formatDateValue(item['createdAt']) }}</td>
                   }
-                  @if (expandedOperationMode === 'dispatch') {
-                    <td class="px-4 py-3 text-sm text-gray-700 dark:text-gray-300">{{ formatTextValue(item['soNumber']) }}</td>
-                    <td class="px-4 py-3 text-sm text-gray-700 dark:text-gray-300">{{ formatTextValue(item['customer']) }}</td>
-                    <td class="px-4 py-3 text-right text-sm font-medium text-gray-800 dark:text-white/90">{{ formatCurrencyValue(item['amount']) }}</td>
-                    <td class="px-4 py-3"><span class="inline-flex rounded-full px-2 py-1 text-xs font-medium" [class]="getOperationStatusClass(item['status'])">{{ formatTextValue(item['status']) }}</span></td>
-                    <td class="px-4 py-3 text-sm text-gray-600 dark:text-gray-400">{{ formatDateValue(item['scheduleDate']) }}</td>
-                  }
-                  @if (expandedOperationMode === 'installation') {
-                    <td class="px-4 py-3 text-sm text-gray-700 dark:text-gray-300">{{ formatTextValue(item['soNumber']) }}</td>
-                    <td class="px-4 py-3 text-sm text-gray-700 dark:text-gray-300">{{ formatTextValue(item['customer']) }}</td>
-                    <td class="px-4 py-3 text-sm text-gray-600 dark:text-gray-400">{{ formatDateValue(item['scheduleDate']) }}</td>
-                    <td class="px-4 py-3 text-sm text-gray-700 dark:text-gray-300">{{ formatTextValue(item['installer']) }}</td>
-                    <td class="px-4 py-3"><span class="inline-flex rounded-full px-2 py-1 text-xs font-medium" [class]="getOperationStatusClass(item['status'])">{{ formatTextValue(item['status']) }}</span></td>
+                  @if (expandedOperationMode === 'credit-terms') {
+                    <td class="px-4 py-3 text-sm text-gray-700 dark:text-gray-300">{{ formatTextValue(item['poNumber']) }}</td>
+                    <td class="px-4 py-3 text-sm text-gray-700 dark:text-gray-300">{{ formatTextValue(item['vendor']) }}</td>
+                    <td class="px-4 py-3 text-right text-sm font-medium text-gray-800 dark:text-white/90">{{ formatCurrencyValue(item['totalAmount']) }}</td>
+                    <td class="px-4 py-3 text-right text-sm font-medium text-error-600 dark:text-error-400">{{ formatCurrencyValue(item['balance']) }}</td>
+                    <td class="px-4 py-3 text-sm text-gray-700 dark:text-gray-300">{{ formatTextValue(item['paymentMethod']) }}</td>
+                    <td class="px-4 py-3 text-sm text-gray-600 dark:text-gray-400">{{ formatDateValue(item['dueDate']) }}</td>
+                    <td class="px-4 py-3 text-right">
+                      <button
+                        type="button"
+                        (click)="openPoSettlementModal(item)"
+                        class="rounded-lg border border-brand-300 px-3 py-1.5 text-xs font-medium text-brand-700 transition hover:bg-brand-50 dark:border-brand-500/40 dark:text-brand-300 dark:hover:bg-brand-500/10"
+                      >
+                        Settle
+                      </button>
+                    </td>
                   }
                   @if (expandedOperationMode === 'stock-alerts') {
-                    <td class="px-4 py-3 text-sm text-gray-700 dark:text-gray-300">{{ formatTextValue(item['product']) }}</td>
-                    <td class="px-4 py-3 text-sm text-gray-700 dark:text-gray-300">{{ formatTextValue(item['capacity']) }}</td>
-                    <td class="px-4 py-3 text-right text-sm font-medium text-error-600 dark:text-error-400">{{ formatTextValue(item['inStock']) }}</td>
+                    <td class="px-4 py-3 text-sm text-gray-700 dark:text-gray-300">{{ formatTextValue(item['materialName']) }}</td>
+                    <td class="px-4 py-3 text-sm text-gray-700 dark:text-gray-300">{{ formatTextValue(item['materialCode']) }}</td>
+                    <td class="px-4 py-3 text-sm text-gray-700 dark:text-gray-300">{{ formatTextValue(item['unit']) }}</td>
+                    <td class="px-4 py-3 text-right text-sm font-medium text-error-600 dark:text-error-400">{{ formatTextValue(item['onHandStock']) }}</td>
+                    <td class="px-4 py-3 text-right text-sm text-gray-700 dark:text-gray-300">{{ formatTextValue(item['reorderLevel']) }}</td>
+                    <td class="px-4 py-3">
+                      <span class="inline-flex rounded-full px-2 py-1 text-xs font-medium" [class]="getStockStatusClass(item['stockStatus'])">
+                        {{ formatTextValue(item['stockStatus']) }}
+                      </span>
+                    </td>
+                    <td class="px-4 py-3 text-right">
+                      <div class="flex justify-end gap-2">
+                        <button
+                          type="button"
+                          (click)="viewMaterialInInventory(item)"
+                          class="rounded-lg border border-gray-300 px-3 py-1.5 text-xs font-medium text-gray-700 transition hover:bg-gray-50 dark:border-gray-600 dark:text-gray-300 dark:hover:bg-gray-800"
+                        >
+                          View
+                        </button>
+                        <button
+                          type="button"
+                          (click)="restockMaterial(item)"
+                          class="rounded-lg border border-brand-300 px-3 py-1.5 text-xs font-medium text-brand-700 transition hover:bg-brand-50 dark:border-brand-500/40 dark:text-brand-300 dark:hover:bg-brand-500/10"
+                        >
+                          Restock
+                        </button>
+                      </div>
+                    </td>
                   }
                 </tr>
               }
@@ -739,9 +770,67 @@
           <svg class="h-12 w-12 text-gray-300 dark:text-gray-700" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
             <path d="M9 12h6m-6 4h6M9 8h6M5 20h14a2 2 0 0 0 2-2V6a2 2 0 0 0-2-2H5a2 2 0 0 0-2 2v12a2 2 0 0 0 2 2z"></path>
           </svg>
-          <p class="mt-4 text-center text-sm text-gray-500 dark:text-gray-400">No operational records available for this queue right now</p>
+          <p class="mt-4 text-center text-sm text-gray-500 dark:text-gray-400">No records available for this operations card</p>
         </div>
       }
+    </div>
+  </div>
+}
+
+@if (poSettlementTarget) {
+  <div
+    class="fixed inset-0 z-[100050] bg-black/50 transition-opacity backdrop-blur-sm dark:bg-black/70"
+    (click)="closePoSettlementModal()"
+  ></div>
+
+  <div class="fixed inset-x-4 top-1/2 z-[100051] mx-auto w-full max-w-lg -translate-y-1/2 overflow-hidden rounded-2xl bg-white shadow-2xl dark:bg-gray-900">
+    <div class="flex items-center justify-between border-b border-gray-200 bg-linear-to-r from-brand-50 to-brand-100/50 px-6 py-4 dark:border-gray-800 dark:from-gray-800 dark:to-gray-900">
+      <div>
+        <h3 class="text-lg font-semibold text-gray-800 dark:text-white/90">Settle Purchase Order</h3>
+        <p class="mt-1 text-xs text-gray-500 dark:text-gray-400">
+          {{ poSettlementTarget.poNumber }} • {{ poSettlementTarget.vendor }} • Balance {{ formatCurrencyValue(poSettlementTarget.balance) }}
+        </p>
+      </div>
+      <button
+        type="button"
+        (click)="closePoSettlementModal()"
+        class="rounded-lg bg-white p-2 text-gray-400 hover:bg-gray-100 hover:text-gray-600 dark:bg-gray-800 dark:hover:bg-gray-700 dark:hover:text-gray-300"
+      >
+        <svg class="h-6 w-6" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+          <line x1="18" y1="6" x2="6" y2="18"></line>
+          <line x1="6" y1="6" x2="18" y2="18"></line>
+        </svg>
+      </button>
+    </div>
+
+    <div class="space-y-5 p-6">
+      <p class="text-sm text-gray-600 dark:text-gray-300">
+        Confirm settlement to mark this credit-term purchase order as paid.
+      </p>
+
+      @if (poSettlementError) {
+        <div class="rounded-xl border border-error-200 bg-error-50 px-4 py-3 text-sm text-error-700 dark:border-error-500/30 dark:bg-error-500/10 dark:text-error-300">
+          {{ poSettlementError }}
+        </div>
+      }
+
+      <div class="flex justify-end gap-3">
+        <button
+          type="button"
+          (click)="closePoSettlementModal()"
+          class="rounded-xl border border-gray-200 px-4 py-2.5 text-sm font-medium text-gray-600 transition hover:bg-gray-50 dark:border-gray-700 dark:text-gray-300 dark:hover:bg-gray-800"
+        >
+          Cancel
+        </button>
+        <button
+          type="button"
+          (click)="submitPoSettlement()"
+          [disabled]="poSettlementBusy"
+          class="rounded-xl bg-brand-600 px-4 py-2.5 text-sm font-medium text-white transition hover:bg-brand-700 disabled:cursor-not-allowed disabled:opacity-60"
+        >
+          {{ poSettlementBusy ? 'Saving…' : 'Confirm Settlement' }}
+        </button>
+      </div>
     </div>
   </div>
 }

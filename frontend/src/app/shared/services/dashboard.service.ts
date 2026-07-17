@@ -4,7 +4,7 @@ import { BranchService } from './branch.service';
 
 export type DashboardTrend = 'up' | 'down';
 export type DashboardSalesDetailMode = 'sales' | 'unpaid' | 'overdues' | 'cheques';
-export type DashboardOperationDetailMode = 'receiving' | 'dispatch' | 'installation' | 'stock-alerts';
+export type DashboardOperationDetailMode = 'purchase-orders' | 'credit-terms' | 'paid-purchases' | 'stock-alerts';
 export type DashboardSettlementMode = 'partial' | 'full' | 'cheque' | 'split';
 export type DashboardReceivableVerificationMode = 'cheque' | 'credit-card';
 
@@ -114,6 +114,20 @@ export class DashboardService {
 
     if (!response.data.success) {
       throw new Error(response.data.message ?? 'Unable to settle sales order');
+    }
+  }
+
+  async settlePurchaseOrder(payload: {
+    purchaseOrderId: number;
+    paymentId?: string;
+  }): Promise<void> {
+    const response = await apiClient.post<{ success: boolean; message?: string }>(
+      '/dashboard/settle-purchase-order',
+      payload,
+    );
+
+    if (!response.data.success) {
+      throw new Error(response.data.message ?? 'Unable to settle purchase order');
     }
   }
 

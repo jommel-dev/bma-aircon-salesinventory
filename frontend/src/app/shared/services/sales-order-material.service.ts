@@ -336,6 +336,16 @@ export class SalesOrderMaterialService {
     return response.data;
   }
 
+  /**
+   * Soft delete a draft material sales order.
+   */
+  async softDeleteMaterialSalesOrder(id: number): Promise<{ success: boolean; message: string }> {
+    const response = await apiClient.post<{ success: boolean; message: string }>(
+      `/sales-order/materials/${id}/soft-delete`,
+    );
+    return response.data;
+  }
+
   // ─── Bulk Void & Unvoid ─────────────────────────────────────────────────────
 
   /**

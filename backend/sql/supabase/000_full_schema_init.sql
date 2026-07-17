@@ -634,7 +634,11 @@ DO $$ BEGIN
   ALTER TABLE public.tblsales_order ADD COLUMN IF NOT EXISTS project_code TEXT;
   ALTER TABLE public.tblsales_order ADD COLUMN IF NOT EXISTS project_id BIGINT;
   ALTER TABLE public.tblsales_order ADD COLUMN IF NOT EXISTS linked_purchase_order_id INTEGER;
+  ALTER TABLE public.tblsales_order ADD COLUMN IF NOT EXISTS deleted_at TIMESTAMPTZ;
+  ALTER TABLE public.tblsales_order ADD COLUMN IF NOT EXISTS deleted_by BIGINT;
 END $$;
+
+CREATE INDEX IF NOT EXISTS idx_tblsales_order_deleted_at ON public.tblsales_order(deleted_at);
 
 -- 6.2 SO Payments
 CREATE TABLE IF NOT EXISTS public.tblso_payments (

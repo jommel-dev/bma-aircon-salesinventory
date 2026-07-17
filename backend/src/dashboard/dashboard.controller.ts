@@ -65,10 +65,10 @@ export class DashboardController {
     @Query('mode') mode: string,
     @Req() request: { user?: Record<string, unknown> },
   ) {
-    const validModes = ['receiving', 'dispatch', 'installation', 'stock-alerts'];
+    const validModes = ['purchase-orders', 'credit-terms', 'paid-purchases', 'stock-alerts'];
     const normalizedMode = validModes.includes(mode)
-      ? (mode as 'receiving' | 'dispatch' | 'installation' | 'stock-alerts')
-      : 'receiving';
+      ? (mode as 'purchase-orders' | 'credit-terms' | 'paid-purchases' | 'stock-alerts')
+      : 'purchase-orders';
 
     const effectiveBranchId = Number(
       request.user?.branchId ?? request.user?.branch_id ?? request.user?.branch,
@@ -107,6 +107,27 @@ export class DashboardController {
         ? effectiveBranchId
         : undefined,
       this.buildAuditContext(request),
+    );
+  }
+
+  @Post('settle-purchase-order')
+  settlePurchaseOrder(
+    @Body()
+    body: {
+      purchaseOrderId?: number;
+      paymentId?: string;
+    },
+    @Req() request: { user?: Record<string, unknown> },
+  ) {
+    const effectiveBranchId = Number(
+      request.user?.branchId ?? request.user?.branch_id ?? request.user?.branch,
+    );
+
+    return this.dashboardService.settlePurchaseOrder(
+      body,
+      Number.isFinite(effectiveBranchId) && effectiveBranchId > 0
+        ? effectiveBranchId
+        : undefined,
     );
   }
 

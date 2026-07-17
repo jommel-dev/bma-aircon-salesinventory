@@ -103,6 +103,13 @@ export class SalesOrderMaterialsComponent implements OnInit {
   voidError = '';
   voidOrderId: number | null = null;
 
+  // Soft delete dialog state (for draft tab)
+  isDeleteDialogOpen = false;
+  isDeleting = false;
+  deleteError = '';
+  deleteOrderId: number | null = null;
+  deleteOrderLabel = '';
+
   // Excel generation state
   isGeneratingExcel = false;
 
@@ -459,6 +466,43 @@ export class SalesOrderMaterialsComponent implements OnInit {
     this.voidPassword = '';
     this.voidError = '';
     this.voidOrderId = null;
+  }
+
+  openDeleteOrderDialog(orderId: number, soNumber: string | null): void {
+    this.deleteOrderId = orderId;
+    this.deleteOrderLabel = soNumber || `#${orderId}`;
+    this.deleteError = '';
+    this.isDeleting = false;
+    this.isDeleteDialogOpen = true;
+  }
+
+  closeDeleteDialog(): void {
+    this.isDeleteDialogOpen = false;
+    this.deleteOrderId = null;
+    this.deleteOrderLabel = '';
+    this.deleteError = '';
+  }
+
+  async confirmDeleteOrder(): Promise<void> {
+    if (!this.deleteOrderId || this.isDeleting) return;
+
+    this.isDeleting = true;
+    this.deleteError = '';
+
+    try {
+      const result = await this.salesOrderMaterialService.softDeleteMaterialSalesOrder(this.deleteOrderId);
+      if (result.success) {
+        this.notificationService.success('Success', result.message || 'Draft order deleted.');
+        this.closeDeleteDialog();
+        await this.loadOrders();
+      } else {
+        this.deleteError = result.message || 'Failed to delete draft order.';
+      }
+    } catch (err: any) {
+      this.deleteError = err?.response?.data?.message ?? err?.message ?? 'Failed to delete draft order.';
+    } finally {
+      this.isDeleting = false;
+    }
   }
 
   async confirmVoidOrder(): Promise<void> {

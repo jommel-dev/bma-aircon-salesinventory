@@ -57,7 +57,7 @@ type SalesFinancialSummaryRow = {
   chequeCount: string;
 };
 type DashboardSalesDetailMode = 'sales' | 'unpaid' | 'overdues' | 'cheques';
-type DashboardOperationDetailMode = 'receiving' | 'dispatch' | 'installation' | 'stock-alerts';
+type DashboardOperationDetailMode = 'purchase-orders' | 'credit-terms' | 'paid-purchases' | 'stock-alerts';
 type DashboardSettlementMode = 'partial' | 'full' | 'cheque' | 'split';
 type DashboardReceivableVerificationMode = 'cheque' | 'credit-card';
 type SalesSettlementStateRow = {
@@ -583,29 +583,36 @@ export class DashboardService {
       try {
         const totalPoResult = await this.databaseService.query<{ amount: string }>(
           `SELECT COALESCE(SUM(total_amount), 0)::text AS amount
-           FROM tblpurchase_orders
-           WHERE status != 'voided' AND created_at >= date_trunc('year', CURRENT_DATE)`,
+           FROM tblpurchase_orders po
+           WHERE REPLACE(REPLACE(LOWER(TRIM(COALESCE(po.status, 'pending'))), '_', '-'), ' ', '-') NOT IN ('voided', 'cancelled')
+             AND po.created_at >= date_trunc('year', CURRENT_DATE)
+             AND ($1::text IS NULL OR COALESCE(to_jsonb(po)->>'branchId', to_jsonb(po)->>'branch_id', '') = $1::text)`,
+          [branchParam],
         );
         totalPurchaseOrdersAmount = this.toNumber(totalPoResult.rows[0]?.amount);
       } catch { /* fault-tolerant */ }
 
       try {
         const creditTermsResult = await this.databaseService.query<{ amount: string }>(
-          `SELECT COALESCE(SUM(pp.amount), 0)::text AS amount
-           FROM tblpo_payments pp
-           INNER JOIN tblpurchase_orders po ON po.id = pp.purchase_order_id
-           WHERE pp.method IN ('Terms', 'Terms with DP', 'Installment')
-             AND po.created_at >= date_trunc('year', CURRENT_DATE)`,
+          `${this.getPurchaseOrdersDashboardBaseCte()}
+           SELECT COALESCE(SUM(ps.balance), 0)::text AS amount
+           FROM po_scope ps
+           WHERE ps.payment_method IN ('Terms', 'Terms with DP', 'Installment')
+             AND ps.balance > 0
+             AND ($1::text IS NULL OR ps.branch_id = $1::text)`,
+          [branchParam],
         );
         totalCreditTermsAmount = this.toNumber(creditTermsResult.rows[0]?.amount);
       } catch { /* fault-tolerant */ }
 
       try {
         const paidPosResult = await this.databaseService.query<{ amount: string }>(
-          `SELECT COALESCE(SUM(total_amount), 0)::text AS amount
-           FROM tblpurchase_orders
-           WHERE status IN ('complete', 'completed')
-             AND created_at >= date_trunc('year', CURRENT_DATE)`,
+          `${this.getPurchaseOrdersDashboardBaseCte()}
+           SELECT COALESCE(SUM(ps.total_amount), 0)::text AS amount
+           FROM po_scope ps
+           WHERE ps.payment_status IN ('paid', 'posted', 'cleared', 'complete', 'completed')
+             AND ($1::text IS NULL OR ps.branch_id = $1::text)`,
+          [branchParam],
         );
         totalPaidPosAmount = this.toNumber(paidPosResult.rows[0]?.amount);
       } catch { /* fault-tolerant */ }
@@ -906,19 +913,19 @@ try {
         {
           label: 'Total Credit Terms',
           value: this.formatCurrency(totalCreditTermsAmount),
-          hint: 'Terms, Terms with DP, Installment',
+          hint: 'Unpaid terms, terms with DP, and installment',
           level: totalCreditTermsAmount > 0 ? 'warning' : 'normal',
         },
         {
-          label: 'Total Paid POs',
+          label: 'Total Paid Purchases',
           value: this.formatCurrency(totalPaidPosAmount),
-          hint: 'Completed purchase orders this year',
+          hint: 'Paid purchase orders this year',
           level: 'normal',
         },
         {
           label: 'Stock Alert',
           value: `${this.formatInteger(stockAlertCount)} materials`,
-          hint: 'On-hand stock at or below reorder level',
+          hint: 'Low stock and out-of-stock materials',
           level: stockAlertCount > 0 ? 'critical' : 'normal',
         },
       ];
@@ -1458,174 +1465,328 @@ try {
     };
   }
 
+  private getPurchaseOrdersDashboardBaseCte(): string {
+    return `
+      WITH po_payment_scope AS (
+        SELECT
+          COALESCE(
+            to_jsonb(pp)->>'po_id',
+            to_jsonb(pp)->>'poId',
+            to_jsonb(pp)->>'purchase_id',
+            to_jsonb(pp)->>'purchaseId',
+            to_jsonb(pp)->>'purchase_order_id',
+            to_jsonb(pp)->>'purchaseOrderId'
+          ) AS po_id,
+          COALESCE(to_jsonb(pp)->>'method', 'Cash') AS method,
+          COALESCE(NULLIF(to_jsonb(pp)->>'amount', '')::numeric, 0) AS payment_amount,
+          COALESCE(
+            NULLIF(COALESCE(to_jsonb(pp)->>'down_payment', to_jsonb(pp)->>'downPayment', ''), '')::numeric,
+            0
+          ) AS down_payment,
+          LOWER(REPLACE(REPLACE(TRIM(COALESCE(to_jsonb(pp)->>'status', 'unpaid')), '_', '-'), ' ', '-')) AS payment_status,
+          COALESCE(to_jsonb(pp)->>'terms_due_date', to_jsonb(pp)->>'termsDueDate', '') AS terms_due_date,
+          pp.id AS payment_id
+        FROM tblpo_payments pp
+      ),
+      po_latest_payment AS (
+        SELECT DISTINCT ON (po_id)
+          po_id,
+          method,
+          payment_amount,
+          down_payment,
+          payment_status,
+          terms_due_date,
+          payment_id
+        FROM po_payment_scope
+        WHERE po_id IS NOT NULL AND po_id <> ''
+        ORDER BY po_id, payment_id DESC
+      ),
+      po_scope AS (
+        SELECT
+          po.id::text AS po_id,
+          COALESCE(po.po_number::text, CONCAT('PO-', po.id::text)) AS po_number,
+          COALESCE(v.name, 'Unknown Vendor') AS vendor,
+          COALESCE(po.total_amount, 0) AS total_amount,
+          REPLACE(REPLACE(LOWER(TRIM(COALESCE(po.status, 'pending'))), '_', '-'), ' ', '-') AS po_status,
+          COALESCE(to_jsonb(po)->>'branchId', to_jsonb(po)->>'branch_id', '') AS branch_id,
+          po.created_at,
+          COALESCE(plp.method, '-') AS payment_method,
+          COALESCE(plp.payment_status, 'unknown') AS payment_status,
+          plp.payment_id::text AS payment_id,
+          plp.terms_due_date,
+          COALESCE(plp.down_payment, 0) AS down_payment,
+          CASE
+            WHEN plp.po_id IS NULL THEN COALESCE(po.total_amount, 0)
+            WHEN COALESCE(plp.payment_status, 'unknown') IN ('paid', 'posted', 'cleared', 'complete', 'completed') THEN 0
+            WHEN LOWER(COALESCE(plp.method, '')) = 'terms with dp'
+              THEN GREATEST(COALESCE(po.total_amount, 0) - COALESCE(plp.down_payment, 0), 0)
+            ELSE COALESCE(po.total_amount, 0)
+          END AS balance
+        FROM tblpurchase_orders po
+        LEFT JOIN tblvendors v ON v.id::text = po.vendor_id::text
+        LEFT JOIN po_latest_payment plp ON plp.po_id = po.id::text
+        WHERE REPLACE(REPLACE(LOWER(TRIM(COALESCE(po.status, 'pending'))), '_', '-'), ' ', '-') NOT IN ('voided', 'cancelled')
+          AND po.created_at >= date_trunc('year', CURRENT_DATE)
+      )`;
+  }
+
   async getOperationsDetail(mode: DashboardOperationDetailMode, branchId?: number): Promise<{ success: boolean; items: unknown[] }> {
     try {
       const branchParam = branchId ? String(branchId) : null;
 
-      if (mode === 'receiving') {
+      if (mode === 'purchase-orders') {
         const result = await this.databaseService.query<{
           id: string;
           poNumber: string;
           vendor: string;
           amount: string;
-          status: string;
+          poStatus: string;
+          paymentStatus: string;
+          paymentMethod: string;
           createdAt: string;
         }>(
-          `SELECT
-             po.id::text AS id,
-             COALESCE(po.po_number::text, CONCAT('#', po.id::text)) AS "poNumber",
-             COALESCE(to_jsonb(v)->>'name', 'Unknown Vendor') AS vendor,
-             COALESCE(po.total_amount, 0)::text AS amount,
-             COALESCE(po.status, 'pending') AS status,
-             po.created_at::text AS "createdAt"
-           FROM tblpurchase_orders po
-           LEFT JOIN tblvendors v
-             ON v.id::text = po.vendor_id::text
-           WHERE (po.created_at AT TIME ZONE 'UTC')::date = CURRENT_DATE
-           ORDER BY po.created_at DESC
+          `${this.getPurchaseOrdersDashboardBaseCte()}
+           SELECT
+             ps.po_id AS id,
+             ps.po_number AS "poNumber",
+             ps.vendor,
+             ps.total_amount::text AS amount,
+             ps.po_status AS "poStatus",
+             ps.payment_status AS "paymentStatus",
+             ps.payment_method AS "paymentMethod",
+             ps.created_at::text AS "createdAt"
+           FROM po_scope ps
+           WHERE ($1::text IS NULL OR ps.branch_id = $1::text)
+           ORDER BY ps.created_at DESC
            LIMIT 100`,
+          [branchParam],
         );
 
-        return { success: true, items: result.rows };
+        return {
+          success: true,
+          items: result.rows.map((row) => ({
+            id: row.id,
+            poNumber: row.poNumber,
+            vendor: row.vendor,
+            amount: this.toNumber(row.amount),
+            poStatus: row.poStatus,
+            paymentStatus: row.paymentStatus,
+            paymentMethod: row.paymentMethod,
+            createdAt: row.createdAt ? new Date(row.createdAt) : null,
+          })),
+        };
       }
 
-      if (mode === 'dispatch') {
+      if (mode === 'credit-terms') {
         const result = await this.databaseService.query<{
           id: string;
-          soNumber: string;
-          customer: string;
+          paymentId: string;
+          poNumber: string;
+          vendor: string;
+          totalAmount: string;
+          balance: string;
+          paymentMethod: string;
+          paymentStatus: string;
+          dueDate: string;
+        }>(
+          `${this.getPurchaseOrdersDashboardBaseCte()}
+           SELECT
+             ps.po_id AS id,
+             ps.payment_id AS "paymentId",
+             ps.po_number AS "poNumber",
+             ps.vendor,
+             ps.total_amount::text AS "totalAmount",
+             ps.balance::text AS balance,
+             ps.payment_method AS "paymentMethod",
+             ps.payment_status AS "paymentStatus",
+             ps.terms_due_date AS "dueDate"
+           FROM po_scope ps
+           WHERE ps.payment_method IN ('Terms', 'Terms with DP', 'Installment')
+             AND ps.balance > 0
+             AND ps.payment_status NOT IN ('paid', 'posted', 'cleared', 'complete', 'completed')
+             AND ($1::text IS NULL OR ps.branch_id = $1::text)
+           ORDER BY NULLIF(ps.terms_due_date, '') ASC NULLS LAST, ps.created_at DESC
+           LIMIT 100`,
+          [branchParam],
+        );
+
+        return {
+          success: true,
+          items: result.rows.map((row) => ({
+            id: row.id,
+            poId: Number(row.id),
+            paymentId: row.paymentId ?? null,
+            poNumber: row.poNumber,
+            vendor: row.vendor,
+            totalAmount: this.toNumber(row.totalAmount),
+            balance: this.toNumber(row.balance),
+            paymentMethod: row.paymentMethod,
+            paymentStatus: row.paymentStatus,
+            dueDate: row.dueDate ? new Date(row.dueDate) : null,
+          })),
+        };
+      }
+
+      if (mode === 'paid-purchases') {
+        const result = await this.databaseService.query<{
+          id: string;
+          poNumber: string;
+          vendor: string;
           amount: string;
-          status: string;
-          scheduleDate: string;
+          poStatus: string;
+          paymentStatus: string;
+          paymentMethod: string;
+          createdAt: string;
         }>(
-          `WITH sales_scope AS (
-             SELECT
-               so.id::text AS id,
-               COALESCE(to_jsonb(so)->>'so_number', to_jsonb(so)->>'soNumber', CONCAT('#', so.id::text)) AS so_number,
-               COALESCE(to_jsonb(c)->>'name', 'Unknown Customer') AS customer,
-               CASE
-                 WHEN COALESCE(to_jsonb(so)->>'total_amount', to_jsonb(so)->>'totalAmount', '0') ~ '^-?\\d+(\\.\\d+)?$'
-                   THEN COALESCE(to_jsonb(so)->>'total_amount', to_jsonb(so)->>'totalAmount', '0')::numeric
-                 ELSE 0
-               END AS total_amount,
-               REPLACE(REPLACE(LOWER(TRIM(COALESCE(to_jsonb(so)->>'status', COALESCE(so.status, 'pending')))), '_', '-'), ' ', '-') AS normalized_status,
-               COALESCE(to_jsonb(so)->>'scheduleDate', to_jsonb(so)->>'schedule_date', '') AS schedule_date,
-               COALESCE(to_jsonb(so)->>'branchId', to_jsonb(so)->>'branch_id', '') AS branch_id
-             FROM tblsales_order so
-             LEFT JOIN tblcustomer c
-               ON c.id::text = COALESCE(to_jsonb(so)->>'customer_id', to_jsonb(so)->>'customerId', '')
-           )
+          `${this.getPurchaseOrdersDashboardBaseCte()}
            SELECT
-             ss.id,
-             ss.so_number::text AS "soNumber",
-             ss.customer::text AS customer,
-             ss.total_amount::text AS amount,
-             ss.normalized_status::text AS status,
-             ss.schedule_date::text AS "scheduleDate"
-           FROM sales_scope ss
-           WHERE ss.normalized_status IN ('pending', 'for-delivery', 'to-remit', 'released', 'in-progress')
-             AND ($1::text IS NULL OR ss.branch_id = $1::text)
-           ORDER BY NULLIF(ss.schedule_date, '') ASC NULLS LAST, ss.id DESC
+             ps.po_id AS id,
+             ps.po_number AS "poNumber",
+             ps.vendor,
+             ps.total_amount::text AS amount,
+             ps.po_status AS "poStatus",
+             ps.payment_status AS "paymentStatus",
+             ps.payment_method AS "paymentMethod",
+             ps.created_at::text AS "createdAt"
+           FROM po_scope ps
+           WHERE ps.payment_status IN ('paid', 'posted', 'cleared', 'complete', 'completed')
+             AND ($1::text IS NULL OR ps.branch_id = $1::text)
+           ORDER BY ps.created_at DESC
            LIMIT 100`,
           [branchParam],
         );
 
-        return { success: true, items: result.rows };
-      }
-
-      if (mode === 'installation') {
-        const result = await this.databaseService.query<{
-          id: string;
-          soNumber: string;
-          customer: string;
-          scheduleDate: string;
-          installer: string;
-          status: string;
-        }>(
-          `WITH sales_scope AS (
-             SELECT
-               so.id::text AS id,
-               COALESCE(to_jsonb(so)->>'so_number', to_jsonb(so)->>'soNumber', CONCAT('#', so.id::text)) AS so_number,
-               COALESCE(to_jsonb(c)->>'name', 'Unknown Customer') AS customer,
-               COALESCE(to_jsonb(so)->>'scheduleDate', to_jsonb(so)->>'schedule_date', '') AS schedule_date,
-               COALESCE(to_jsonb(so)->>'installer', '') AS installer,
-               REPLACE(REPLACE(LOWER(TRIM(COALESCE(to_jsonb(so)->>'status', COALESCE(so.status, 'pending')))), '_', '-'), ' ', '-') AS normalized_status,
-               COALESCE(to_jsonb(so)->>'branchId', to_jsonb(so)->>'branch_id', '') AS branch_id
-             FROM tblsales_order so
-             LEFT JOIN tblcustomer c
-               ON c.id::text = COALESCE(to_jsonb(so)->>'customer_id', to_jsonb(so)->>'customerId', '')
-           )
-           SELECT
-             ss.id,
-             ss.so_number::text AS "soNumber",
-             ss.customer::text AS customer,
-             ss.schedule_date::text AS "scheduleDate",
-             ss.installer::text AS installer,
-             ss.normalized_status::text AS status
-           FROM sales_scope ss
-           WHERE ss.normalized_status LIKE '%install%'
-             AND ss.normalized_status NOT IN ('installed', 'completed', 'cancelled')
-             AND ($1::text IS NULL OR ss.branch_id = $1::text)
-           ORDER BY NULLIF(ss.schedule_date, '') ASC NULLS LAST, ss.id DESC
-           LIMIT 100`,
-          [branchParam],
-        );
-
-        return { success: true, items: result.rows };
+        return {
+          success: true,
+          items: result.rows.map((row) => ({
+            id: row.id,
+            poNumber: row.poNumber,
+            vendor: row.vendor,
+            amount: this.toNumber(row.amount),
+            poStatus: row.poStatus,
+            paymentStatus: row.paymentStatus,
+            paymentMethod: row.paymentMethod,
+            createdAt: row.createdAt ? new Date(row.createdAt) : null,
+          })),
+        };
       }
 
       if (mode === 'stock-alerts') {
         const result = await this.databaseService.query<{
           id: string;
-          product: string;
-          capacity: string;
-          inStock: string;
+          materialName: string;
+          materialCode: string;
+          unit: string;
+          onHandStock: string;
+          reorderLevel: string;
+          stockStatus: string;
         }>(
-          `WITH serial_scope AS (
-             SELECT
-               COALESCE(to_jsonb(sn)->>'productId', to_jsonb(sn)->>'product_id', '') AS product_id,
-               COALESCE(to_jsonb(sn)->>'capacityId', to_jsonb(sn)->>'capacity_id', '') AS capacity_id,
-               REPLACE(REPLACE(LOWER(TRIM(COALESCE(to_jsonb(sn)->>'status', ''))), '_', '-'), ' ', '-') AS normalized_status,
-               COALESCE(to_jsonb(sn)->>'branchId', to_jsonb(sn)->>'branch_id', '') AS branch_id
-             FROM tblserial_numbers sn
-           ),
-           grouped AS (
-             SELECT
-               ss.product_id,
-               ss.capacity_id,
-               COUNT(*) FILTER (
-                 WHERE ss.normalized_status NOT IN (
-                   'scanned', 'reserved', 'delivered', 'installed', 'sold', 'released', 'out', 'outbound'
-                 )
-               )::int AS in_stock
-             FROM serial_scope ss
-             WHERE ss.product_id <> ''
-               AND ss.capacity_id <> ''
-               AND ($1::text IS NULL OR ss.branch_id = $1::text)
-             GROUP BY ss.product_id, ss.capacity_id
-           )
-           SELECT
-             CONCAT(g.product_id, '-', g.capacity_id) AS id,
-             COALESCE(to_jsonb(p)->>'productName', to_jsonb(p)->>'product_name', to_jsonb(p)->>'productname', 'Unknown Product') AS product,
-             COALESCE(to_jsonb(c)->>'capacity', to_jsonb(c)->>'capacityValue', to_jsonb(c)->>'capacity_value', '-') AS capacity,
-             g.in_stock::text AS "inStock"
-           FROM grouped g
-           LEFT JOIN tblproducts p
-             ON p.id::text = g.product_id
-           LEFT JOIN tblcapacity c
-             ON c.id::text = g.capacity_id
-           WHERE g.in_stock <= 5
-           ORDER BY g.in_stock ASC, product ASC
+          `SELECT
+             m.id::text AS id,
+             COALESCE(m.material_name, 'Unknown Material') AS "materialName",
+             COALESCE(m.material_code, '-') AS "materialCode",
+             COALESCE(m.unit, 'PCS') AS unit,
+             COALESCE(m.on_hand_stock, 0)::text AS "onHandStock",
+             COALESCE(m.reorder_level, 0)::text AS "reorderLevel",
+             CASE
+               WHEN COALESCE(m.on_hand_stock, 0) <= 0 THEN 'out-of-stock'
+               WHEN COALESCE(m.on_hand_stock, 0) <= COALESCE(m.reorder_level, 0) THEN 'low-stock'
+               ELSE 'normal'
+             END AS "stockStatus"
+           FROM tblmaterials m
+           WHERE m.deleted_at IS NULL
+             AND COALESCE(m.on_hand_stock, 0) <= COALESCE(m.reorder_level, 0)
+           ORDER BY COALESCE(m.on_hand_stock, 0) ASC, m.material_name ASC
            LIMIT 100`,
-          [branchParam],
         );
 
-        return { success: true, items: result.rows };
+        return {
+          success: true,
+          items: result.rows.map((row) => ({
+            id: row.id,
+            materialId: Number(row.id),
+            materialName: row.materialName,
+            materialCode: row.materialCode,
+            unit: row.unit,
+            onHandStock: this.toNumber(row.onHandStock),
+            reorderLevel: this.toNumber(row.reorderLevel),
+            stockStatus: row.stockStatus,
+          })),
+        };
       }
 
       return { success: false, items: [] };
     } catch (error) {
       return { success: false, items: [] };
     }
+  }
+
+  async settlePurchaseOrder(
+    payload: { purchaseOrderId?: number; paymentId?: string },
+    branchId?: number,
+  ): Promise<{ success: boolean; message: string }> {
+    const purchaseOrderId = Number(payload.purchaseOrderId);
+    const paymentId = String(payload.paymentId ?? '').trim();
+
+    if (!Number.isFinite(purchaseOrderId) || purchaseOrderId <= 0) {
+      throw new BadRequestException('A valid purchaseOrderId is required');
+    }
+
+    const branchParam = branchId ? String(branchId) : null;
+    const stateResult = await this.databaseService.query<{
+      paymentId: string;
+      balance: string;
+      paymentMethod: string;
+      paymentStatus: string;
+      branchId: string;
+    }>(
+      `${this.getPurchaseOrdersDashboardBaseCte()}
+       SELECT
+         ps.payment_id AS "paymentId",
+         ps.balance::text AS balance,
+         ps.payment_method AS "paymentMethod",
+         ps.payment_status AS "paymentStatus",
+         ps.branch_id AS "branchId"
+       FROM po_scope ps
+       WHERE ps.po_id = $1::text
+         AND ($2::text IS NULL OR ps.branch_id = $2::text)
+       LIMIT 1`,
+      [String(purchaseOrderId), branchParam],
+    );
+
+    if (stateResult.rowCount === 0) {
+      throw new NotFoundException('Purchase order not found');
+    }
+
+    const state = stateResult.rows[0];
+    if (!['Terms', 'Terms with DP', 'Installment'].includes(state.paymentMethod)) {
+      throw new BadRequestException('Only credit-term purchase orders can be settled from the dashboard');
+    }
+
+    if (['paid', 'posted', 'cleared', 'complete', 'completed'].includes(state.paymentStatus)) {
+      throw new BadRequestException('This purchase order is already settled');
+    }
+
+    if (this.toNumber(state.balance) <= 0) {
+      throw new BadRequestException('This purchase order no longer has an open balance');
+    }
+
+    const targetPaymentId = paymentId || String(state.paymentId ?? '').trim();
+
+    if (!targetPaymentId) {
+      throw new BadRequestException('Unable to resolve the purchase order payment record');
+    }
+
+    await this.databaseService.query(
+      `UPDATE tblpo_payments
+       SET status = 'paid'
+       WHERE id::text = $1`,
+      [targetPaymentId],
+    );
+
+    return {
+      success: true,
+      message: 'Purchase order payment settled successfully',
+    };
   }
 }

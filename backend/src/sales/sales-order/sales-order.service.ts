@@ -63,6 +63,7 @@ type ProductCapacityCatalogItem = {
 @Injectable()
 export class SalesOrderService {
   private readonly defaultMigrationBranchId = 1;
+  private salesOrderSoftDeleteColumnsReady = false;
 
   constructor(
     private readonly databaseService: DatabaseService,
@@ -73,6 +74,20 @@ export class SalesOrderService {
     private readonly auditLogService: AuditLogService,
     private readonly backorderService: BackorderService,
   ) {}
+
+  private async ensureSalesOrderSoftDeleteColumns(): Promise<void> {
+    if (this.salesOrderSoftDeleteColumnsReady) {
+      return;
+    }
+
+    await this.databaseService.query(
+      `ALTER TABLE tblsales_order ADD COLUMN IF NOT EXISTS deleted_at TIMESTAMPTZ`,
+    );
+    await this.databaseService.query(
+      `ALTER TABLE tblsales_order ADD COLUMN IF NOT EXISTS deleted_by BIGINT`,
+    );
+    this.salesOrderSoftDeleteColumnsReady = true;
+  }
 
   private async getSalesOrderAuditSnapshot(id: number): Promise<Record<string, unknown> | null> {
     const result = await this.findOne(id);
@@ -6688,6 +6703,8 @@ export class SalesOrderService {
       };
     }
 
+    await this.ensureSalesOrderSoftDeleteColumns();
+
     try {
       const salesResult = await this.databaseService.query<{
         id: number;
@@ -6722,6 +6739,7 @@ export class SalesOrderService {
          LEFT JOIN tblcustomer c
            ON c.id::text = COALESCE(to_jsonb(so)->>'customer_id', to_jsonb(so)->>'customerId')
          WHERE so.id = $1
+           AND so.deleted_at IS NULL
          LIMIT 1`,
         [id],
       );
@@ -7406,6 +7424,8 @@ export class SalesOrderService {
     dateFrom?: string;
     dateTo?: string;
   }) {
+    await this.ensureSalesOrderSoftDeleteColumns();
+
     const page = this.normalizePage(query.page);
     const limit = this.normalizeLimit(query.limit);
     const offset = (page - 1) * limit;
@@ -7414,6 +7434,9 @@ export class SalesOrderService {
 
     const params: unknown[] = [];
     const whereParts: string[] = [];
+
+    // Always exclude soft-deleted records
+    whereParts.push(`so.deleted_at IS NULL`);
 
     // Always filter by salesType = 'sales'
     whereParts.push(`LOWER(COALESCE(so."salesType", '')) = 'sales'`);
@@ -8249,6 +8272,64 @@ export class SalesOrderService {
     );
 
     return { success: true, message: 'Order restored to complete. Stock has been deducted.' };
+  }
+
+  // ─── Soft Delete Material Sales Order (Draft only) ──────────────────────────
+
+  async softDeleteMaterialSalesOrder(
+    id: number,
+    userId?: number,
+  ): Promise<{ success: boolean; message: string }> {
+    if (!Number.isFinite(id) || id <= 0) {
+      return { success: false, message: 'Invalid order ID' };
+    }
+
+    await this.ensureSalesOrderSoftDeleteColumns();
+
+    const orderResult = await this.databaseService.query<{
+      status: string;
+      salesType: string | null;
+      deletedAt: string | null;
+    }>(
+      `SELECT
+         COALESCE(status, 'draft') AS status,
+         COALESCE("salesType", '') AS "salesType",
+         deleted_at::text AS "deletedAt"
+       FROM tblsales_order
+       WHERE id = $1
+       LIMIT 1`,
+      [id],
+    );
+
+    if (orderResult.rowCount === 0) {
+      return { success: false, message: 'Sales order not found' };
+    }
+
+    const order = orderResult.rows[0];
+    if (order.deletedAt) {
+      return { success: false, message: 'Sales order is already deleted' };
+    }
+
+    const salesType = String(order.salesType ?? '').trim().toLowerCase();
+    if (salesType !== 'sales') {
+      return { success: false, message: 'Only material sales orders can be deleted from this screen' };
+    }
+
+    const currentStatus = String(order.status ?? '').trim().toLowerCase();
+    if (currentStatus !== 'draft') {
+      return { success: false, message: 'Only draft orders can be deleted' };
+    }
+
+    await this.databaseService.query(
+      `UPDATE tblsales_order
+       SET deleted_at = NOW(),
+           deleted_by = $2
+       WHERE id = $1
+         AND deleted_at IS NULL`,
+      [id, Number.isFinite(userId) && userId! > 0 ? userId : null],
+    );
+
+    return { success: true, message: 'Draft sales order deleted successfully' };
   }
 
   private getMaterialPaymentAutoStatus(method: string, termsDueDate?: string | null, postDated?: string | null): string {

@@ -1,6 +1,7 @@
 import { Component, HostListener, OnInit } from '@angular/core';
 import { DecimalPipe } from '@angular/common';
 import { FormsModule } from '@angular/forms';
+import { Router } from '@angular/router';
 import {
   DashboardActivityItem,
   DashboardKpiCard,
@@ -39,7 +40,7 @@ export class EcommerceComponent implements OnInit {
   operations: DashboardOpsItem[] = [
     { label: 'Total Purchase Orders', value: '-', hint: '-', level: 'normal' },
     { label: 'Total Credit Terms', value: '-', hint: '-', level: 'normal' },
-    { label: 'Total Paid POs', value: '-', hint: '-', level: 'normal' },
+    { label: 'Total Paid Purchases', value: '-', hint: '-', level: 'normal' },
     { label: 'Stock Alert', value: '-', hint: '-', level: 'normal' },
   ];
 
@@ -89,23 +90,32 @@ export class EcommerceComponent implements OnInit {
   expandedOperationMode: DashboardOperationDetailMode | null = null;
   operationDetailItems: Array<{ id?: string | number; [key: string]: unknown }> = [];
   operationDetailLoading = false;
-
+  poSettlementBusy = false;
+  poSettlementError = '';
+  poSettlementTarget: {
+    purchaseOrderId: number;
+    paymentId?: string;
+    poNumber: string;
+    vendor: string;
+    balance: number;
+  } | null = null;
 
   // Export Generation Unpaid
   isGeneratingPdfReport = false;
 
 
   private readonly operationModes: DashboardOperationDetailMode[] = [
-    'receiving',
-    'dispatch',
-    'installation',
+    'purchase-orders',
+    'credit-terms',
+    'paid-purchases',
     'stock-alerts',
   ];
 
   constructor(
     private readonly dashboardService: DashboardService,
     private readonly rbacService: RbacService,
-    private readonly printReportService: PrintUnpaidReportService
+    private readonly printReportService: PrintUnpaidReportService,
+    private readonly router: Router,
   ) {}
 
   ngOnInit(): void {
@@ -240,6 +250,7 @@ export class EcommerceComponent implements OnInit {
 
   openOperationDetail(mode: DashboardOperationDetailMode): void {
     this.closeSalesSummaryDetail();
+    this.closePoSettlementModal();
     this.expandedOperationMode = mode;
     this.operationDetailLoading = true;
     void this.fetchOperationDetail(mode);
@@ -249,6 +260,7 @@ export class EcommerceComponent implements OnInit {
     this.expandedOperationMode = null;
     this.operationDetailItems = [];
     this.operationDetailLoading = false;
+    this.closePoSettlementModal();
   }
 
   @HostListener('document:keydown.escape')
@@ -356,16 +368,16 @@ export class EcommerceComponent implements OnInit {
   }
 
   getOperationModalTitle(): string {
-    if (this.expandedOperationMode === 'receiving') {
-      return 'Receiving Today';
+    if (this.expandedOperationMode === 'purchase-orders') {
+      return 'Purchase Orders';
     }
 
-    if (this.expandedOperationMode === 'dispatch') {
-      return 'For Dispatch';
+    if (this.expandedOperationMode === 'credit-terms') {
+      return 'Unpaid Credit Terms';
     }
 
-    if (this.expandedOperationMode === 'installation') {
-      return 'For Installation';
+    if (this.expandedOperationMode === 'paid-purchases') {
+      return 'Paid Purchases';
     }
 
     if (this.expandedOperationMode === 'stock-alerts') {
@@ -373,6 +385,85 @@ export class EcommerceComponent implements OnInit {
     }
 
     return 'Operations Detail';
+  }
+
+  getStockStatusClass(status: unknown): string {
+    const normalized = String(status ?? '').trim().toLowerCase();
+
+    if (normalized === 'out-of-stock') {
+      return 'bg-error-50 text-error-700 dark:bg-error-500/15 dark:text-error-400';
+    }
+
+    if (normalized === 'low-stock') {
+      return 'bg-warning-50 text-warning-700 dark:bg-warning-500/15 dark:text-warning-400';
+    }
+
+    return 'bg-gray-100 text-gray-700 dark:bg-gray-800 dark:text-gray-300';
+  }
+
+  openPoSettlementModal(item: { [key: string]: unknown }): void {
+    const purchaseOrderId = Number(item['poId'] ?? item['id']);
+    const balance = Number(item['balance']);
+    if (!Number.isFinite(purchaseOrderId) || purchaseOrderId <= 0 || !Number.isFinite(balance) || balance <= 0) {
+      return;
+    }
+
+    this.poSettlementTarget = {
+      purchaseOrderId,
+      paymentId: String(item['paymentId'] ?? '').trim() || undefined,
+      poNumber: this.formatTextValue(item['poNumber']),
+      vendor: this.formatTextValue(item['vendor']),
+      balance,
+    };
+    this.poSettlementError = '';
+  }
+
+  closePoSettlementModal(): void {
+    this.poSettlementTarget = null;
+    this.poSettlementError = '';
+    this.poSettlementBusy = false;
+  }
+
+  async submitPoSettlement(): Promise<void> {
+    if (!this.poSettlementTarget || this.poSettlementBusy) {
+      return;
+    }
+
+    this.poSettlementBusy = true;
+    this.poSettlementError = '';
+
+    try {
+      await this.dashboardService.settlePurchaseOrder({
+        purchaseOrderId: this.poSettlementTarget.purchaseOrderId,
+        paymentId: this.poSettlementTarget.paymentId,
+      });
+
+      const currentMode = this.expandedOperationMode;
+      this.closePoSettlementModal();
+      await this.loadDashboardOverview();
+      if (currentMode) {
+        this.operationDetailLoading = true;
+        await this.fetchOperationDetail(currentMode);
+      }
+    } catch (error: unknown) {
+      this.poSettlementError = error instanceof Error ? error.message : 'Unable to record settlement.';
+    } finally {
+      this.poSettlementBusy = false;
+    }
+  }
+
+  restockMaterial(item: { [key: string]: unknown }): void {
+    const materialId = Number(item['materialId'] ?? item['id']);
+    void this.router.navigate(['/users/purchase-order-materials/new'], {
+      queryParams: materialId > 0 ? { materialId } : undefined,
+    });
+  }
+
+  viewMaterialInInventory(item: { [key: string]: unknown }): void {
+    const materialId = Number(item['materialId'] ?? item['id']);
+    void this.router.navigate(['/users/inventory'], {
+      queryParams: materialId > 0 ? { materialId } : undefined,
+    });
   }
 
   openSettlementModal(item: { [key: string]: unknown }): void {

@@ -203,6 +203,18 @@ export class SalesOrderController {
     );
   }
 
+  @Post('materials/:id/soft-delete')
+  softDeleteMaterialSalesOrder(
+    @Param('id') id: string,
+    @Req() request: { user?: Record<string, unknown> },
+  ) {
+    const userId = Number(request.user?.sub);
+    return this.salesOrderService.softDeleteMaterialSalesOrder(
+      +id,
+      Number.isFinite(userId) ? userId : undefined,
+    );
+  }
+
   @Get('deliveries')
   getDeliveries(
     @Query() query: ListSalesOrderQueryDto,
