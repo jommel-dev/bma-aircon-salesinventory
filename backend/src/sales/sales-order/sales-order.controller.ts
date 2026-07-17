@@ -10,6 +10,7 @@ import {
   Req,
   Query,
   UseGuards,
+  ForbiddenException,
 } from '@nestjs/common';
 import { SalesOrderService } from './sales-order.service';
 import { CreateSalesOrderDto } from './dto/create-sales-order.dto';
@@ -66,6 +67,11 @@ export class SalesOrderController {
       ...query,
       branchId: Number.isFinite(branchId) && branchId > 0 ? branchId : undefined,
     };
+  }
+
+  private isAdminOrSuperAdmin(request: { user?: Record<string, unknown> }): boolean {
+    const roleName = String(request.user?.roleName ?? request.user?.role_name ?? '').trim().toLowerCase();
+    return roleName === 'admin' || roleName === 'superadmin' || roleName === 'super admin';
   }
 
   @Post()
@@ -208,6 +214,10 @@ export class SalesOrderController {
     @Param('id') id: string,
     @Req() request: { user?: Record<string, unknown> },
   ) {
+    if (!this.isAdminOrSuperAdmin(request)) {
+      throw new ForbiddenException('Only admin or super admin can delete draft orders');
+    }
+
     const userId = Number(request.user?.sub);
     return this.salesOrderService.softDeleteMaterialSalesOrder(
       +id,

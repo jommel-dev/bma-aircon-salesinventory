@@ -106,6 +106,7 @@ export class SalesOrderMaterialsComponent implements OnInit {
   // Soft delete dialog state (for draft tab)
   isDeleteDialogOpen = false;
   isDeleting = false;
+  deletePassword = '';
   deleteError = '';
   deleteOrderId: number | null = null;
   deleteOrderLabel = '';
@@ -469,8 +470,13 @@ export class SalesOrderMaterialsComponent implements OnInit {
   }
 
   openDeleteOrderDialog(orderId: number, soNumber: string | null): void {
+    if (!this.isAdmin) {
+      return;
+    }
+
     this.deleteOrderId = orderId;
     this.deleteOrderLabel = soNumber || `#${orderId}`;
+    this.deletePassword = '';
     this.deleteError = '';
     this.isDeleting = false;
     this.isDeleteDialogOpen = true;
@@ -480,16 +486,26 @@ export class SalesOrderMaterialsComponent implements OnInit {
     this.isDeleteDialogOpen = false;
     this.deleteOrderId = null;
     this.deleteOrderLabel = '';
+    this.deletePassword = '';
     this.deleteError = '';
   }
 
   async confirmDeleteOrder(): Promise<void> {
-    if (!this.deleteOrderId || this.isDeleting) return;
+    if (!this.deleteOrderId || this.isDeleting || !this.deletePassword) return;
 
     this.isDeleting = true;
     this.deleteError = '';
 
     try {
+      const username = this.rbacService.getPayload()?.username ?? '';
+      const loginResult = await this.authService.login(username, this.deletePassword);
+
+      if (!loginResult.success) {
+        this.deleteError = 'Incorrect password. Please try again.';
+        this.isDeleting = false;
+        return;
+      }
+
       const result = await this.salesOrderMaterialService.softDeleteMaterialSalesOrder(this.deleteOrderId);
       if (result.success) {
         this.notificationService.success('Success', result.message || 'Draft order deleted.');
@@ -499,7 +515,14 @@ export class SalesOrderMaterialsComponent implements OnInit {
         this.deleteError = result.message || 'Failed to delete draft order.';
       }
     } catch (err: any) {
-      this.deleteError = err?.response?.data?.message ?? err?.message ?? 'Failed to delete draft order.';
+      const message = err?.response?.data?.message ?? err?.message ?? 'Failed to delete draft order.';
+      if (message.toLowerCase().includes('invalid') || message.toLowerCase().includes('unauthorized') || message.toLowerCase().includes('incorrect') || message.toLowerCase().includes('forbidden')) {
+        this.deleteError = message.toLowerCase().includes('forbidden')
+          ? 'Only admin or super admin can delete draft orders.'
+          : 'Incorrect password. Please try again.';
+      } else {
+        this.deleteError = message;
+      }
     } finally {
       this.isDeleting = false;
     }
