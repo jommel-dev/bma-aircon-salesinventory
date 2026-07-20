@@ -276,7 +276,7 @@ export class PoMaterialsService {
   // ─── Search ─────────────────────────────────────────────────────────────────
 
   /**
-   * Search materials by name, code, product type, or brand.
+   * Search materials by material code prefix.
    * Returns up to 200 matching results.
    */
   async searchMaterials(query: string, limit: number = 200): Promise<MaterialSearchResult[]> {

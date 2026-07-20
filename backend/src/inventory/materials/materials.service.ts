@@ -909,6 +909,29 @@ export class MaterialsService {
   }
 
   /**
+   * Match material codes by prefix without crossing product-type boundaries.
+   * Letter-only queries (M, MT, CT) require the next character to be a digit,
+   * so "M" matches M0001 but not MT0001.
+   */
+  private buildMaterialCodeSearchFilter(normalizedQuery: string): {
+    clause: string;
+    params: string[];
+  } {
+    if (/^[A-Za-z]+$/.test(normalizedQuery)) {
+      const escapedPrefix = normalizedQuery.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+      return {
+        clause: 'm.material_code ~* $1',
+        params: [`^${escapedPrefix}[0-9]`],
+      };
+    }
+
+    return {
+      clause: 'm.material_code ILIKE $1',
+      params: [`${normalizedQuery}%`],
+    };
+  }
+
+  /**
    * =====================================================
    * SEARCH MATERIALS (Smart Search)
    * =====================================================
@@ -922,8 +945,7 @@ export class MaterialsService {
    */
   async searchMaterials(q: string, limit: number = 200): Promise<any[]> {
     const normalizedQuery = String(q ?? '').trim();
-    const codePrefix = `${normalizedQuery}%`;
-    const textContains = `%${normalizedQuery}%`;
+    const { clause, params: filterParams } = this.buildMaterialCodeSearchFilter(normalizedQuery);
     const cappedLimit = Math.min(Math.max(limit, 1), 500);
 
     const query = `
@@ -941,22 +963,13 @@ export class MaterialsService {
       FROM tblmaterials m
       LEFT JOIN tblbrands b ON m.brand_id = b.id
       WHERE m.deleted_at IS NULL
-        AND (
-          m.material_code ILIKE $1
-          OR (
-            LENGTH($3) >= 2
-            AND (
-              m.material_name ILIKE $2
-              OR b."brandName" ILIKE $2
-              OR b.type ILIKE $2
-            )
-          )
-        )
-      ORDER BY m.material_code ASC NULLS LAST, m.material_name ASC
-      LIMIT $4
+        AND NULLIF(TRIM(m.material_code), '') IS NOT NULL
+        AND ${clause}
+      ORDER BY m.material_code ASC NULLS LAST
+      LIMIT $2
     `;
 
-    const result = await this.db.query(query, [codePrefix, textContains, normalizedQuery, cappedLimit]);
+    const result = await this.db.query(query, [...filterParams, cappedLimit]);
     return result.rows;
   }
 

@@ -2729,8 +2729,17 @@ export class PurchaseService {
     }
 
     try {
-      const codePrefix = `${normalizedQuery}%`;
-      const textContains = `%${normalizedQuery}%`;
+      const normalized = normalizedQuery;
+      const isLettersOnly = /^[A-Za-z]+$/.test(normalized);
+      const codeFilter = isLettersOnly
+        ? {
+            clause: 'm.material_code ~* $1',
+            param: `^${normalized.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}[0-9]`,
+          }
+        : {
+            clause: 'm.material_code ILIKE $1',
+            param: `${normalized}%`,
+          };
       const cappedLimit = Math.min(Math.max(Number(limit) || 200, 1), 500);
 
       const result = await this.databaseService.query<{
@@ -2756,21 +2765,11 @@ export class PurchaseService {
          LEFT JOIN tblbrands b ON m.brand_id = b.id
          LEFT JOIN tblproducttypes pt ON b.product_type_id = pt.id
          WHERE m.deleted_at IS NULL
-           AND (
-             m.material_code ILIKE $1
-             OR (
-               LENGTH($3) >= 2
-               AND (
-                 m.material_name ILIKE $2
-                 OR m.material_code ILIKE $2
-                 OR b."brandName" ILIKE $2
-                 OR pt.name ILIKE $2
-               )
-             )
-           )
-         ORDER BY m.material_code ASC NULLS LAST, m.material_name ASC
-         LIMIT $4`,
-        [codePrefix, textContains, normalizedQuery, cappedLimit],
+           AND NULLIF(TRIM(m.material_code), '') IS NOT NULL
+           AND ${codeFilter.clause}
+         ORDER BY m.material_code ASC NULLS LAST
+         LIMIT $2`,
+        [codeFilter.param, cappedLimit],
       );
 
       return {
