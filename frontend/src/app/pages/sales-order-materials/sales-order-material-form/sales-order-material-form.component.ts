@@ -355,7 +355,7 @@ export class SalesOrderMaterialFormComponent implements OnInit, OnDestroy {
 
   private async performMaterialSearch(query: string): Promise<void> {
     try {
-      const results = await this.salesOrderMaterialService.searchMaterials(query, 50);
+      const results = await this.salesOrderMaterialService.searchMaterials(query, 200);
       // Always add "Others" as the first option
       const othersOption: MaterialSearchResult = {
         id: -1, // use a sentinel ID that won’t conflict with real materials

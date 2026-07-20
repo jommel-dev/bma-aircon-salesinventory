@@ -70,7 +70,7 @@ export class PoMaterialsFormComponent implements OnInit, OnDestroy {
   private materialSearchDebounceTimer: ReturnType<typeof setTimeout> | null = null;
   private vendorSearchDebounceTimer: ReturnType<typeof setTimeout> | null = null;
   private readonly debounceMs = 300;
-  private readonly minSearchChars = 2;
+  private readonly minSearchChars = 1;
 
   constructor(
     private readonly rbacService: RbacService,
@@ -168,9 +168,8 @@ export class PoMaterialsFormComponent implements OnInit, OnDestroy {
 
   private async performMaterialSearch(query: string): Promise<void> {
     try {
-      const results = await this.poMaterialsService.searchMaterials(query);
-      // Limit to max 50 results
-      this.materialSearchResults = results.slice(0, 50);
+      const results = await this.poMaterialsService.searchMaterials(query, 200);
+      this.materialSearchResults = results;
       this.isMaterialDropdownOpen = true;
       this.materialSearchNoResults = this.materialSearchResults.length === 0;
     } catch {

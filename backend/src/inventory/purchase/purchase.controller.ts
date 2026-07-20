@@ -154,8 +154,15 @@ export class PurchaseController {
   }
 
   @Get('materials/search')
-  searchMaterials(@Query('query') query?: string) {
-    return this.purchaseService.searchMaterials(query);
+  searchMaterials(
+    @Query('query') query?: string,
+    @Query('limit') limit?: string,
+  ) {
+    const parsedLimit = limit ? parseInt(limit, 10) : 200;
+    return this.purchaseService.searchMaterials(
+      query,
+      Number.isFinite(parsedLimit) ? parsedLimit : 200,
+    );
   }
 
   @Get('vendors/list')

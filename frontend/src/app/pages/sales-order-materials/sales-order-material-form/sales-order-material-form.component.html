@@ -156,7 +156,7 @@
         }
 
         @if (isMaterialDropdownOpen) {
-          <div class="absolute z-50 mt-1 max-h-64 w-full overflow-y-auto rounded-lg border border-gray-200 bg-white shadow-lg dark:border-gray-700 dark:bg-gray-900">
+          <div class="absolute z-50 mt-1 max-h-80 w-full overflow-y-auto rounded-lg border border-gray-200 bg-white shadow-lg dark:border-gray-700 dark:bg-gray-900">
             @if (materialSearchNoResults) {
               <div class="px-3 py-3 text-center">
                 <p class="text-sm text-gray-500 dark:text-gray-400">No materials found.</p>
@@ -211,7 +211,7 @@
         }
       </div>
       <p class="mt-1 text-xs text-gray-500 dark:text-gray-400">
-        Type to search materials by name, code, type, or brand. Select to add to order.
+        Type to search materials by code prefix (e.g. M shows M0001 onward), name, code, type, or brand. Select to add to order.
       </p>
     </div>
 

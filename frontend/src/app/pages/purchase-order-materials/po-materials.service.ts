@@ -277,12 +277,12 @@ export class PoMaterialsService {
 
   /**
    * Search materials by name, code, product type, or brand.
-   * Returns up to 50 matching results.
+   * Returns up to 200 matching results.
    */
-  async searchMaterials(query: string): Promise<MaterialSearchResult[]> {
+  async searchMaterials(query: string, limit: number = 200): Promise<MaterialSearchResult[]> {
     const response = await apiClient.get<MaterialSearchApiResponse>(
       '/purchase/materials/search',
-      { params: { query } },
+      { params: { query, limit } },
     );
     return response.data.items ?? [];
   }

@@ -206,7 +206,7 @@ export class QuotationFormComponent implements OnInit {
 
   private async performMaterialSearch(query: string): Promise<void> {
     try {
-      const results = await this.salesOrderMaterialService.searchMaterials(query, 50);
+      const results = await this.salesOrderMaterialService.searchMaterials(query, 200);
       this.materialSearchResults = results;
       this.isMaterialDropdownOpen = true;
       this.materialSearchNoResults = results.length === 0;

@@ -2721,7 +2721,7 @@ export class PurchaseService {
     }
   }
 
-  async searchMaterials(query?: string) {
+  async searchMaterials(query?: string, limit?: number) {
     const normalizedQuery = String(query ?? '').trim();
 
     if (!normalizedQuery) {
@@ -2729,7 +2729,9 @@ export class PurchaseService {
     }
 
     try {
-      const searchTerm = `%${normalizedQuery}%`;
+      const codePrefix = `${normalizedQuery}%`;
+      const textContains = `%${normalizedQuery}%`;
+      const cappedLimit = Math.min(Math.max(Number(limit) || 200, 1), 500);
 
       const result = await this.databaseService.query<{
         id: number;
@@ -2755,14 +2757,20 @@ export class PurchaseService {
          LEFT JOIN tblproducttypes pt ON b.product_type_id = pt.id
          WHERE m.deleted_at IS NULL
            AND (
-             m.material_name ILIKE $1
-             OR m.material_code ILIKE $1
-             OR b."brandName" ILIKE $1
-             OR pt.name ILIKE $1
+             m.material_code ILIKE $1
+             OR (
+               LENGTH($3) >= 2
+               AND (
+                 m.material_name ILIKE $2
+                 OR m.material_code ILIKE $2
+                 OR b."brandName" ILIKE $2
+                 OR pt.name ILIKE $2
+               )
+             )
            )
-         ORDER BY m.material_name ASC
-         LIMIT 50`,
-        [searchTerm],
+         ORDER BY m.material_code ASC NULLS LAST, m.material_name ASC
+         LIMIT $4`,
+        [codePrefix, textContains, normalizedQuery, cappedLimit],
       );
 
       return {

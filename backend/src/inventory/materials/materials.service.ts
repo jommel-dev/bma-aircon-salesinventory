@@ -916,13 +916,15 @@ export class MaterialsService {
    * Used for the smart search dropdown in the sales order form.
    *
    * @param q - Search query string (min 1 char)
-   * @param limit - Max results to return (max 50, default 50)
+   * @param limit - Max results to return (max 500, default 200)
    * @returns Array of MaterialSearchResult
    * =====================================================
    */
-  async searchMaterials(q: string, limit: number = 50): Promise<any[]> {
-    const searchTerm = `%${q}%`;
-    const cappedLimit = Math.min(Math.max(limit, 1), 50);
+  async searchMaterials(q: string, limit: number = 200): Promise<any[]> {
+    const normalizedQuery = String(q ?? '').trim();
+    const codePrefix = `${normalizedQuery}%`;
+    const textContains = `%${normalizedQuery}%`;
+    const cappedLimit = Math.min(Math.max(limit, 1), 500);
 
     const query = `
       SELECT 
@@ -939,12 +941,22 @@ export class MaterialsService {
       FROM tblmaterials m
       LEFT JOIN tblbrands b ON m.brand_id = b.id
       WHERE m.deleted_at IS NULL
-        AND m.material_code ILIKE $1
-      ORDER BY m.material_code ASC
-      LIMIT $2
+        AND (
+          m.material_code ILIKE $1
+          OR (
+            LENGTH($3) >= 2
+            AND (
+              m.material_name ILIKE $2
+              OR b."brandName" ILIKE $2
+              OR b.type ILIKE $2
+            )
+          )
+        )
+      ORDER BY m.material_code ASC NULLS LAST, m.material_name ASC
+      LIMIT $4
     `;
 
-    const result = await this.db.query(query, [searchTerm, cappedLimit]);
+    const result = await this.db.query(query, [codePrefix, textContains, normalizedQuery, cappedLimit]);
     return result.rows;
   }
 

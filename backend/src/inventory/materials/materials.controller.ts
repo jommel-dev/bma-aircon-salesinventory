@@ -195,7 +195,7 @@ export class MaterialsController {
    * 
    * Query Parameters:
    * - q (required): Search term (min 1 character)
-   * - limit (optional): Max results, capped at 50, default 50
+   * - limit (optional): Max results, capped at 500, default 200
    * 
   * Searches by material_code only.
    * Returns MaterialSearchResult[] with fields: id, material_name, material_code,
@@ -211,8 +211,8 @@ export class MaterialsController {
       throw new BadRequestException('Query parameter "q" is required and must be at least 1 character');
     }
 
-    const parsedLimit = limit ? parseInt(limit, 10) : 50;
-    const cappedLimit = isNaN(parsedLimit) ? 50 : Math.min(Math.max(parsedLimit, 1), 50);
+    const parsedLimit = limit ? parseInt(limit, 10) : 200;
+    const cappedLimit = isNaN(parsedLimit) ? 200 : Math.min(Math.max(parsedLimit, 1), 500);
 
     return this.materialsService.searchMaterials(q.trim(), cappedLimit);
   }
