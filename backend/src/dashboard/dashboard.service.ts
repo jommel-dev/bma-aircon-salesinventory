@@ -320,7 +320,7 @@ export class DashboardService {
   private async updateSalesOrderStatusForSettlement(client: PoolClient, salesOrderId: number, branchId?: number): Promise<void> {
     const state = await this.loadSalesSettlementState(client, salesOrderId, branchId);
     const currentStatus = this.normalizeStatus(state.normalizedStatus);
-    if (['remitted', 'complete', 'completed', 'cancelled', 'rejected', 'void'].includes(currentStatus)) {
+    if (['complete', 'completed', 'cancelled', 'rejected', 'void'].includes(currentStatus)) {
       return;
     }
 
@@ -331,7 +331,11 @@ export class DashboardService {
     let nextStatus = currentStatus || 'pending';
 
     if (Math.max(totalAmount - paidAmount, 0) <= 0) {
-      nextStatus = 'paid';
+      // Fully collected (including verified cheque/credit-card) → complete the SO
+      nextStatus = 'complete';
+    } else if (currentStatus === 'remitted') {
+      // Still has outstanding receivables; keep remitted
+      return;
     } else if (paidAmount > 0 || outstandingReceivableAmount > 0 || remainingAmount < totalAmount) {
       nextStatus = 'partial';
     }
