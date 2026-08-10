@@ -1003,16 +1003,123 @@ try {
     }
   }
 
-  async getSalesDetail(mode: DashboardSalesDetailMode, branchId?: number): Promise<{ success: boolean; items: unknown[] }> {
+  private normalizeSalesDetailPagination(page?: number, pageSize?: number): {
+    page: number;
+    pageSize: number;
+    offset: number;
+  } {
+    const normalizedPage = Math.max(1, Math.trunc(Number(page) || 1));
+    const normalizedPageSize = Math.min(100, Math.max(10, Math.trunc(Number(pageSize) || 25)));
+    return {
+      page: normalizedPage,
+      pageSize: normalizedPageSize,
+      offset: (normalizedPage - 1) * normalizedPageSize,
+    };
+  }
+
+  private buildSalesDetailMeta(total: number, page: number, pageSize: number) {
+    const safeTotal = Math.max(0, total);
+    const totalPages = Math.max(1, Math.ceil(safeTotal / pageSize) || 1);
+    const safePage = Math.min(Math.max(1, page), totalPages);
+    return {
+      page: safePage,
+      pageSize,
+      total: safeTotal,
+      totalPages,
+    };
+  }
+
+  private isCreditSettlementMethod(method: unknown): boolean {
+    const normalized = String(method ?? '').toLowerCase();
+    return (
+      normalized.includes('terms')
+      || normalized.includes('cheque')
+      || normalized.includes('credit-card')
+      || normalized.includes('credit card')
+      || normalized.includes('installment')
+    );
+  }
+
+  private async resolveCollectedSalesSettledBy(
+    rows: Array<{ id: string; method: string }>,
+  ): Promise<Map<string, string>> {
+    const settledByMap = new Map<string, string>();
+    const creditIds = rows
+      .filter((row) => this.isCreditSettlementMethod(row.method))
+      .map((row) => row.id)
+      .filter((id) => id.length > 0);
+
+    if (creditIds.length === 0) {
+      return settledByMap;
+    }
+
+    try {
+      const result = await this.databaseService.query<{ soId: string; settledBy: string }>(
+        `SELECT
+           so.id::text AS "soId",
+           COALESCE(
+             NULLIF(TRIM(COALESCE(to_jsonb(u)->>'fullname', to_jsonb(u)->>'full_name', '')), ''),
+             NULLIF(TRIM(u.username), ''),
+             '-'
+           ) AS "settledBy"
+         FROM tblsales_order so
+         LEFT JOIN tblusers u ON u.id = so.created_by
+         WHERE so.id::text = ANY($1::text[])`,
+        [creditIds],
+      );
+
+      for (const row of result.rows) {
+        settledByMap.set(row.soId, String(row.settledBy ?? '').trim() || '-');
+      }
+    } catch (error) {
+      console.error('[DashboardService.resolveCollectedSalesSettledBy] Failed', {
+        error: error instanceof Error ? error.message : error,
+      });
+    }
+
+    return settledByMap;
+  }
+
+  async getSalesDetail(
+    mode: DashboardSalesDetailMode,
+    branchId?: number,
+    options?: { page?: number; pageSize?: number; search?: string },
+  ): Promise<{
+    success: boolean;
+    items: unknown[];
+    message?: string;
+    meta?: { page: number; pageSize: number; total: number; totalPages: number };
+  }> {
     try {
       const branchParam = branchId ? String(branchId) : null;
+      const searchParam = String(options?.search ?? '').trim() || null;
+      const { page, pageSize, offset } = this.normalizeSalesDetailPagination(options?.page, options?.pageSize);
       const recordedSalesPredicate = this.getRecordedSalesPredicate('ss');
       const recordedSalesAmountExpression = this.getRecordedSalesAmountExpression('ss');
       const openBalancePredicate = this.getOpenBalancePredicate('ss');
       const overdueBalancePredicate = `${openBalancePredicate} AND ss.due_date IS NOT NULL AND (ss.due_date AT TIME ZONE 'UTC')::date < CURRENT_DATE`;
+      const searchPredicate = `(
+        $2::text IS NULL
+        OR ss.so_number ILIKE '%' || $2::text || '%'
+        OR ss.customer ILIKE '%' || $2::text || '%'
+      )`;
 
       if (mode === 'sales') {
+        const countResult = await this.databaseService.query<{ count: string }>(
+          `${this.getSalesDashboardBaseCte()}
+           SELECT COUNT(*)::text AS count
+           FROM sales_scope ss
+           WHERE ${recordedSalesPredicate}
+             AND ($1::text IS NULL OR ss.branch_id = $1::text)
+             AND ${searchPredicate}`,
+          [branchParam, searchParam],
+        );
+        const total = this.toNumber(countResult.rows[0]?.count);
+        const meta = this.buildSalesDetailMeta(total, page, pageSize);
+        const effectiveOffset = (meta.page - 1) * meta.pageSize;
+
         const result = await this.databaseService.query<{
+          id: string;
           soNumber: string;
           customer: string;
           amount: string;
@@ -1037,10 +1144,13 @@ try {
            FROM sales_scope ss
            WHERE ${recordedSalesPredicate}
              AND ($1::text IS NULL OR ss.branch_id = $1::text)
+             AND ${searchPredicate}
            ORDER BY ss.created_at DESC
-           LIMIT 100`,
-          [branchParam],
+           LIMIT ${meta.pageSize} OFFSET ${effectiveOffset}`,
+          [branchParam, searchParam],
         );
+
+        const settledByMap = await this.resolveCollectedSalesSettledBy(result.rows);
 
         return {
           success: true,
@@ -1052,11 +1162,29 @@ try {
             status: row.status,
             date: new Date(row.date),
             method: row.method,
+            settledBy: this.isCreditSettlementMethod(row.method)
+              ? (settledByMap.get(row.id) ?? '-')
+              : '-',
           })),
+          meta,
         };
       }
 
       if (mode === 'unpaid' || mode === 'overdues') {
+        const balancePredicate = mode === 'overdues' ? overdueBalancePredicate : openBalancePredicate;
+        const countResult = await this.databaseService.query<{ count: string }>(
+          `${this.getSalesDashboardBaseCte()}
+           SELECT COUNT(*)::text AS count
+           FROM sales_scope ss
+           WHERE ${balancePredicate}
+             AND ($1::text IS NULL OR ss.branch_id = $1::text)
+             AND ${searchPredicate}`,
+          [branchParam, searchParam],
+        );
+        const total = this.toNumber(countResult.rows[0]?.count);
+        const meta = this.buildSalesDetailMeta(total, page, pageSize);
+        const effectiveOffset = (meta.page - 1) * meta.pageSize;
+
         const result = await this.databaseService.query<{
           soId: string;
           soNumber: string;
@@ -1090,26 +1218,27 @@ try {
              ss.due_date::text AS "dueDate"
            FROM sales_scope ss
            LEFT JOIN down_payment_scope dp ON dp.so_id = ss.so_id
-           WHERE ${mode === 'overdues' ? overdueBalancePredicate : openBalancePredicate}
+           WHERE ${balancePredicate}
              AND ($1::text IS NULL OR ss.branch_id = $1::text)
+             AND ${searchPredicate}
            ORDER BY ss.due_date ASC NULLS LAST, ss.created_at DESC
-           LIMIT 100`,
-          [branchParam],
+           LIMIT ${meta.pageSize} OFFSET ${effectiveOffset}`,
+          [branchParam, searchParam],
         );
 
         return {
           success: true,
           items: result.rows.map((row) => {
-            const total = this.toNumber(row.totalAmount);
+            const totalAmount = this.toNumber(row.totalAmount);
             const paid = this.toNumber(row.paidAmount);
             const dp = this.toNumber(row.downPayment);
-            const balance = Math.max(total - paid - dp, 0);
+            const balance = Math.max(totalAmount - paid - dp, 0);
             return {
               id: row.soId,
               soId: Number(row.soId),
               soNumber: row.soNumber,
               customer: row.customer,
-              totalAmount: total,
+              totalAmount,
               paidAmount: paid,
               downPayment: dp,
               method: row.method,
@@ -1117,6 +1246,7 @@ try {
               dueDate: row.dueDate ? new Date(row.dueDate) : null,
             };
           }),
+          meta,
         };
       }
 
@@ -1142,19 +1272,7 @@ try {
              FROM tblsales_order_payments sop`
           : '';
 
-        const result = await this.databaseService.query<{
-          paymentId: string;
-          soNumber: string;
-          customer: string;
-          method: string;
-          referenceNo: string;
-          chequeNo: string;
-          amount: string;
-          bank: string;
-          postDated: string;
-          status: string;
-        }>(
-          `WITH payment_scope AS (
+        const chequeBaseCte = `WITH payment_scope AS (
              -- Legacy payments from tblso_payments
              SELECT
                sp.id::text AS payment_id,
@@ -1173,28 +1291,60 @@ try {
              FROM tblso_payments sp
 
              ${sopUnion}
-           )
-           SELECT
-             ps.payment_id::text AS "paymentId",
-             COALESCE(to_jsonb(so)->>'so_number', to_jsonb(so)->>'soNumber', CONCAT('#', so.id::text)) AS "soNumber",
-             COALESCE(to_jsonb(c)->>'name', 'Unknown Customer') AS customer,
-             ps.normalized_method::text AS method,
-             ps.reference_no::text AS "referenceNo",
-             ps.check_no::text AS "chequeNo",
-             ps.amount::text AS amount,
-             ps.bank_name::text AS bank,
-             COALESCE(ps.post_dated::text, '') AS "postDated",
-             COALESCE(NULLIF(ps.normalized_status, ''), 'unpaid')::text AS status
-           FROM payment_scope ps
-           LEFT JOIN tblsales_order so ON so.id::text = ps.so_id
-           LEFT JOIN tblcustomer c ON c.id::text = COALESCE(to_jsonb(so)->>'customer_id', to_jsonb(so)->>'customerId', '')
-           WHERE ps.normalized_method IN ('cheque', 'credit-card')
-             AND COALESCE(NULLIF(ps.normalized_status, ''), 'unpaid') NOT IN ('paid', 'posted', 'cleared', 'complete', 'completed', 'remitted')
-             AND REPLACE(REPLACE(LOWER(TRIM(COALESCE(so.status, 'pending'))), '_', '-'), ' ', '-') NOT IN ('voided', 'cancelled', 'draft')
-             AND ($1::text IS NULL OR COALESCE(so."branchId"::text, '') = $1::text)
-           ORDER BY so.id DESC
-           LIMIT 100`,
-          [branchParam],
+           ),
+           cheque_scope AS (
+             SELECT
+               ps.payment_id::text AS "paymentId",
+               COALESCE(to_jsonb(so)->>'so_number', to_jsonb(so)->>'soNumber', CONCAT('#', so.id::text)) AS "soNumber",
+               COALESCE(to_jsonb(c)->>'name', 'Unknown Customer') AS customer,
+               ps.normalized_method::text AS method,
+               ps.reference_no::text AS "referenceNo",
+               ps.check_no::text AS "chequeNo",
+               ps.amount::text AS amount,
+               ps.bank_name::text AS bank,
+               COALESCE(ps.post_dated::text, '') AS "postDated",
+               COALESCE(NULLIF(ps.normalized_status, ''), 'unpaid')::text AS status
+             FROM payment_scope ps
+             LEFT JOIN tblsales_order so ON so.id::text = ps.so_id
+             LEFT JOIN tblcustomer c ON c.id::text = COALESCE(to_jsonb(so)->>'customer_id', to_jsonb(so)->>'customerId', '')
+             WHERE ps.normalized_method IN ('cheque', 'credit-card')
+               AND COALESCE(NULLIF(ps.normalized_status, ''), 'unpaid') NOT IN ('paid', 'posted', 'cleared', 'complete', 'completed', 'remitted')
+               AND REPLACE(REPLACE(LOWER(TRIM(COALESCE(so.status, 'pending'))), '_', '-'), ' ', '-') NOT IN ('voided', 'cancelled', 'draft')
+               AND ($1::text IS NULL OR COALESCE(so."branchId"::text, '') = $1::text)
+               AND (
+                 $2::text IS NULL
+                 OR COALESCE(to_jsonb(so)->>'so_number', to_jsonb(so)->>'soNumber', CONCAT('#', so.id::text)) ILIKE '%' || $2::text || '%'
+                 OR COALESCE(to_jsonb(c)->>'name', '') ILIKE '%' || $2::text || '%'
+               )
+           )`;
+
+        const countResult = await this.databaseService.query<{ count: string }>(
+          `${chequeBaseCte}
+           SELECT COUNT(*)::text AS count FROM cheque_scope`,
+          [branchParam, searchParam],
+        );
+        const total = this.toNumber(countResult.rows[0]?.count);
+        const meta = this.buildSalesDetailMeta(total, page, pageSize);
+        const effectiveOffset = (meta.page - 1) * meta.pageSize;
+
+        const result = await this.databaseService.query<{
+          paymentId: string;
+          soNumber: string;
+          customer: string;
+          method: string;
+          referenceNo: string;
+          chequeNo: string;
+          amount: string;
+          bank: string;
+          postDated: string;
+          status: string;
+        }>(
+          `${chequeBaseCte}
+           SELECT *
+           FROM cheque_scope
+           ORDER BY "paymentId" DESC
+           LIMIT ${meta.pageSize} OFFSET ${effectiveOffset}`,
+          [branchParam, searchParam],
         );
 
         return {
@@ -1212,12 +1362,25 @@ try {
             postDated: row.postDated ? new Date(row.postDated) : null,
             status: row.status,
           })),
+          meta,
         };
       }
 
-      return { success: false, items: [] };
+      return { success: false, items: [], meta: this.buildSalesDetailMeta(0, page, pageSize) };
     } catch (error) {
-      return { success: false, items: [] };
+      const message = error instanceof Error ? error.message : 'Unable to load sales detail';
+      console.error('[DashboardService.getSalesDetail] failed', {
+        mode,
+        branchId,
+        options,
+        error: message,
+      });
+      return {
+        success: false,
+        items: [],
+        message,
+        meta: this.buildSalesDetailMeta(0, options?.page ?? 1, options?.pageSize ?? 25),
+      };
     }
   }
 
@@ -1343,7 +1506,7 @@ try {
   async verifySalesReceivable(
     payload: { paymentId?: number; method?: DashboardReceivableVerificationMode },
     branchId?: number,
-    userId?: number,
+    auditActor?: AuditActorContext,
   ): Promise<{ success: boolean; message: string }> {
     const paymentId = Number(payload.paymentId);
     if (!Number.isFinite(paymentId) || paymentId <= 0) {
@@ -1454,7 +1617,7 @@ try {
       action: 'DASHBOARD_VERIFY_RECEIVABLE',
       entityType: 'sales-payment',
       entityId: paymentId,
-      actor: { userId },
+      actor: auditActor,
       description: `Verified ${payload.method ?? 'cheque'} receivable payment #${paymentId} as paid`,
       metadata: {
         paymentId,

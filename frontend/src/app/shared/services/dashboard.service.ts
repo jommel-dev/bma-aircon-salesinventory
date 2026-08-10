@@ -66,20 +66,42 @@ export class DashboardService {
 
   async getSalesDetail(
     mode: DashboardSalesDetailMode,
-  ): Promise<Array<{ id?: string | number; [key: string]: unknown }>> {
+    options?: { page?: number; pageSize?: number; search?: string },
+  ): Promise<{
+    items: Array<{ id?: string | number; [key: string]: unknown }>;
+    meta: { page: number; pageSize: number; total: number; totalPages: number };
+  }> {
     const branchId = this.branchService.getActiveBranchId();
     const response = await apiClient.get<{
       success: boolean;
+      message?: string;
       items: Array<{ id?: string | number; [key: string]: unknown }>;
+      meta?: { page: number; pageSize: number; total: number; totalPages: number };
     }>('/dashboard/sales-detail', {
-      params: { mode, ...(branchId ? { branchId } : {}) },
+      params: {
+        mode,
+        page: String(options?.page ?? 1),
+        pageSize: String(options?.pageSize ?? 25),
+        ...(options?.search ? { search: options.search } : {}),
+        ...(branchId ? { branchId } : {}),
+      },
     });
 
     if (!response.data.success) {
-      throw new Error('Unable to load sales detail');
+      throw new Error(response.data.message || 'Unable to load sales detail');
     }
 
-    return response.data.items ?? [];
+    const page = Number(options?.page ?? 1) || 1;
+    const pageSize = Number(options?.pageSize ?? 25) || 25;
+    const items = response.data.items ?? [];
+    const meta = response.data.meta ?? {
+      page,
+      pageSize,
+      total: items.length,
+      totalPages: Math.max(1, Math.ceil(items.length / pageSize) || 1),
+    };
+
+    return { items, meta };
   }
 
   async getOperationsDetail(

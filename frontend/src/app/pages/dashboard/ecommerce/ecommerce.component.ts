@@ -69,6 +69,12 @@ export class EcommerceComponent implements OnInit {
   salesSummaryDetailItems: Array<{ id?: string | number; [key: string]: unknown }> = [];
   salesSummaryLoading = false;
   salesSummarySearch = '';
+  salesSummaryPage = 1;
+  salesSummaryPageSize = 25;
+  salesSummaryTotal = 0;
+  salesSummaryTotalPages = 1;
+  salesSummaryPageSizeOptions = [10, 25, 50, 100];
+  private salesSummarySearchTimer: ReturnType<typeof setTimeout> | null = null;
   settlementBusy = false;
   settlementError = '';
   settlementTarget: {
@@ -237,15 +243,70 @@ export class EcommerceComponent implements OnInit {
     this.closeSettlementModal();
     this.expandedSalesSummaryMode = mode;
     this.salesSummarySearch = '';
+    this.salesSummaryPage = 1;
+    this.salesSummaryTotal = 0;
+    this.salesSummaryTotalPages = 1;
     this.salesSummaryLoading = true;
     void this.fetchSalesSummaryDetail(mode);
   }
 
   closeSalesSummaryDetail(): void {
+    if (this.salesSummarySearchTimer) {
+      clearTimeout(this.salesSummarySearchTimer);
+      this.salesSummarySearchTimer = null;
+    }
     this.expandedSalesSummaryMode = null;
     this.salesSummaryDetailItems = [];
     this.salesSummaryLoading = false;
+    this.salesSummaryPage = 1;
+    this.salesSummaryTotal = 0;
+    this.salesSummaryTotalPages = 1;
     this.closeSettlementModal();
+  }
+
+  onSalesSummarySearchChange(): void {
+    if (this.salesSummarySearchTimer) {
+      clearTimeout(this.salesSummarySearchTimer);
+    }
+
+    this.salesSummarySearchTimer = setTimeout(() => {
+      this.salesSummaryPage = 1;
+      if (this.expandedSalesSummaryMode) {
+        this.salesSummaryLoading = true;
+        void this.fetchSalesSummaryDetail(this.expandedSalesSummaryMode);
+      }
+    }, 300);
+  }
+
+  onSalesSummaryPageChange(page: number): void {
+    if (!this.expandedSalesSummaryMode) {
+      return;
+    }
+
+    const nextPage = Math.max(1, Math.min(page, this.salesSummaryTotalPages || 1));
+    if (nextPage === this.salesSummaryPage) {
+      return;
+    }
+
+    this.salesSummaryPage = nextPage;
+    this.salesSummaryLoading = true;
+    void this.fetchSalesSummaryDetail(this.expandedSalesSummaryMode);
+  }
+
+  onSalesSummaryPageSizeChange(pageSize: number | string): void {
+    if (!this.expandedSalesSummaryMode) {
+      return;
+    }
+
+    const nextSize = Number(pageSize);
+    if (!Number.isFinite(nextSize) || nextSize <= 0 || nextSize === this.salesSummaryPageSize) {
+      return;
+    }
+
+    this.salesSummaryPageSize = nextSize;
+    this.salesSummaryPage = 1;
+    this.salesSummaryLoading = true;
+    void this.fetchSalesSummaryDetail(this.expandedSalesSummaryMode);
   }
 
   openOperationDetail(mode: DashboardOperationDetailMode): void {
@@ -280,13 +341,23 @@ export class EcommerceComponent implements OnInit {
   }
 
   getFilteredSalesSummaryItems(): Array<{ id?: string | number; [key: string]: unknown }> {
-    const search = (this.salesSummarySearch ?? '').trim().toLowerCase();
-    if (!search) return this.salesSummaryDetailItems;
-    return this.salesSummaryDetailItems.filter(item => {
-      const soNumber = String(item['soNumber'] ?? '').toLowerCase();
-      const customer = String(item['customer'] ?? '').toLowerCase();
-      return soNumber.includes(search) || customer.includes(search);
-    });
+    return this.salesSummaryDetailItems;
+  }
+
+  formatSettledByValue(item: { [key: string]: unknown }): string {
+    const method = String(item['method'] ?? '').toLowerCase();
+    const isCreditMethod =
+      method.includes('terms')
+      || method.includes('cheque')
+      || method.includes('credit-card')
+      || method.includes('credit card')
+      || method.includes('installment');
+
+    if (!isCreditMethod) {
+      return '-';
+    }
+
+    return this.formatTextValue(item['settledBy']);
   }
 
   trackOperationDetailRow(index: number, item: { id?: string | number; [key: string]: unknown }): string | number {
@@ -317,6 +388,61 @@ export class EcommerceComponent implements OnInit {
       month: 'short',
       day: '2-digit',
     });
+  }
+
+  /** Calendar-day difference: positive = overdue, negative = before due, 0 = due today. */
+  getDaysRelativeToDue(value: unknown): number | null {
+    if (!value) {
+      return null;
+    }
+
+    const parsed = new Date(String(value));
+    if (Number.isNaN(parsed.getTime())) {
+      return null;
+    }
+
+    const today = new Date();
+    const todayStart = new Date(today.getFullYear(), today.getMonth(), today.getDate());
+    const dueStart = new Date(parsed.getFullYear(), parsed.getMonth(), parsed.getDate());
+    const msPerDay = 24 * 60 * 60 * 1000;
+
+    return Math.round((todayStart.getTime() - dueStart.getTime()) / msPerDay);
+  }
+
+  formatDaysRelativeToDue(value: unknown): string {
+    const days = this.getDaysRelativeToDue(value);
+    if (days === null) {
+      return '-';
+    }
+
+    if (days > 0) {
+      return `${days} day${days === 1 ? '' : 's'} overdue`;
+    }
+
+    if (days < 0) {
+      const before = Math.abs(days);
+      return `${before} day${before === 1 ? '' : 's'} before due`;
+    }
+
+    return 'Due today';
+  }
+
+  getDueDaysClass(value: unknown): string {
+    const days = this.getDaysRelativeToDue(value);
+
+    if (days === null) {
+      return 'text-gray-600 dark:text-gray-400';
+    }
+
+    if (days > 0) {
+      return 'text-error-600 dark:text-error-400';
+    }
+
+    if (days < 0) {
+      return 'text-success-600 dark:text-success-400';
+    }
+
+    return 'text-warning-600 dark:text-warning-400';
   }
 
   formatTextValue(value: unknown, fallback = '-'): string {
@@ -650,11 +776,28 @@ export class EcommerceComponent implements OnInit {
 
   async fetchSalesSummaryDetail(mode: DashboardSalesDetailMode): Promise<void> {
     try {
-      const items = await this.dashboardService.getSalesDetail(mode);
+      const result = await this.dashboardService.getSalesDetail(mode, {
+        page: this.salesSummaryPage,
+        pageSize: this.salesSummaryPageSize,
+        search: this.salesSummarySearch,
+      });
+      const items = Array.isArray(result?.items) ? result.items : [];
+      const meta = result?.meta ?? {
+        page: this.salesSummaryPage,
+        pageSize: this.salesSummaryPageSize,
+        total: items.length,
+        totalPages: 1,
+      };
       this.salesSummaryDetailItems = items;
+      this.salesSummaryPage = meta.page;
+      this.salesSummaryPageSize = meta.pageSize;
+      this.salesSummaryTotal = meta.total;
+      this.salesSummaryTotalPages = meta.totalPages;
     } catch (error: unknown) {
       console.error('Failed to fetch sales detail:', error);
       this.salesSummaryDetailItems = [];
+      this.salesSummaryTotal = 0;
+      this.salesSummaryTotalPages = 1;
     } finally {
       this.salesSummaryLoading = false;
     }

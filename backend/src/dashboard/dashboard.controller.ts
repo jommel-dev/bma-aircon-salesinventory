@@ -41,6 +41,9 @@ export class DashboardController {
   @Get('sales-detail')
   async getSalesDetail(
     @Query('mode') mode: string,
+    @Query('page') page: string,
+    @Query('pageSize') pageSize: string,
+    @Query('search') search: string,
     @Req() request: { user?: Record<string, unknown> },
   ) {
     const validModes = ['sales', 'unpaid', 'overdues', 'cheques'];
@@ -57,6 +60,11 @@ export class DashboardController {
       Number.isFinite(effectiveBranchId) && effectiveBranchId > 0
         ? effectiveBranchId
         : undefined,
+      {
+        page: Number(page),
+        pageSize: Number(pageSize),
+        search,
+      },
     );
   }
 
@@ -134,20 +142,18 @@ export class DashboardController {
   @Post('verify-receivable')
   verifyReceivable(
     @Body() body: { paymentId?: number; method?: 'cheque' | 'credit-card' },
-    @Req() request: { user?: Record<string, unknown> },
+    @Req() request: { user?: Record<string, unknown>; ip?: string },
   ) {
     const effectiveBranchId = Number(
       request.user?.branchId ?? request.user?.branch_id ?? request.user?.branch,
     );
-
-    const userId = Number(request.user?.sub);
 
     return this.dashboardService.verifySalesReceivable(
       body,
       Number.isFinite(effectiveBranchId) && effectiveBranchId > 0
         ? effectiveBranchId
         : undefined,
-      Number.isFinite(userId) ? userId : undefined,
+      this.buildAuditContext(request),
     );
   }
 }
