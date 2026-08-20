@@ -21,11 +21,15 @@ import { RemovePurchaseOrderSerialDto } from './dto/remove-purchase-order-serial
 import { RemoveSalesOrderSerialDto } from './dto/remove-sales-order-serial.dto';
 import { AdjustPurchaseUnitTypesDto } from './dto/adjust-purchase-unit-types.dto';
 import { JwtAuthGuard } from 'src/auth/jwt-auth.guard';
+import { AuditLogService, buildAuditActorFromRequest } from 'src/audit-log/audit-log.service';
 
 @Controller('serial-number')
 @UseGuards(JwtAuthGuard)
 export class SerialNumberController {
-  constructor(private readonly serialNumberService: SerialNumberService) {}
+  constructor(
+    private readonly serialNumberService: SerialNumberService,
+    private readonly auditLogService: AuditLogService,
+  ) {}
 
   private resolveBranchId(
     request: { user?: Record<string, unknown> },
@@ -44,15 +48,23 @@ export class SerialNumberController {
 
   @Post('insert-bulk')
   @UseGuards(JwtAuthGuard)
-  insertBulk(
+  async insertBulk(
     @Body() body: { serials: Array<{ serialNumber: string; unitType?: string; status?: string; productId?: number; capacityId?: number }> },
-    @Req() request: { user?: Record<string, unknown> },
+    @Req() request: { user?: Record<string, unknown>; ip?: string },
   ) {
     const role = String(request.user?.roleName ?? '').trim().toLowerCase();
     if (role !== 'superadmin' && role !== 'super admin' && role !== 'admin') {
       return { success: false, message: 'Access denied. Admin or Super Admin role required.' };
     }
-    return this.serialNumberService.insertBulk(body.serials);
+    const result = await this.serialNumberService.insertBulk(body.serials);
+    await this.auditLogService.logMutationIfSuccess(result, {
+      action: 'SERIAL_INSERT_BULK',
+      entityType: 'serial-number',
+      actor: buildAuditActorFromRequest(request),
+      description: `Bulk inserted serial numbers (${body.serials?.length ?? 0} requested)`,
+      after: result as unknown as Record<string, unknown>,
+    });
+    return result;
   }
 
   @Post('csv-preview')
@@ -68,9 +80,9 @@ export class SerialNumberController {
   }
 
   @Post('bulk-update-status')
-  bulkUpdateStatus(
+  async bulkUpdateStatus(
     @Body() body: { serialNumbers: string[]; status: string },
-    @Req() request: { user?: { sub?: unknown; roleName?: unknown } },
+    @Req() request: { user?: Record<string, unknown>; ip?: string },
   ) {
     const role = String(request.user?.roleName ?? '').trim().toLowerCase();
     if (role !== 'superadmin' && role !== 'super admin' && role !== 'admin') {
@@ -78,75 +90,160 @@ export class SerialNumberController {
     }
     const userId = Number(request.user?.sub);
     const normalizedUserId = Number.isFinite(userId) ? userId : undefined;
-    return this.serialNumberService.bulkUpdateStatus(body.serialNumbers, body.status, normalizedUserId);
+    const result = await this.serialNumberService.bulkUpdateStatus(body.serialNumbers, body.status, normalizedUserId);
+    await this.auditLogService.logMutationIfSuccess(result, {
+      action: 'SERIAL_BULK_UPDATE_STATUS',
+      entityType: 'serial-number',
+      actor: buildAuditActorFromRequest(request),
+      description: `Bulk updated ${body.serialNumbers?.length ?? 0} serial number(s) to ${body.status}`,
+      after: result as unknown as Record<string, unknown>,
+    });
+    return result;
   }
 
   @Post('scan-sales-order')
-  scanSalesOrder(
+  async scanSalesOrder(
     @Body() dto: ScanSalesOrderDto,
-    @Req() request: { user?: { sub?: unknown } },
+    @Req() request: { user?: Record<string, unknown>; ip?: string },
   ) {
     const userId = Number(request.user?.sub);
     const normalizedUserId = Number.isFinite(userId) ? userId : undefined;
-
-    return this.serialNumberService.scanSalesOrder(dto, normalizedUserId);
+    const result = await this.serialNumberService.scanSalesOrder(dto, normalizedUserId);
+    await this.auditLogService.logMutationIfSuccess(result, {
+      action: 'SERIAL_SCAN_SALES_ORDER',
+      entityType: 'serial-number',
+      entityId: dto.salesId,
+      actor: buildAuditActorFromRequest(request),
+      description: `Scanned serial ${dto.serialNumber} onto sales order #${dto.salesId}`,
+      requestBody: dto as unknown as Record<string, unknown>,
+    });
+    return result;
   }
 
   @Post('scan-sales-order/batch')
-  scanSalesOrderBatch(
+  async scanSalesOrderBatch(
     @Body() dto: ScanSalesOrderBatchDto,
-    @Req() request: { user?: { sub?: unknown } },
+    @Req() request: { user?: Record<string, unknown>; ip?: string },
   ) {
     const userId = Number(request.user?.sub);
     const normalizedUserId = Number.isFinite(userId) ? userId : undefined;
-
-    return this.serialNumberService.scanSalesOrderBatch(dto, normalizedUserId);
+    const result = await this.serialNumberService.scanSalesOrderBatch(dto, normalizedUserId);
+    await this.auditLogService.logMutationIfSuccess(result, {
+      action: 'SERIAL_SCAN_SALES_ORDER_BATCH',
+      entityType: 'serial-number',
+      actor: buildAuditActorFromRequest(request),
+      description: `Batch scanned ${dto.items?.length ?? 0} serial number(s) onto sales orders`,
+      after: result as unknown as Record<string, unknown>,
+    });
+    return result;
   }
 
   @Post('scan-purchase-order')
-  scanPurchaseOrder(
+  async scanPurchaseOrder(
     @Body() dto: ScanPurchaseOrderDto,
     @Query('branchId') branchIdQuery: string | undefined,
-    @Req() request: { user?: Record<string, unknown> },
+    @Req() request: { user?: Record<string, unknown>; ip?: string },
   ) {
     const userId = Number(request.user?.sub);
     const normalizedUserId = Number.isFinite(userId) ? userId : undefined;
     const branchId = this.resolveBranchId(request, branchIdQuery);
-
-    return this.serialNumberService.scanPurchaseOrder(dto, normalizedUserId, branchId);
+    const result = await this.serialNumberService.scanPurchaseOrder(dto, normalizedUserId, branchId);
+    await this.auditLogService.logMutationIfSuccess(result, {
+      action: 'SERIAL_SCAN_PURCHASE_ORDER',
+      entityType: 'serial-number',
+      entityId: dto.purchaseId,
+      actor: buildAuditActorFromRequest(request),
+      description: `Scanned serial ${dto.serialNumber} onto purchase order #${dto.purchaseId}`,
+      requestBody: dto as unknown as Record<string, unknown>,
+    });
+    return result;
   }
 
   @Post('scan-purchase-order/batch')
-  scanPurchaseOrderBatch(
+  async scanPurchaseOrderBatch(
     @Body() dto: ScanPurchaseOrderBatchDto,
     @Query('branchId') branchIdQuery: string | undefined,
-    @Req() request: { user?: Record<string, unknown> },
+    @Req() request: { user?: Record<string, unknown>; ip?: string },
   ) {
     const userId = Number(request.user?.sub);
     const normalizedUserId = Number.isFinite(userId) ? userId : undefined;
     const branchId = this.resolveBranchId(request, branchIdQuery);
-
-    return this.serialNumberService.scanPurchaseOrderBatch(dto, normalizedUserId, branchId);
+    const result = await this.serialNumberService.scanPurchaseOrderBatch(dto, normalizedUserId, branchId);
+    await this.auditLogService.logMutationIfSuccess(result, {
+      action: 'SERIAL_SCAN_PURCHASE_ORDER_BATCH',
+      entityType: 'serial-number',
+      actor: buildAuditActorFromRequest(request),
+      description: `Batch scanned ${dto.items?.length ?? 0} serial number(s) onto purchase orders`,
+      after: result as unknown as Record<string, unknown>,
+    });
+    return result;
   }
 
   @Post('remove-purchase-order')
-  removePurchaseOrderSerial(@Body() dto: RemovePurchaseOrderSerialDto) {
-    return this.serialNumberService.removePurchaseOrderSerial(dto);
+  async removePurchaseOrderSerial(
+    @Body() dto: RemovePurchaseOrderSerialDto,
+    @Req() request: { user?: Record<string, unknown>; ip?: string },
+  ) {
+    const result = await this.serialNumberService.removePurchaseOrderSerial(dto);
+    await this.auditLogService.logMutationIfSuccess(result, {
+      action: 'SERIAL_REMOVE_PURCHASE_ORDER',
+      entityType: 'serial-number',
+      entityId: dto.purchaseId,
+      actor: buildAuditActorFromRequest(request),
+      description: `Removed serial ${dto.serialNumber} from purchase order #${dto.purchaseId}`,
+      requestBody: dto as unknown as Record<string, unknown>,
+    });
+    return result;
   }
 
   @Post('remove-sales-order')
-  removeSalesOrderSerial(@Body() dto: RemoveSalesOrderSerialDto) {
-    return this.serialNumberService.removeSalesOrderSerial(dto);
+  async removeSalesOrderSerial(
+    @Body() dto: RemoveSalesOrderSerialDto,
+    @Req() request: { user?: Record<string, unknown>; ip?: string },
+  ) {
+    const result = await this.serialNumberService.removeSalesOrderSerial(dto);
+    await this.auditLogService.logMutationIfSuccess(result, {
+      action: 'SERIAL_REMOVE_SALES_ORDER',
+      entityType: 'serial-number',
+      entityId: dto.salesId,
+      actor: buildAuditActorFromRequest(request),
+      description: `Removed serial ${dto.serialNumber} from sales order #${dto.salesId}`,
+      requestBody: dto as unknown as Record<string, unknown>,
+    });
+    return result;
   }
 
   @Post('normalize-unit-types')
-  normalizeStoredUnitTypes() {
-    return this.serialNumberService.normalizeStoredUnitTypes();
+  async normalizeStoredUnitTypes(
+    @Req() request: { user?: Record<string, unknown>; ip?: string },
+  ) {
+    const result = await this.serialNumberService.normalizeStoredUnitTypes();
+    await this.auditLogService.logMutationIfSuccess(result, {
+      action: 'SERIAL_NORMALIZE_UNIT_TYPES',
+      entityType: 'serial-number',
+      actor: buildAuditActorFromRequest(request),
+      description: 'Normalized stored serial unit types',
+      after: result as unknown as Record<string, unknown>,
+    });
+    return result;
   }
 
   @Post('adjust-purchase-unit-types')
-  adjustPurchaseUnitTypes(@Body() dto: AdjustPurchaseUnitTypesDto) {
-    return this.serialNumberService.adjustPurchaseUnitTypes(dto);
+  async adjustPurchaseUnitTypes(
+    @Body() dto: AdjustPurchaseUnitTypesDto,
+    @Req() request: { user?: Record<string, unknown>; ip?: string },
+  ) {
+    const result = await this.serialNumberService.adjustPurchaseUnitTypes(dto);
+    await this.auditLogService.logMutationIfSuccess(result, {
+      action: 'SERIAL_ADJUST_PURCHASE_UNIT_TYPES',
+      entityType: 'serial-number',
+      entityId: dto.purchaseId,
+      actor: buildAuditActorFromRequest(request),
+      description: 'Adjusted purchase serial unit types',
+      requestBody: dto as unknown as Record<string, unknown>,
+      after: result as unknown as Record<string, unknown>,
+    });
+    return result;
   }
 
   @Post()

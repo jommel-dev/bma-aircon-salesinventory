@@ -2,6 +2,7 @@ import { Test, TestingModule } from '@nestjs/testing';
 import { BrandsController } from './brands.controller';
 import { BrandsService } from './brands.service';
 import { JwtAuthGuard } from '../../auth/jwt-auth.guard';
+import { AuditLogService } from 'src/audit-log/audit-log.service';
 
 describe('BrandsController', () => {
   let controller: BrandsController;
@@ -20,6 +21,7 @@ describe('BrandsController', () => {
       controllers: [BrandsController],
       providers: [
         { provide: BrandsService, useValue: mockBrandsService },
+        { provide: AuditLogService, useValue: { logMutationIfSuccess: jest.fn() } },
       ],
     })
       .overrideGuard(JwtAuthGuard)

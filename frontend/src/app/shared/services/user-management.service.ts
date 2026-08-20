@@ -92,6 +92,7 @@ export interface CreateUserPayload {
   status?: number;
   roleId?: number;
   branchId?: number;
+  authorizationPassword?: string;
 }
 
 interface ApiListResponse<TItem> {

@@ -15,10 +15,14 @@ import { FileInterceptor } from '@nestjs/platform-express';
 import type { Response } from 'express';
 import { JwtAuthGuard } from 'src/auth/jwt-auth.guard';
 import { DatabaseBackupService, BackupMode } from './database-backup.service';
+import { AuditLogService, buildAuditActorFromRequest } from 'src/audit-log/audit-log.service';
 
 @Controller('database-backup')
 export class DatabaseBackupController {
-  constructor(private readonly backupService: DatabaseBackupService) {}
+  constructor(
+    private readonly backupService: DatabaseBackupService,
+    private readonly auditLogService: AuditLogService,
+  ) {}
 
   /**
    * GET /database-backup/history
@@ -57,6 +61,14 @@ export class DatabaseBackupController {
         Number.isFinite(userId) ? userId : undefined,
       );
 
+      await this.auditLogService.logMutation({
+        action: 'DATABASE_BACKUP_EXPORT',
+        entityType: 'database-backup',
+        actor: buildAuditActorFromRequest(request),
+        description: `Exported database backup (${backupMode})`,
+        after: { mode: backupMode, filename, sizeBytes: Buffer.byteLength(sql, 'utf8') },
+      });
+
       res.setHeader('Content-Type', 'application/sql');
       res.setHeader('Content-Disposition', `attachment; filename="${filename}"`);
       res.send(sql);
@@ -85,7 +97,10 @@ export class DatabaseBackupController {
    */
   @Post('import')
   @UseInterceptors(FileInterceptor('file'))
-  async importBackup(@UploadedFile() file: Express.Multer.File) {
+  async importBackup(
+    @UploadedFile() file: Express.Multer.File,
+    @Req() request: { user?: Record<string, unknown>; ip?: string },
+  ) {
     if (!file) {
       throw new BadRequestException('No file uploaded. Please provide a .sql file.');
     }
@@ -101,6 +116,17 @@ export class DatabaseBackupController {
     }
 
     const result = await this.backupService.importSql(sql);
+    await this.auditLogService.logMutationIfSuccess(result, {
+      action: 'DATABASE_BACKUP_IMPORT',
+      entityType: 'database-backup',
+      actor: buildAuditActorFromRequest(request),
+      description: `Imported database backup from ${file.originalname}`,
+      requestBody: {
+        filename: file.originalname,
+        mimetype: file.mimetype,
+        size: file.size,
+      },
+    });
     return result;
   }
 
@@ -110,7 +136,7 @@ export class DatabaseBackupController {
    * Only works if the database is blank. Returns immediately and runs in background.
    */
   @Post('setup-schema')
-  async setupSchema() {
+  async setupSchema(@Req() request: { user?: Record<string, unknown>; ip?: string }) {
     const isBlank = await this.backupService.isDatabaseBlank();
     if (!isBlank) {
       throw new BadRequestException('Database is not empty. Schema setup is only allowed on a blank database.');
@@ -118,6 +144,13 @@ export class DatabaseBackupController {
 
     // Start migration in background
     this.backupService.startSchemaSetup();
+
+    await this.auditLogService.logMutation({
+      action: 'DATABASE_SCHEMA_SETUP_START',
+      entityType: 'database-backup',
+      actor: buildAuditActorFromRequest(request),
+      description: 'Started database schema initialization',
+    });
 
     return { success: true, message: 'Schema initialization started.' };
   }
@@ -139,6 +172,7 @@ export class DatabaseBackupController {
   @Post('setup-admin')
   async setupAdmin(
     @Body() body: { fullName: string; username: string; password: string; email?: string },
+    @Req() request: { user?: Record<string, unknown>; ip?: string },
   ) {
     if (!body.fullName?.trim() || !body.username?.trim() || !body.password?.trim()) {
       throw new BadRequestException('Full name, username, and password are required.');
@@ -148,6 +182,19 @@ export class DatabaseBackupController {
       throw new BadRequestException('Password must be at least 6 characters.');
     }
 
-    return this.backupService.createFirstAdmin(body);
+    const result = await this.backupService.createFirstAdmin(body);
+    await this.auditLogService.logMutationIfSuccess(result, {
+      action: 'DATABASE_FIRST_ADMIN_CREATE',
+      entityType: 'user',
+      actor: buildAuditActorFromRequest(request),
+      description: `Created first admin user ${body.username}`,
+      requestBody: {
+        fullName: body.fullName,
+        username: body.username,
+        password: '[redacted]',
+        email: body.email,
+      },
+    });
+    return result;
   }
 }

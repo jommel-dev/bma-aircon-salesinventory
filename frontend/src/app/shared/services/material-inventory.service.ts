@@ -175,7 +175,10 @@ export class MaterialInventoryService {
   /**
    * Update material
    */
-  async updateMaterial(id: number, data: Partial<Material>): Promise<Material> {
+  async updateMaterial(
+    id: number,
+    data: Partial<Material> & { authorizationPassword?: string },
+  ): Promise<Material> {
     const response = await apiClient.patch(`${this.baseUrl}/${id}`, data);
     return response.data;
   }
@@ -276,6 +279,7 @@ export interface StockAdjustmentDto {
   direction: 'increase' | 'decrease';
   quantity: number;       // 1 to 999999
   remarks?: string;       // max 500 chars
+  authorizationPassword?: string;
 }
 
 // Stock Adjustment Response

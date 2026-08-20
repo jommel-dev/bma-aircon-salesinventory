@@ -3,6 +3,11 @@ import { createHash } from 'node:crypto';
 import { CreateUserDto } from './dto/create-user.dto';
 import { UpdateUserDto } from './dto/update-user.dto';
 import { DatabaseService } from 'src/database/database.service';
+import {
+  AuditActorContext,
+  AuditLogService,
+  redactAuditRequestBody,
+} from 'src/audit-log/audit-log.service';
 
 type PermissionOverrideInput = {
   permissionKey: string;
@@ -19,7 +24,26 @@ type PermissionKeyInput = {
 
 @Injectable()
 export class UsersService {
-  constructor(private readonly databaseService: DatabaseService) {}
+  constructor(
+    private readonly databaseService: DatabaseService,
+    private readonly auditLogService: AuditLogService,
+  ) {}
+
+  private async logUserLifecycle(
+    action: string,
+    id: number,
+    description: string,
+    auditActor?: AuditActorContext,
+  ) {
+    await this.auditLogService.logMutation({
+      action,
+      entityType: 'user',
+      entityId: id,
+      actor: auditActor,
+      description,
+      after: { id },
+    });
+  }
 
   async findPermissionKeys() {
     try {
@@ -53,7 +77,7 @@ export class UsersService {
     }
   }
 
-  async createPermissionKey(input: PermissionKeyInput) {
+  async createPermissionKey(input: PermissionKeyInput, auditActor?: AuditActorContext) {
     const key = String(input.key ?? '').trim().toLowerCase();
     const label = String(input.label ?? '').trim();
     const module = String(input.module ?? '').trim().toLowerCase();
@@ -117,6 +141,16 @@ export class UsersService {
         [key, label, module, scope],
       );
 
+      await this.auditLogService.logMutation({
+        action: 'PERMISSION_KEY_CREATE',
+        entityType: 'permission-key',
+        entityId: key,
+        actor: auditActor,
+        description: `Created permission key ${key}`,
+        requestBody: { key, label, module, scope },
+        after: { key, label, module, scope },
+      });
+
       return this.findPermissionKeys();
     } catch (error) {
       return {
@@ -172,7 +206,7 @@ export class UsersService {
     }
   }
 
-  async setRolePermissions(roleId: number, permissionKeys: string[]) {
+  async setRolePermissions(roleId: number, permissionKeys: string[], auditActor?: AuditActorContext) {
     if (!Number.isFinite(roleId) || roleId <= 0) {
       return {
         success: false,
@@ -242,6 +276,16 @@ export class UsersService {
         );
       });
 
+      await this.auditLogService.logMutation({
+        action: 'ROLE_PERMISSIONS_UPDATE',
+        entityType: 'role',
+        entityId: roleId,
+        actor: auditActor,
+        description: `Updated permissions for role #${roleId}`,
+        requestBody: { permissionKeys: normalizedKeys },
+        after: { roleId, permissionKeys: normalizedKeys },
+      });
+
       return this.findRolePermissions(roleId);
     } catch (error) {
       return {
@@ -298,6 +342,7 @@ export class UsersService {
   async setUserPermissionOverrides(
     userId: number,
     overrides: PermissionOverrideInput[],
+    auditActor?: AuditActorContext,
   ) {
     if (!Number.isFinite(userId) || userId <= 0) {
       return {
@@ -347,6 +392,15 @@ export class UsersService {
            WHERE user_id = $1`,
           [userId],
         );
+
+        await this.auditLogService.logMutation({
+          action: 'USER_PERMISSION_OVERRIDES_UPDATE',
+          entityType: 'user',
+          entityId: userId,
+          actor: auditActor,
+          description: `Cleared permission overrides for user #${userId}`,
+          after: { userId, overrides: [] },
+        });
 
         return {
           success: true,
@@ -412,6 +466,16 @@ export class UsersService {
            ) AS data(permission_id, effect, reason)`,
           [userId, permissionIds, effects, reasons],
         );
+      });
+
+      await this.auditLogService.logMutation({
+        action: 'USER_PERMISSION_OVERRIDES_UPDATE',
+        entityType: 'user',
+        entityId: userId,
+        actor: auditActor,
+        description: `Updated permission overrides for user #${userId}`,
+        requestBody: { overrides: overridesToSave },
+        after: { userId, overrides: overridesToSave },
       });
 
       return {
@@ -531,7 +595,7 @@ export class UsersService {
     );
   }
 
-  async create(createUserDto: CreateUserDto) {
+  async create(createUserDto: CreateUserDto, auditActor?: AuditActorContext) {
     const username = createUserDto.username?.trim();
     const fullname = createUserDto.fullname?.trim();
 
@@ -667,9 +731,27 @@ export class UsersService {
         };
       }
 
+      const createdId = result.rows[0].id;
+      await this.auditLogService.logMutation({
+        action: 'USER_CREATE',
+        entityType: 'user',
+        entityId: createdId,
+        actor: auditActor,
+        description: `Created user ${username}`,
+        requestBody: redactAuditRequestBody(createUserDto),
+        after: {
+          id: createdId,
+          username,
+          fullname,
+          email: createUserDto.email ?? null,
+          roleId: createUserDto.roleId ?? null,
+          branchId: createUserDto.branchId ?? null,
+        },
+      });
+
       return {
         success: true,
-        id: result.rows[0].id,
+        id: createdId,
       };
     } catch (error) {
       return {
@@ -832,7 +914,52 @@ export class UsersService {
     }
   }
 
-  async update(id: number, updateUserDto: UpdateUserDto) {
+  private async verifyActorPassword(
+    actorUserId: number | undefined,
+    authorizationPassword: string | undefined,
+  ): Promise<{ success: true } | { success: false; message: string }> {
+    const password = String(authorizationPassword ?? '').trim();
+    if (!password) {
+      return {
+        success: false,
+        message: 'Password is required to authorize this change',
+      };
+    }
+
+    const effectiveUserId = Number(actorUserId);
+    if (!Number.isFinite(effectiveUserId) || effectiveUserId <= 0) {
+      return {
+        success: false,
+        message: 'Invalid current user',
+      };
+    }
+
+    const passwordSha1 = createHash('sha1').update(password).digest('hex');
+    const adminCheck = await this.databaseService.query<{ id: number }>(
+      `SELECT id
+       FROM tblusers
+       WHERE id = $1
+         AND password = $2
+       LIMIT 1`,
+      [effectiveUserId, passwordSha1],
+    );
+
+    if (adminCheck.rowCount === 0) {
+      return {
+        success: false,
+        message: 'Incorrect password. Please try again.',
+      };
+    }
+
+    return { success: true };
+  }
+
+  async update(
+    id: number,
+    updateUserDto: UpdateUserDto,
+    auditActor?: AuditActorContext,
+    actorUserId?: number,
+  ) {
     if (!Number.isFinite(id) || id <= 0) {
       return {
         success: false,
@@ -841,6 +968,14 @@ export class UsersService {
     }
 
     try {
+      const authorized = await this.verifyActorPassword(
+        actorUserId,
+        updateUserDto.authorizationPassword,
+      );
+      if (!authorized.success) {
+        return authorized;
+      }
+
       const existingUser = await this.databaseService.query<{ id: number }>(
         `SELECT id FROM tblusers WHERE id = $1 LIMIT 1`,
         [id],
@@ -998,6 +1133,16 @@ export class UsersService {
         };
       }
 
+      await this.auditLogService.logMutation({
+        action: 'USER_UPDATE',
+        entityType: 'user',
+        entityId: id,
+        actor: auditActor,
+        description: `Updated user #${id}`,
+        requestBody: redactAuditRequestBody(updateUserDto),
+        after: { id },
+      });
+
       return {
         success: true,
         id: result.rows[0].id,
@@ -1010,7 +1155,12 @@ export class UsersService {
     }
   }
 
-  async changePassword(id: number, currentPasswordRaw: string, newPasswordRaw: string) {
+  async changePassword(
+    id: number,
+    currentPasswordRaw: string,
+    newPasswordRaw: string,
+    auditActor?: AuditActorContext,
+  ) {
     if (!Number.isFinite(id) || id <= 0) {
       return {
         success: false,
@@ -1107,6 +1257,15 @@ export class UsersService {
         };
       }
 
+      await this.auditLogService.logMutation({
+        action: 'USER_PASSWORD_CHANGE',
+        entityType: 'user',
+        entityId: id,
+        actor: auditActor,
+        description: `Changed password for user #${id}`,
+        metadata: { passwordChanged: true },
+      });
+
       return {
         success: true,
         message: 'Password changed successfully',
@@ -1122,7 +1281,7 @@ export class UsersService {
     }
   }
 
-  async remove(id: number) {
+  async remove(id: number, auditActor?: AuditActorContext) {
     if (!Number.isFinite(id) || id <= 0) {
       return {
         success: false,
@@ -1160,6 +1319,8 @@ export class UsersService {
           };
         }
 
+        await this.logUserLifecycle('USER_DELETE', id, `Deleted user #${id}`, auditActor);
+
         return {
           success: true,
           id: softDelete.rows[0].id,
@@ -1181,6 +1342,8 @@ export class UsersService {
             message: 'User not found',
           };
         }
+
+        await this.logUserLifecycle('USER_DELETE', id, `Deleted user #${id}`, auditActor);
 
         return {
           success: true,
@@ -1208,6 +1371,8 @@ export class UsersService {
         };
       }
 
+      await this.logUserLifecycle('USER_DELETE', id, `Deleted user #${id}`, auditActor);
+
       return {
         success: true,
         id: softDelete.rows[0].id,
@@ -1220,7 +1385,7 @@ export class UsersService {
     }
   }
 
-  async restore(id: number) {
+  async restore(id: number, auditActor?: AuditActorContext) {
     if (!Number.isFinite(id) || id <= 0) {
       return {
         success: false,
@@ -1266,6 +1431,8 @@ export class UsersService {
           message: 'User not found',
         };
       }
+
+      await this.logUserLifecycle('USER_RESTORE', id, `Restored user #${id}`, auditActor);
 
       return {
         success: true,

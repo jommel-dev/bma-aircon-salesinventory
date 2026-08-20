@@ -2,6 +2,7 @@ import { Test, TestingModule } from '@nestjs/testing';
 import { NotFoundException, BadRequestException } from '@nestjs/common';
 import { MaterialsService } from './materials.service';
 import { DatabaseService } from '../../database/database.service';
+import { AuditLogService } from 'src/audit-log/audit-log.service';
 import { CreateMaterialDto } from './dto/create-material.dto';
 import { StockAdjustmentDto } from './dto/stock-adjustment.dto';
 
@@ -22,6 +23,7 @@ describe('MaterialsService - create()', () => {
       providers: [
         MaterialsService,
         { provide: DatabaseService, useValue: mockDb },
+        { provide: AuditLogService, useValue: { logMutation: jest.fn() } },
       ],
     }).compile();
 
@@ -62,15 +64,10 @@ describe('MaterialsService - create()', () => {
     });
 
     it('should allow null brand_id (no brand association)', async () => {
-      // No brand check needed - skip to duplicate check
       mockDb.query
-        // Duplicate check - no duplicates
-        .mockResolvedValueOnce({ rows: [] })
-        // Insert returns new material
         .mockResolvedValueOnce({
           rows: [{ id: 1, material_name: 'Test Material', brand_id: null }],
         })
-        // findOne after insert (with brand join)
         .mockResolvedValueOnce({
           rows: [
             {
@@ -148,7 +145,7 @@ describe('MaterialsService - create()', () => {
 
       await expect(service.create(dto, 1)).rejects.toThrow(
         new BadRequestException(
-          "Material with name 'Existing Material' already exists",
+          "Material 'Existing Material' already exists for this brand",
         ),
       );
     });
@@ -323,11 +320,16 @@ describe('MaterialsService - adjustStock()', () => {
       providers: [
         MaterialsService,
         { provide: DatabaseService, useValue: mockDb },
+        { provide: AuditLogService, useValue: { logMutation: jest.fn() } },
       ],
     }).compile();
 
     service = module.get<MaterialsService>(MaterialsService);
   });
+
+  const mockPasswordOk = () => {
+    mockDb.query.mockResolvedValueOnce({ rowCount: 1, rows: [{ id: 1 }] });
+  };
 
   describe('Validation', () => {
     it('should reject quantity less than 1', async () => {
@@ -368,9 +370,18 @@ describe('MaterialsService - adjustStock()', () => {
       );
     });
 
+    it('should reject missing authorization password', async () => {
+      await expect(
+        service.adjustStock(1, { direction: 'increase', quantity: 10 }, 1),
+      ).rejects.toThrow(
+        new BadRequestException('Password is required to authorize this change'),
+      );
+    });
+
     it('should allow remarks exactly 500 characters', async () => {
       const remarks = 'a'.repeat(500);
 
+      mockPasswordOk();
       // findOne returns material
       mockDb.query.mockResolvedValueOnce({
         rows: [
@@ -410,7 +421,7 @@ describe('MaterialsService - adjustStock()', () => {
 
       const result = await service.adjustStock(
         1,
-        { direction: 'increase', quantity: 10, remarks },
+        { direction: 'increase', quantity: 10, remarks, authorizationPassword: 'secret' },
         1,
       );
 
@@ -420,11 +431,12 @@ describe('MaterialsService - adjustStock()', () => {
 
   describe('Material not found', () => {
     it('should throw 404 if material does not exist', async () => {
+      mockPasswordOk();
       // findOne returns empty
       mockDb.query.mockResolvedValueOnce({ rows: [] });
 
       await expect(
-        service.adjustStock(999, { direction: 'increase', quantity: 5 }, 1),
+        service.adjustStock(999, { direction: 'increase', quantity: 5, authorizationPassword: 'secret' }, 1),
       ).rejects.toThrow(
         new NotFoundException('Material with ID 999 not found'),
       );
@@ -433,6 +445,7 @@ describe('MaterialsService - adjustStock()', () => {
 
   describe('Stock increase', () => {
     it('should increase on_hand_stock and record movement', async () => {
+      mockPasswordOk();
       // findOne returns material with stock 50
       mockDb.query.mockResolvedValueOnce({
         rows: [
@@ -472,7 +485,7 @@ describe('MaterialsService - adjustStock()', () => {
 
       const result = await service.adjustStock(
         1,
-        { direction: 'increase', quantity: 20, remarks: 'Restocked' },
+        { direction: 'increase', quantity: 20, remarks: 'Restocked', authorizationPassword: 'secret' },
         1,
       );
 
@@ -481,12 +494,12 @@ describe('MaterialsService - adjustStock()', () => {
       expect(result.material.on_hand_stock).toBe(70);
 
       // Verify update query sets new stock to 70
-      const updateCall = mockDb.query.mock.calls[1];
+      const updateCall = mockDb.query.mock.calls[2];
       expect(updateCall[0]).toContain('UPDATE tblmaterials');
       expect(updateCall[1][0]).toBe(70); // new stock
 
       // Verify movement insert
-      const movementCall = mockDb.query.mock.calls[2];
+      const movementCall = mockDb.query.mock.calls[3];
       expect(movementCall[0]).toContain('tblmaterial_stock_movement');
       expect(movementCall[0]).toContain('ADJUST');
       expect(movementCall[1][1]).toBe(20); // positive qty for increase
@@ -496,6 +509,7 @@ describe('MaterialsService - adjustStock()', () => {
 
   describe('Stock decrease', () => {
     it('should decrease on_hand_stock when sufficient stock exists', async () => {
+      mockPasswordOk();
       // findOne returns material with stock 50
       mockDb.query.mockResolvedValueOnce({
         rows: [
@@ -535,7 +549,7 @@ describe('MaterialsService - adjustStock()', () => {
 
       const result = await service.adjustStock(
         1,
-        { direction: 'decrease', quantity: 20 },
+        { direction: 'decrease', quantity: 20, authorizationPassword: 'secret' },
         1,
       );
 
@@ -544,11 +558,12 @@ describe('MaterialsService - adjustStock()', () => {
       expect(result.material.on_hand_stock).toBe(30);
 
       // Verify movement qty is negative for decrease
-      const movementCall = mockDb.query.mock.calls[2];
+      const movementCall = mockDb.query.mock.calls[3];
       expect(movementCall[1][1]).toBe(-20);
     });
 
     it('should reject decrease that would reduce stock below zero', async () => {
+      mockPasswordOk();
       // findOne returns material with stock 10
       mockDb.query.mockResolvedValueOnce({
         rows: [
@@ -567,7 +582,7 @@ describe('MaterialsService - adjustStock()', () => {
       });
 
       await expect(
-        service.adjustStock(1, { direction: 'decrease', quantity: 15 }, 1),
+        service.adjustStock(1, { direction: 'decrease', quantity: 15, authorizationPassword: 'secret' }, 1),
       ).rejects.toThrow(
         new BadRequestException(
           'Insufficient stock. Available: 10, Requested: 15',
@@ -576,6 +591,7 @@ describe('MaterialsService - adjustStock()', () => {
     });
 
     it('should allow decrease that brings stock to exactly zero', async () => {
+      mockPasswordOk();
       // findOne returns material with stock 10
       mockDb.query.mockResolvedValueOnce({
         rows: [
@@ -615,7 +631,7 @@ describe('MaterialsService - adjustStock()', () => {
 
       const result = await service.adjustStock(
         1,
-        { direction: 'decrease', quantity: 10 },
+        { direction: 'decrease', quantity: 10, authorizationPassword: 'secret' },
         1,
       );
 
@@ -625,6 +641,95 @@ describe('MaterialsService - adjustStock()', () => {
   });
 });
 
+describe('MaterialsService - update()', () => {
+  let service: MaterialsService;
+  let mockDb: { query: jest.Mock };
+
+  beforeEach(async () => {
+    mockDb = {
+      query: jest.fn(),
+    };
+
+    const module: TestingModule = await Test.createTestingModule({
+      providers: [
+        MaterialsService,
+        { provide: DatabaseService, useValue: mockDb },
+        { provide: AuditLogService, useValue: { logMutation: jest.fn() } },
+      ],
+    }).compile();
+
+    service = module.get<MaterialsService>(MaterialsService);
+  });
+
+  const materialRow = {
+    id: 1,
+    material_name: 'Copper Tube',
+    material_code: 'CU-001',
+    description: null,
+    brand_id: 1,
+    brand_name: 'Brand',
+    unit: 'PCS',
+    unit_price: 100,
+    sell_price: 150,
+    on_hand_stock: 50,
+    reorder_level: 10,
+  };
+
+  it('should require a password when on-hand stock changes', async () => {
+    mockDb.query.mockResolvedValueOnce({ rows: [materialRow] });
+
+    await expect(
+      service.update(1, { on_hand_stock: 80 }, 1),
+    ).rejects.toThrow(
+      new BadRequestException('Password is required to authorize this change'),
+    );
+  });
+
+  it('should record stock movement and price history when authorized', async () => {
+    mockDb.query
+      .mockResolvedValueOnce({ rows: [materialRow] }) // findOne current
+      .mockResolvedValueOnce({ rowCount: 1, rows: [{ id: 1 }] }) // password
+      .mockResolvedValueOnce({ rows: [] }) // UPDATE
+      .mockResolvedValueOnce({ rows: [] }) // price history
+      .mockResolvedValueOnce({ rows: [] }) // stock movement
+      .mockResolvedValueOnce({ rows: [{ ...materialRow, unit_price: 110, sell_price: 160, on_hand_stock: 80 }] });
+
+    const result = await service.update(
+      1,
+      {
+        unit_price: 110,
+        sell_price: 160,
+        on_hand_stock: 80,
+        authorizationPassword: 'secret',
+      },
+      1,
+    );
+
+    expect(result.on_hand_stock).toBe(80);
+    const priceHistoryCall = mockDb.query.mock.calls.find((call) =>
+      String(call[0]).includes('tblmaterial_price_history'),
+    );
+    const movementCall = mockDb.query.mock.calls.find((call) =>
+      String(call[0]).includes('tblmaterial_stock_movement'),
+    );
+    expect(priceHistoryCall?.[1]).toEqual([1, 110, 160, 1]);
+    expect(movementCall?.[1][1]).toBe(30);
+  });
+
+  it('should skip password when only name changes', async () => {
+    mockDb.query
+      .mockResolvedValueOnce({ rows: [materialRow] }) // findOne
+      .mockResolvedValueOnce({ rows: [] }) // duplicate name check
+      .mockResolvedValueOnce({ rows: [] }) // UPDATE
+      .mockResolvedValueOnce({ rows: [{ ...materialRow, material_name: 'New Name' }] });
+
+    const result = await service.update(1, { material_name: 'New Name' }, 1);
+    expect(result.material_name).toBe('New Name');
+    expect(
+      mockDb.query.mock.calls.some((call) => String(call[0]).includes('tblusers')),
+    ).toBe(false);
+  });
+});
 
 /**
  * Unit tests for MaterialsService.recordStockDeficit()
@@ -643,6 +748,7 @@ describe('MaterialsService - recordStockDeficit()', () => {
       providers: [
         MaterialsService,
         { provide: DatabaseService, useValue: mockDb },
+        { provide: AuditLogService, useValue: { logMutation: jest.fn() } },
       ],
     }).compile();
 

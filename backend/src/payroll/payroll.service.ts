@@ -4,10 +4,14 @@ import { CreateEmployeeDto } from './dto/create-employee.dto';
 import { UpdateEmployeeDto } from './dto/update-employee.dto';
 import { CreateCutoffDto } from './dto/create-cutoff.dto';
 import { CreatePayrollDto } from './dto/create-payroll.dto';
+import { AuditActorContext, AuditLogService } from 'src/audit-log/audit-log.service';
 
 @Injectable()
 export class PayrollService implements OnModuleInit {
-  constructor(private readonly db: DatabaseService) {}
+  constructor(
+    private readonly db: DatabaseService,
+    private readonly auditLogService: AuditLogService,
+  ) {}
 
   async onModuleInit() {
     try {
@@ -92,7 +96,7 @@ export class PayrollService implements OnModuleInit {
     'Project Assigned',
   ];
 
-  async createEmployee(dto: CreateEmployeeDto, userId?: number) {
+  async createEmployee(dto: CreateEmployeeDto, userId?: number, auditActor?: AuditActorContext) {
     const fullName = String(dto.fullName ?? '').trim();
     const position = String(dto.position ?? '').trim();
     const baseSalary = Number(dto.baseSalary);
@@ -170,7 +174,18 @@ export class PayrollService implements OnModuleInit {
       [fullName, position, dto.projectId ?? null, baseSalary, pagIbig, philhealth, sss, contactNumber, address, department, userId ?? null],
     );
 
-    return result.rows[0];
+    const created = result.rows[0];
+    await this.auditLogService.logMutation({
+      action: 'PAYROLL_EMPLOYEE_CREATE',
+      entityType: 'payroll-employee',
+      entityId: created?.id,
+      actor: auditActor ?? { userId },
+      description: `Created payroll employee ${fullName}`,
+      requestBody: dto as unknown as Record<string, unknown>,
+      after: created as unknown as Record<string, unknown>,
+    });
+
+    return created;
   }
 
   // async getEmployeeCutoffs(employeeId: number) {
@@ -442,7 +457,7 @@ export class PayrollService implements OnModuleInit {
     };
   }
 
-  async createCutoff(dto: CreateCutoffDto, userId?: number) {
+  async createCutoff(dto: CreateCutoffDto, userId?: number, auditActor?: AuditActorContext) {
     // Validate cutoffEnd >= cutoffStart
     if (dto.cutoffEnd < dto.cutoffStart) {
       throw new BadRequestException('cutoffEnd must be greater than or equal to cutoffStart');
@@ -532,13 +547,24 @@ export class PayrollService implements OnModuleInit {
       records.push(recordResult.rows[0]);
     }
 
-    return {
+    const createdCutoff = {
       ...cutoff,
       records,
     };
+    await this.auditLogService.logMutation({
+      action: 'PAYROLL_CUTOFF_CREATE',
+      entityType: 'payroll-cutoff',
+      entityId: cutoff.id,
+      actor: auditActor ?? { userId },
+      description: `Created payroll cutoff #${cutoff.id}`,
+      requestBody: dto as unknown as Record<string, unknown>,
+      after: createdCutoff as unknown as Record<string, unknown>,
+    });
+
+    return createdCutoff;
   }
 
-  async updateEmployee(id: number, dto: UpdateEmployeeDto) {
+  async updateEmployee(id: number, dto: UpdateEmployeeDto, auditActor?: AuditActorContext) {
     const setClauses: string[] = [];
     const params: unknown[] = [];
     let paramIndex = 1;
@@ -667,10 +693,26 @@ export class PayrollService implements OnModuleInit {
       throw new NotFoundException('Employee not found');
     }
 
-    return result.rows[0];
+    const updated = result.rows[0];
+    await this.auditLogService.logMutation({
+      action: 'PAYROLL_EMPLOYEE_UPDATE',
+      entityType: 'payroll-employee',
+      entityId: id,
+      actor: auditActor,
+      description: `Updated payroll employee #${id}`,
+      requestBody: dto as unknown as Record<string, unknown>,
+      after: updated as unknown as Record<string, unknown>,
+    });
+
+    return updated;
   }
 
-  async createEmployeePayroll(employeeId: number, dto: CreatePayrollDto, userId: number) {
+  async createEmployeePayroll(
+    employeeId: number,
+    dto: CreatePayrollDto,
+    userId: number,
+    auditActor?: AuditActorContext,
+  ) {
     // 1. Validate employee exists and is active
     const empResult = await this.db.query<{
       id: number;
@@ -902,6 +944,16 @@ export class PayrollService implements OnModuleInit {
         };
       });
 
+      await this.auditLogService.logMutation({
+        action: 'PAYROLL_RECORD_CREATE',
+        entityType: 'payroll-record',
+        entityId: result.id,
+        actor: auditActor ?? { userId },
+        description: `Created payroll record #${result.id} for employee #${employeeId}`,
+        requestBody: dto as unknown as Record<string, unknown>,
+        after: result as unknown as Record<string, unknown>,
+      });
+
       return result;
     } catch (error) {
       // Re-throw known HTTP exceptions (they already have proper status codes)
@@ -1049,7 +1101,11 @@ export class PayrollService implements OnModuleInit {
     };
   }
 
-  async updatePayrollRecord(recordId: number, dto: CreatePayrollDto) {
+  async updatePayrollRecord(
+    recordId: number,
+    dto: CreatePayrollDto,
+    auditActor?: AuditActorContext,
+  ) {
     // 1. Verify record exists and get employee info
     const recordResult = await this.db.query<{
       id: number;
@@ -1197,6 +1253,16 @@ export class PayrollService implements OnModuleInit {
             dedValues,
           );
         }
+      });
+
+      await this.auditLogService.logMutation({
+        action: 'PAYROLL_RECORD_UPDATE',
+        entityType: 'payroll-record',
+        entityId: recordId,
+        actor: auditActor,
+        description: `Updated payroll record #${recordId}`,
+        requestBody: dto as unknown as Record<string, unknown>,
+        after: { id: recordId, payoutAmount: netPay },
       });
 
       return { id: recordId, payoutAmount: netPay };

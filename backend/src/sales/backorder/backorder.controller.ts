@@ -1,6 +1,7 @@
 import { Controller, Get, Post, Patch, Param, Body, Query, UseGuards, Req } from '@nestjs/common';
 import { JwtAuthGuard } from 'src/auth/jwt-auth.guard';
 import { BackorderService } from './backorder.service';
+import { buildAuditActorFromRequest } from 'src/audit-log/audit-log.service';
 
 @Controller('backorders')
 @UseGuards(JwtAuthGuard)
@@ -42,6 +43,7 @@ export class BackorderController {
       parseInt(backorderId, 10),
       body.fulfillQty,
       Number.isFinite(userId) ? userId : undefined,
+      buildAuditActorFromRequest(req),
     );
 
     return {
@@ -65,6 +67,7 @@ export class BackorderController {
       parseInt(backorderId, 10),
       body.reason,
       Number.isFinite(userId) ? userId : undefined,
+      buildAuditActorFromRequest(req),
     );
 
     return {

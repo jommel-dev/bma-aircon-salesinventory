@@ -113,6 +113,7 @@ export class SalesOrderController {
       Number.isFinite(branchId) ? branchId : undefined,
       body.selectedMediumRowNumbers ?? [],
       body.editedPayloads ?? [],
+      this.buildAuditContext(request),
     );
   }
 
@@ -156,6 +157,7 @@ export class SalesOrderController {
       body.rows ?? [],
       Number.isFinite(userId) ? userId : undefined,
       body.targetStatus,
+      this.buildAuditContext(request),
     );
   }
 
@@ -173,6 +175,7 @@ export class SalesOrderController {
       dto,
       Number.isFinite(userId) ? userId : undefined,
       Number.isFinite(branchId) ? branchId : undefined,
+      this.buildAuditContext(request),
     );
   }
 
@@ -180,8 +183,9 @@ export class SalesOrderController {
   updateMaterialSalesOrder(
     @Param('id') id: string,
     @Body() dto: UpdateMaterialSalesOrderDto,
+    @Req() request: { user?: Record<string, unknown> },
   ) {
-    return this.salesOrderService.updateMaterialSalesOrder(+id, dto);
+    return this.salesOrderService.updateMaterialSalesOrder(+id, dto, this.buildAuditContext(request));
   }
 
   @Post('materials/bulk-void')
@@ -194,6 +198,7 @@ export class SalesOrderController {
       body.ids ?? [],
       body.reason ?? '',
       Number.isFinite(userId) ? userId : undefined,
+      this.buildAuditContext(request),
     );
   }
 
@@ -206,6 +211,7 @@ export class SalesOrderController {
     return this.salesOrderService.unvoidMaterialSalesOrder(
       +id,
       Number.isFinite(userId) ? userId : undefined,
+      this.buildAuditContext(request),
     );
   }
 
@@ -222,6 +228,7 @@ export class SalesOrderController {
     return this.salesOrderService.softDeleteMaterialSalesOrder(
       +id,
       Number.isFinite(userId) ? userId : undefined,
+      this.buildAuditContext(request),
     );
   }
 
@@ -353,6 +360,7 @@ export class SalesOrderController {
     return this.salesOrderService.createCustomer(
       createCustomerDto,
       Number.isFinite(userId) ? userId : undefined,
+      this.buildAuditContext(request),
     );
   }
 
@@ -360,13 +368,21 @@ export class SalesOrderController {
   updateCustomer(
     @Param('id') id: string,
     @Body() updateCustomerDto: UpdateCustomerDto,
+    @Req() request: { user?: Record<string, unknown> },
   ) {
-    return this.salesOrderService.updateCustomer(String(id), updateCustomerDto);
+    return this.salesOrderService.updateCustomer(
+      String(id),
+      updateCustomerDto,
+      this.buildAuditContext(request),
+    );
   }
 
   @Delete('customers/:id')
-  deleteCustomer(@Param('id') id: string) {
-    return this.salesOrderService.deleteCustomer(String(id));
+  deleteCustomer(
+    @Param('id') id: string,
+    @Req() request: { user?: Record<string, unknown> },
+  ) {
+    return this.salesOrderService.deleteCustomer(String(id), this.buildAuditContext(request));
   }
 
   @Get('customers/:id/orders')
@@ -424,21 +440,37 @@ export class SalesOrderController {
   }
 
   @Post('branches')
-  createBranch(@Body() body: { branchName?: string; branchAddress?: string | null }) {
-    return this.salesOrderService.createBranch(body.branchName, body.branchAddress);
+  createBranch(
+    @Body() body: { branchName?: string; branchAddress?: string | null },
+    @Req() request: { user?: Record<string, unknown> },
+  ) {
+    return this.salesOrderService.createBranch(
+      body.branchName,
+      body.branchAddress,
+      this.buildAuditContext(request),
+    );
   }
 
   @Put('branches/:id')
   updateBranch(
     @Param('id') id: string,
     @Body() body: { branchName?: string; branchAddress?: string | null },
+    @Req() request: { user?: Record<string, unknown> },
   ) {
-    return this.salesOrderService.updateBranch(+id, body.branchName, body.branchAddress);
+    return this.salesOrderService.updateBranch(
+      +id,
+      body.branchName,
+      body.branchAddress,
+      this.buildAuditContext(request),
+    );
   }
 
   @Delete('branches/:id')
-  deleteBranch(@Param('id') id: string) {
-    return this.salesOrderService.deleteBranch(+id);
+  deleteBranch(
+    @Param('id') id: string,
+    @Req() request: { user?: Record<string, unknown> },
+  ) {
+    return this.salesOrderService.deleteBranch(+id, this.buildAuditContext(request));
   }
 
   @Post(':id/statement-of-account')

@@ -891,6 +891,22 @@
         </p>
       </div>
 
+      <!-- Authorization password -->
+      <div>
+        <label for="adjust-auth-password" class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">
+          Your Password
+        </label>
+        <input
+          id="adjust-auth-password"
+          type="password"
+          [(ngModel)]="adjustmentForm.authorizationPassword"
+          name="authorizationPassword"
+          required
+          class="w-full rounded-md border border-gray-300 bg-white px-3 py-2 text-sm text-gray-900 placeholder-gray-400 focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500 dark:border-gray-600 dark:bg-gray-700 dark:text-gray-100 dark:placeholder-gray-500"
+          placeholder="Enter your password to authorize"
+        />
+      </div>
+
       <!-- Error message -->
       <p *ngIf="adjustmentError" class="text-sm text-red-600 dark:text-red-400">
         {{ adjustmentError }}
@@ -1591,6 +1607,51 @@
           </svg>
           Migrating...
         </span>
+      </button>
+    </div>
+  </div>
+</div>
+
+<div
+  *ngIf="isAuthModalOpen"
+  class="fixed inset-0 z-100030 flex items-center justify-center"
+>
+  <div class="absolute inset-0 bg-black/50" (click)="closeAuthModal()"></div>
+  <div class="relative z-10 w-full max-w-md rounded-lg border border-gray-200 bg-white p-6 shadow-xl dark:border-gray-700 dark:bg-gray-800">
+    <h3 class="text-lg font-semibold text-gray-900 dark:text-gray-100">
+      {{ authTitle }}
+    </h3>
+    <p class="mt-2 text-sm text-gray-600 dark:text-gray-300">
+      {{ authMessage }}
+    </p>
+    <div class="mt-4 space-y-2">
+      <label class="block text-sm font-medium text-gray-700 dark:text-gray-300">Your Password</label>
+      <input
+        type="password"
+        [(ngModel)]="authPassword"
+        name="inventoryAuthPassword"
+        (keydown.enter)="confirmAuthModal()"
+        class="w-full rounded-md border border-gray-300 bg-white px-3 py-2 text-sm text-gray-900 placeholder-gray-400 focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500 dark:border-gray-600 dark:bg-gray-700 dark:text-gray-100"
+        placeholder="Enter your password"
+      />
+      <p *ngIf="authError" class="text-sm text-red-600 dark:text-red-400">{{ authError }}</p>
+    </div>
+    <div class="mt-5 flex items-center justify-end gap-3">
+      <button
+        type="button"
+        class="rounded-md border border-gray-300 bg-white px-4 py-2 text-sm font-medium text-gray-700 hover:bg-gray-50 dark:border-gray-600 dark:bg-gray-700 dark:text-gray-300"
+        (click)="closeAuthModal()"
+        [disabled]="isEditSaving || isInlineSaving"
+      >
+        Cancel
+      </button>
+      <button
+        type="button"
+        class="rounded-md bg-blue-600 px-4 py-2 text-sm font-medium text-white hover:bg-blue-700 disabled:opacity-50 disabled:cursor-not-allowed"
+        (click)="confirmAuthModal()"
+        [disabled]="isEditSaving || isInlineSaving"
+      >
+        Confirm
       </button>
     </div>
   </div>

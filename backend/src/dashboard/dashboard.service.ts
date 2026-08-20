@@ -1891,6 +1891,7 @@ try {
   async settlePurchaseOrder(
     payload: { purchaseOrderId?: number; paymentId?: string },
     branchId?: number,
+    auditActor?: AuditActorContext,
   ): Promise<{ success: boolean; message: string }> {
     const purchaseOrderId = Number(payload.purchaseOrderId);
     const paymentId = String(payload.paymentId ?? '').trim();
@@ -1950,6 +1951,24 @@ try {
        WHERE id::text = $1`,
       [targetPaymentId],
     );
+
+    await this.auditLogService.logMutation({
+      action: 'DASHBOARD_PURCHASE_SETTLEMENT',
+      entityType: 'purchase-settlement',
+      entityId: purchaseOrderId,
+      actor: auditActor ?? { branchId },
+      description: `Settled purchase order #${purchaseOrderId}`,
+      requestBody: payload as Record<string, unknown>,
+      before: {
+        paymentId: state.paymentId,
+        paymentStatus: state.paymentStatus,
+        balance: state.balance,
+      },
+      after: {
+        paymentId: targetPaymentId,
+        paymentStatus: 'paid',
+      },
+    });
 
     return {
       success: true,

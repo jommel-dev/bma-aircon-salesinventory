@@ -1,10 +1,13 @@
-import { Body, Controller, Get, Param, Post, Query } from '@nestjs/common';
+import { Body, Controller, Get, Param, Post, Query, Req } from '@nestjs/common';
 import { MaterialStockService } from './material-stock.service';
+import { AuditLogService, buildAuditActorFromRequest } from 'src/audit-log/audit-log.service';
 
-// @UseGuards(JwtAuthGuard) // add guard if you have auth
 @Controller('material-stock')
 export class MaterialStockController {
-  constructor(private readonly service: MaterialStockService) {}
+  constructor(
+    private readonly service: MaterialStockService,
+    private readonly auditLogService: AuditLogService,
+  ) {}
 
   @Get('balance/:materialId')
   async getBalance(@Param('materialId') materialId: string) {
@@ -36,7 +39,17 @@ export class MaterialStockController {
       remarks?: string;
       createdBy?: number;
     },
+    @Req() request: { user?: Record<string, unknown>; ip?: string },
   ) {
-    return this.service.recordMovement(dto);
+    const result = await this.service.recordMovement(dto);
+    await this.auditLogService.logMutationIfSuccess(result, {
+      action: 'MATERIAL_STOCK_MOVEMENT',
+      entityType: 'material-stock',
+      entityId: dto.materialId,
+      actor: buildAuditActorFromRequest(request),
+      description: `Recorded ${dto.movementType} movement of ${dto.qty} for material #${dto.materialId}`,
+      requestBody: dto as unknown as Record<string, unknown>,
+    });
+    return result;
   }
 }

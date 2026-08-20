@@ -15,12 +15,14 @@
  */
 
 import { Injectable, NotFoundException, BadRequestException } from '@nestjs/common';
+import { createHash } from 'node:crypto';
 import { PoolClient } from 'pg';
 import { DatabaseService } from '../../database/database.service';
 import { CreateMaterialDto } from './dto/create-material.dto';
 import { UpdateMaterialDto } from './dto/update-material.dto';
 import { StockAdjustmentDto } from './dto/stock-adjustment.dto';
 import { Material } from './entities/material.entity';
+import { AuditActorContext, AuditLogService } from 'src/audit-log/audit-log.service';
 
 export type QueryClient = {
   query: (text: string, params?: unknown[]) => Promise<any>;
@@ -35,7 +37,10 @@ export class MaterialsService {
    * Constructor - Inject DatabaseService for database operations
    * DatabaseService provides the PostgreSQL connection pool
    */
-  constructor(private readonly db: DatabaseService) {}
+  constructor(
+    private readonly db: DatabaseService,
+    private readonly auditLogService: AuditLogService,
+  ) {}
 
   /**
    * =====================================================
@@ -55,6 +60,7 @@ export class MaterialsService {
   async bulkUpload(
     rows: any[],
     userId: number,
+    auditActor?: AuditActorContext,
   ): Promise<{ success: boolean; summary: { total: number; created: number; skipped: number; failed: number }; results: any[] }> {
     const results: any[] = [];
     let created = 0;
@@ -208,9 +214,18 @@ export class MaterialsService {
       }
     }
 
+    const summary = { total: rows.length, created, skipped, failed };
+    await this.auditLogService.logMutation({
+      action: 'MATERIAL_BULK_UPLOAD',
+      entityType: 'material',
+      actor: auditActor ?? { userId },
+      description: `Bulk uploaded materials (${created} created, ${skipped} skipped, ${failed} failed)`,
+      after: summary,
+    });
+
     return {
       success: true,
-      summary: { total: rows.length, created, skipped, failed },
+      summary,
       results,
     };
   }
@@ -232,6 +247,7 @@ export class MaterialsService {
   async migrateStock(
     rows: any[],
     userId: number,
+    auditActor?: AuditActorContext,
   ): Promise<{ success: boolean; summary: { total: number; updated: number; skipped: number; failed: number }; results: any[] }> {
     const results: any[] = [];
     let updated = 0;
@@ -347,9 +363,18 @@ export class MaterialsService {
       }
     }
 
+    const summary = { total: rows.length, updated, skipped, failed };
+    await this.auditLogService.logMutation({
+      action: 'MATERIAL_STOCK_MIGRATE',
+      entityType: 'material',
+      actor: auditActor ?? { userId },
+      description: `Migrated material stock (${updated} updated, ${skipped} skipped, ${failed} failed)`,
+      after: summary,
+    });
+
     return {
       success: true,
-      summary: { total: rows.length, updated, skipped, failed },
+      summary,
       results,
     };
   }
@@ -367,7 +392,7 @@ export class MaterialsService {
    * 4. Return created material with brand info
    * =====================================================
    */
-  async create(createMaterialDto: CreateMaterialDto, userId: number): Promise<Material> {
+  async create(createMaterialDto: CreateMaterialDto, userId: number, auditActor?: AuditActorContext): Promise<Material> {
     // Step 1: Validate brand if provided
     if (createMaterialDto.brand_id) {
       const brandCheck = await this.db.query(
@@ -437,8 +462,17 @@ export class MaterialsService {
     const result = await this.db.query(insertQuery, values);
     const material = result.rows[0];
 
-    // Step 4: Fetch with brand info and return
-    return this.findOne(material.id);
+    const created = await this.findOne(material.id);
+    await this.auditLogService.logMutation({
+      action: 'MATERIAL_CREATE',
+      entityType: 'material',
+      entityId: created.id,
+      actor: auditActor ?? { userId },
+      description: `Created material ${created.material_name ?? created.id}`,
+      requestBody: createMaterialDto as unknown as Record<string, unknown>,
+      after: created as unknown as Record<string, unknown>,
+    });
+    return created;
   }
 
   /**
@@ -540,9 +574,65 @@ export class MaterialsService {
    * 5. Track price history if prices changed
    * =====================================================
    */
-  async update(id: number, updateMaterialDto: UpdateMaterialDto, userId: number): Promise<Material> {
+  private async verifyActorPassword(userId: number, authorizationPassword?: string): Promise<void> {
+    const password = String(authorizationPassword ?? '').trim();
+    if (!password) {
+      throw new BadRequestException('Password is required to authorize this change');
+    }
+
+    const effectiveUserId = Number(userId);
+    if (!Number.isFinite(effectiveUserId) || effectiveUserId <= 0) {
+      throw new BadRequestException('Invalid current user');
+    }
+
+    const passwordSha1 = createHash('sha1').update(password).digest('hex');
+    const result = await this.db.query(
+      `SELECT id FROM tblusers WHERE id = $1 AND password = $2 LIMIT 1`,
+      [effectiveUserId, passwordSha1],
+    );
+
+    if (result.rowCount === 0) {
+      throw new BadRequestException('Incorrect password. Please try again.');
+    }
+  }
+
+  private numbersDiffer(left: unknown, right: unknown): boolean {
+    const a = Number(left ?? 0);
+    const b = Number(right ?? 0);
+    if (!Number.isFinite(a) || !Number.isFinite(b)) {
+      return true;
+    }
+    return Math.abs(a - b) > 0.000001;
+  }
+
+  async update(id: number, updateMaterialDto: UpdateMaterialDto, userId: number, auditActor?: AuditActorContext): Promise<Material> {
     // Step 1: Check if material exists
-    await this.findOne(id);
+    const current = await this.findOne(id);
+
+    const nextUnitPrice =
+      updateMaterialDto.unit_price !== undefined ? Number(updateMaterialDto.unit_price) : Number(current.unit_price ?? 0);
+    const nextSellPrice =
+      updateMaterialDto.sell_price !== undefined ? Number(updateMaterialDto.sell_price) : Number(current.sell_price ?? 0);
+    const nextOnHandStock =
+      updateMaterialDto.on_hand_stock !== undefined
+        ? Number(updateMaterialDto.on_hand_stock)
+        : Number(current.on_hand_stock ?? 0);
+
+    const unitPriceChanged =
+      updateMaterialDto.unit_price !== undefined && this.numbersDiffer(current.unit_price, updateMaterialDto.unit_price);
+    const sellPriceChanged =
+      updateMaterialDto.sell_price !== undefined && this.numbersDiffer(current.sell_price, updateMaterialDto.sell_price);
+    const onHandChanged =
+      updateMaterialDto.on_hand_stock !== undefined &&
+      this.numbersDiffer(current.on_hand_stock, updateMaterialDto.on_hand_stock);
+
+    if (onHandChanged && (!Number.isFinite(nextOnHandStock) || nextOnHandStock < 0)) {
+      throw new BadRequestException('On hand stock cannot be negative');
+    }
+
+    if (unitPriceChanged || sellPriceChanged || onHandChanged) {
+      await this.verifyActorPassword(userId, updateMaterialDto.authorizationPassword);
+    }
 
     // Step 2: Validate brand if provided
     if (updateMaterialDto.brand_id) {
@@ -642,13 +732,40 @@ export class MaterialsService {
       throw err;
     }
 
-    // Step 5: Track price history if prices changed
-    if (updateMaterialDto.unit_price !== undefined || updateMaterialDto.sell_price !== undefined) {
-      const material = await this.findOne(id);
-      await this.trackPriceHistory(id, material.unit_price, material.sell_price, userId);
+    if (unitPriceChanged || sellPriceChanged) {
+      await this.trackPriceHistory(id, nextUnitPrice, nextSellPrice, userId);
     }
 
-    return this.findOne(id);
+    if (onHandChanged) {
+      const previousStock = Number(current.on_hand_stock ?? 0);
+      const delta = nextOnHandStock - previousStock;
+      await this.db.query(
+        `INSERT INTO tblmaterial_stock_movement (
+          material_id, movement_type, qty, source_type, source_id, source_line_key, remarks, created_by
+        )
+        VALUES ($1, 'ADJUST', $2, 'MANUAL', $3, $4, $5, $6)`,
+        [
+          id,
+          delta,
+          id,
+          `EDIT-${id}-${Date.now()}`,
+          `On-hand stock changed from ${previousStock} to ${nextOnHandStock} via material edit`,
+          userId,
+        ],
+      );
+    }
+
+    const updated = await this.findOne(id);
+    await this.auditLogService.logMutation({
+      action: 'MATERIAL_UPDATE',
+      entityType: 'material',
+      entityId: id,
+      actor: auditActor ?? { userId },
+      description: `Updated material ${updated.material_name ?? id}`,
+      requestBody: updateMaterialDto as unknown as Record<string, unknown>,
+      after: updated as unknown as Record<string, unknown>,
+    });
+    return updated;
   }
 
   /**
@@ -661,7 +778,7 @@ export class MaterialsService {
    * This preserves historical data and relationships
    * =====================================================
    */
-  async remove(id: number, userId: number): Promise<void> {
+  async remove(id: number, userId: number, auditActor?: AuditActorContext): Promise<void> {
     // Check if material exists and get its brand info for resequencing
     const material = await this.findOne(id);
 
@@ -719,6 +836,15 @@ export class MaterialsService {
         // Non-fatal — don't fail the delete if resequencing fails
       }
     }
+
+    await this.auditLogService.logMutation({
+      action: 'MATERIAL_DELETE',
+      entityType: 'material',
+      entityId: id,
+      actor: auditActor ?? { userId },
+      description: `Deleted material ${material.material_name ?? id}`,
+      before: material as unknown as Record<string, unknown>,
+    });
   }
 
   /**
@@ -1161,6 +1287,7 @@ export class MaterialsService {
     materialId: number,
     dto: StockAdjustmentDto,
     userId: number,
+    auditActor?: AuditActorContext,
   ): Promise<{ success: boolean; message: string; material: Material }> {
     // Step 1: Validate quantity
     if (!Number.isFinite(dto.quantity) || dto.quantity < 1 || dto.quantity > 999999) {
@@ -1171,6 +1298,8 @@ export class MaterialsService {
     if (dto.remarks && dto.remarks.length > 500) {
       throw new BadRequestException('Remarks must not exceed 500 characters');
     }
+
+    await this.verifyActorPassword(userId, dto.authorizationPassword);
 
     // Step 3: Find the material (throws 404 if not found)
     const material = await this.findOne(materialId);
@@ -1213,6 +1342,16 @@ export class MaterialsService {
 
     // Step 7: Return updated material
     const updatedMaterial = await this.findOne(materialId);
+    await this.auditLogService.logMutation({
+      action: 'MATERIAL_STOCK_ADJUST',
+      entityType: 'material',
+      entityId: materialId,
+      actor: auditActor ?? { userId },
+      description: `Adjusted stock ${dto.direction} by ${dto.quantity} for material #${materialId}`,
+      requestBody: dto as unknown as Record<string, unknown>,
+      before: { onHandStock: currentStock },
+      after: updatedMaterial as unknown as Record<string, unknown>,
+    });
 
     return {
       success: true,

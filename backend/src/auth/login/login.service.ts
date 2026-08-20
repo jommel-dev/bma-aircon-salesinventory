@@ -7,6 +7,7 @@ import { CreateLoginDto } from './dto/create-login.dto';
 import { UpdateLoginDto } from './dto/update-login.dto';
 import { RefreshTokenDto } from './dto/refresh-token.dto';
 import { DatabaseService } from 'src/database/database.service';
+import { AuditActorContext, AuditLogService } from 'src/audit-log/audit-log.service';
 
 function normalizeJwtExpiresIn(value: string, fallback: string): string | number {
   const trimmed = String(value ?? fallback).trim();
@@ -24,6 +25,7 @@ export class LoginService {
     private readonly databaseService: DatabaseService,
     private readonly jwtService: JwtService,
     private readonly configService: ConfigService,
+    private readonly auditLogService: AuditLogService,
   ) {}
 
   private getRefreshSecret(): string {
@@ -40,7 +42,7 @@ export class LoginService {
     );
   }
 
-  async create(createLoginDto: CreateLoginDto) {
+  async create(createLoginDto: CreateLoginDto, auditActor?: AuditActorContext) {
     const { username, password } = createLoginDto;
     const passwordSha1 = createHash('sha1').update(password).digest('hex');
 
@@ -101,6 +103,18 @@ export class LoginService {
       );
 
       if (result.rowCount === 0) {
+        await this.auditLogService.logMutation({
+          action: 'LOGIN_FAILED',
+          entityType: 'session',
+          entityId: username,
+          actor: {
+            username,
+            ipAddress: auditActor?.ipAddress ?? null,
+          },
+          description: `Failed login attempt for ${username}`,
+          requestBody: { username },
+        });
+
         return {
           success: false,
           message: 'Invalid username or password',
@@ -108,6 +122,26 @@ export class LoginService {
       }
 
       const user = result.rows[0];
+
+      await this.auditLogService.logMutation({
+        action: 'LOGIN',
+        entityType: 'session',
+        entityId: user.id,
+        actor: {
+          userId: user.id,
+          username: user.username,
+          roleName: user.roleName,
+          branchId: user.branchId,
+          ipAddress: auditActor?.ipAddress ?? null,
+        },
+        description: `User ${user.username} logged in`,
+        after: {
+          userId: user.id,
+          username: user.username,
+          roleName: user.roleName,
+          branchId: user.branchId,
+        },
+      });
 
       const payload = {
         sub: user.id,

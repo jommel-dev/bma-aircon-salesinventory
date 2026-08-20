@@ -9,12 +9,17 @@ import {
   Put,
   Query,
   Header,
+  Req,
+  UseGuards,
 } from '@nestjs/common';
 import { UsersService } from './users.service';
 import { CreateUserDto } from './dto/create-user.dto';
 import { UpdateUserDto } from './dto/update-user.dto';
+import { buildAuditActorFromRequest } from 'src/audit-log/audit-log.service';
+import { JwtAuthGuard } from 'src/auth/jwt-auth.guard';
 
 @Controller('users')
+@UseGuards(JwtAuthGuard)
 export class UsersController {
   constructor(private readonly usersService: UsersService) {}
 
@@ -32,8 +37,9 @@ export class UsersController {
   createPermissionKey(
     @Body()
     body: { key?: string; label?: string; module?: string; scope?: 'feature' | 'menu' | 'tab' | 'action' },
+    @Req() request: { user?: Record<string, unknown>; ip?: string },
   ) {
-    return this.usersService.createPermissionKey(body);
+    return this.usersService.createPermissionKey(body, buildAuditActorFromRequest(request));
   }
 
   @Get('roles/:roleId/permissions')
@@ -45,13 +51,21 @@ export class UsersController {
   setRolePermissions(
     @Param('roleId') roleId: string,
     @Body() body: { permissionKeys?: string[] },
+    @Req() request: { user?: Record<string, unknown>; ip?: string },
   ) {
-    return this.usersService.setRolePermissions(+roleId, body.permissionKeys ?? []);
+    return this.usersService.setRolePermissions(
+      +roleId,
+      body.permissionKeys ?? [],
+      buildAuditActorFromRequest(request),
+    );
   }
 
   @Post()
-  create(@Body() createUserDto: CreateUserDto) {
-    return this.usersService.create(createUserDto);
+  create(
+    @Body() createUserDto: CreateUserDto,
+    @Req() request: { user?: Record<string, unknown>; ip?: string },
+  ) {
+    return this.usersService.create(createUserDto, buildAuditActorFromRequest(request));
   }
 
   @Get()
@@ -75,8 +89,13 @@ export class UsersController {
   setUserPermissionOverrides(
     @Param('id') id: string,
     @Body() body: { overrides?: Array<{ permissionKey: string; effect: 'allow' | 'deny'; reason?: string | null }> },
+    @Req() request: { user?: Record<string, unknown>; ip?: string },
   ) {
-    return this.usersService.setUserPermissionOverrides(+id, body.overrides ?? []);
+    return this.usersService.setUserPermissionOverrides(
+      +id,
+      body.overrides ?? [],
+      buildAuditActorFromRequest(request),
+    );
   }
 
   @Get(':id/effective-permissions')
@@ -93,29 +112,47 @@ export class UsersController {
   }
 
   @Patch(':id')
-  update(@Param('id') id: string, @Body() updateUserDto: UpdateUserDto) {
-    return this.usersService.update(+id, updateUserDto);
+  update(
+    @Param('id') id: string,
+    @Body() updateUserDto: UpdateUserDto,
+    @Req() request: { user?: Record<string, unknown>; ip?: string },
+  ) {
+    const actorUserId = Number(request.user?.sub ?? request.user?.id);
+    return this.usersService.update(
+      +id,
+      updateUserDto,
+      buildAuditActorFromRequest(request),
+      actorUserId,
+    );
   }
 
   @Patch(':id/change-password')
   changePassword(
     @Param('id') id: string,
     @Body() body: { currentPassword?: string; newPassword?: string },
+    @Req() request: { user?: Record<string, unknown>; ip?: string },
   ) {
     return this.usersService.changePassword(
       +id,
       String(body.currentPassword ?? ''),
       String(body.newPassword ?? ''),
+      buildAuditActorFromRequest(request),
     );
   }
 
   @Delete(':id')
-  remove(@Param('id') id: string) {
-    return this.usersService.remove(+id);
+  remove(
+    @Param('id') id: string,
+    @Req() request: { user?: Record<string, unknown>; ip?: string },
+  ) {
+    return this.usersService.remove(+id, buildAuditActorFromRequest(request));
   }
 
   @Patch(':id/restore')
-  restore(@Param('id') id: string) {
-    return this.usersService.restore(+id);
+  restore(
+    @Param('id') id: string,
+    @Req() request: { user?: Record<string, unknown>; ip?: string },
+  ) {
+    return this.usersService.restore(+id, buildAuditActorFromRequest(request));
   }
 }

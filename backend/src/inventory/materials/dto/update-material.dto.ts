@@ -18,4 +18,6 @@ export class UpdateMaterialDto {
   sell_price?: number;
   on_hand_stock?: number;
   reorder_level?: number;
+  /** Password of the currently logged-in user, required when cost, sell price, or on-hand stock change. */
+  authorizationPassword?: string;
 }

@@ -136,6 +136,7 @@ export class DashboardController {
       Number.isFinite(effectiveBranchId) && effectiveBranchId > 0
         ? effectiveBranchId
         : undefined,
+      this.buildAuditContext(request),
     );
   }
 

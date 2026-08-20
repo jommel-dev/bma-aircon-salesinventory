@@ -73,7 +73,7 @@ describe('SalesOrderService – material SO stock deduction', () => {
         { provide: MaterialTransactionsService, useValue: {} },
         { provide: MaterialsService, useValue: {} },
         { provide: PurchaseService, useValue: {} },
-        { provide: AuditLogService, useValue: {} },
+        { provide: AuditLogService, useValue: { logMutation: jest.fn(), logMutationIfSuccess: jest.fn() } },
         { provide: BackorderService, useValue: {} },
       ],
     }).compile();

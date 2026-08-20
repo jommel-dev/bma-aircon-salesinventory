@@ -2263,6 +2263,7 @@ export class SalesOrderService {
     branchId?: number,
     selectedMediumRowNumbers: number[] = [],
     editedPayloads: Array<{ rowNumber: number; payload: Record<string, unknown> }> = [],
+    auditActor?: AuditActorContext,
   ) {
     const preview = await this.previewDailyReleaseMigration(rows);
     if (!preview.success || !preview.summary) {
@@ -2509,7 +2510,7 @@ export class SalesOrderService {
       };
     }
 
-    return {
+    const importResult = {
       success: true,
       batchFailed: false,
       message: 'Migration import completed successfully.',
@@ -2523,6 +2524,14 @@ export class SalesOrderService {
       },
       items: [...skippedDetails, ...creationDetails],
     };
+    await this.auditLogService.logMutationIfSuccess(importResult, {
+      action: 'SALES_ORDER_MIGRATION_IMPORT',
+      entityType: 'sales-order',
+      actor: auditActor ?? { userId, branchId },
+      description: `Imported daily release migration (${toImport.length} created)`,
+      after: importResult.summary,
+    });
+    return importResult;
   }
 
   private normalizeUnitTypesQty(value: unknown): Array<{ label: string; value: number }> {
@@ -4109,7 +4118,7 @@ export class SalesOrderService {
     }
   }
 
-  async createCustomer(dto: CreateCustomerDto, userId?: number) {
+  async createCustomer(dto: CreateCustomerDto, userId?: number, auditActor?: AuditActorContext) {
     try {
       const customerColumns = await this.getTableColumns(this.databaseService, 'tblcustomer');
       const customerIdColumn = this.pickColumn(customerColumns, ['id']);
@@ -4154,16 +4163,25 @@ export class SalesOrderService {
       if (createdAtColumn) record[createdAtColumn] = new Date().toISOString();
 
       const inserted = await this.runInsert(this.databaseService, 'tblcustomer', record);
-      return {
+      const created = {
         success: true,
         data: { id: String(inserted.rows[0]?.id ?? '') },
       };
+      await this.auditLogService.logMutationIfSuccess(created, {
+        action: 'CUSTOMER_CREATE',
+        entityType: 'customer',
+        entityId: created.data.id,
+        actor: auditActor ?? { userId },
+        description: `Created customer ${name}`,
+        requestBody: dto as unknown as Record<string, unknown>,
+      });
+      return created;
     } catch (error) {
       return { success: false, message: error instanceof Error ? error.message : 'Failed to create customer' };
     }
   }
 
-  async updateCustomer(customerId: string, dto: UpdateCustomerDto) {
+  async updateCustomer(customerId: string, dto: UpdateCustomerDto, auditActor?: AuditActorContext) {
     const id = String(customerId ?? '').trim();
     if (!id) {
       return { success: false, message: 'Invalid customer id' };
@@ -4220,16 +4238,25 @@ export class SalesOrderService {
         [...values, id],
       );
 
-      return {
+      const updated = {
         success: true,
         data: { updated: result.rowCount },
       };
+      await this.auditLogService.logMutationIfSuccess(updated, {
+        action: 'CUSTOMER_UPDATE',
+        entityType: 'customer',
+        entityId: id,
+        actor: auditActor,
+        description: `Updated customer ${id}`,
+        requestBody: dto as unknown as Record<string, unknown>,
+      });
+      return updated;
     } catch (error) {
       return { success: false, message: error instanceof Error ? error.message : 'Failed to update customer' };
     }
   }
 
-  async deleteCustomer(customerId: string) {
+  async deleteCustomer(customerId: string, auditActor?: AuditActorContext) {
     const id = String(customerId ?? '').trim();
     if (!id) {
       return { success: false, message: 'Invalid customer id' };
@@ -4240,7 +4267,15 @@ export class SalesOrderService {
         `DELETE FROM tblcustomer WHERE id::text = $1`,
         [id],
       );
-      return { success: true, data: { deleted: result.rowCount } };
+      const deleted = { success: true, data: { deleted: result.rowCount } };
+      await this.auditLogService.logMutationIfSuccess(deleted, {
+        action: 'CUSTOMER_DELETE',
+        entityType: 'customer',
+        entityId: id,
+        actor: auditActor,
+        description: `Deleted customer ${id}`,
+      });
+      return deleted;
     } catch (error) {
       return { success: false, message: error instanceof Error ? error.message : 'Failed to delete customer' };
     }
@@ -4844,7 +4879,11 @@ export class SalesOrderService {
     }
   }
 
-  async createBranch(branchNameInput?: string, branchAddressInput?: string | null) {
+  async createBranch(
+    branchNameInput?: string,
+    branchAddressInput?: string | null,
+    auditActor?: AuditActorContext,
+  ) {
     const branchName = String(branchNameInput ?? '').trim();
     const branchAddress = String(branchAddressInput ?? '').trim();
     if (!branchName) {
@@ -4876,7 +4915,15 @@ export class SalesOrderService {
         [branchName, branchAddress || null],
       );
 
-      return this.getBranches();
+      const created = await this.getBranches();
+      await this.auditLogService.logMutationIfSuccess(created, {
+        action: 'BRANCH_CREATE',
+        entityType: 'branch',
+        actor: auditActor,
+        description: `Created branch ${branchName}`,
+        requestBody: { branchName, branchAddress },
+      });
+      return created;
     } catch (error) {
       return {
         success: false,
@@ -4889,6 +4936,7 @@ export class SalesOrderService {
     branchId: number,
     branchNameInput?: string,
     branchAddressInput?: string | null,
+    auditActor?: AuditActorContext,
   ) {
     if (!Number.isFinite(branchId) || branchId <= 0) {
       return {
@@ -4947,7 +4995,16 @@ export class SalesOrderService {
         [branchName, branchAddress || null, branchId],
       );
 
-      return this.getBranches();
+      const updated = await this.getBranches();
+      await this.auditLogService.logMutationIfSuccess(updated, {
+        action: 'BRANCH_UPDATE',
+        entityType: 'branch',
+        entityId: branchId,
+        actor: auditActor,
+        description: `Updated branch #${branchId}`,
+        requestBody: { branchName, branchAddress },
+      });
+      return updated;
     } catch (error) {
       return {
         success: false,
@@ -4956,7 +5013,7 @@ export class SalesOrderService {
     }
   }
 
-  async deleteBranch(branchId: number) {
+  async deleteBranch(branchId: number, auditActor?: AuditActorContext) {
     if (!Number.isFinite(branchId) || branchId <= 0) {
       return {
         success: false,
@@ -5029,7 +5086,15 @@ export class SalesOrderService {
         [branchId],
       );
 
-      return this.getBranches();
+      const deleted = await this.getBranches();
+      await this.auditLogService.logMutationIfSuccess(deleted, {
+        action: 'BRANCH_DELETE',
+        entityType: 'branch',
+        entityId: branchId,
+        actor: auditActor,
+        description: `Deleted branch #${branchId}`,
+      });
+      return deleted;
     } catch (error) {
       return {
         success: false,
@@ -7221,6 +7286,7 @@ export class SalesOrderService {
     },
     userId?: number,
     branchId?: number,
+    auditActor?: AuditActorContext,
   ) {
     const status = dto.status;
     const productItems = Array.isArray(dto.productItems) ? dto.productItems : [];
@@ -7395,6 +7461,14 @@ export class SalesOrderService {
         }
       }
 
+      await this.auditLogService.logMutationIfSuccess(responseData, {
+        action: 'MATERIAL_SALES_ORDER_CREATE',
+        entityType: 'sales-order',
+        entityId: result.salesOrderId,
+        actor: auditActor ?? { userId, branchId },
+        description: `Created material sales order #${result.salesOrderId}`,
+        requestBody: dto as unknown as Record<string, unknown>,
+      });
       return responseData;
     } catch (error) {
       if (error instanceof BadRequestException) {
@@ -7406,7 +7480,12 @@ export class SalesOrderService {
     }
   }
 
-  async migrateMaterialSalesOrders(rows: Array<Record<string, unknown>>, userId?: number, targetStatus?: string) {
+  async migrateMaterialSalesOrders(
+    rows: Array<Record<string, unknown>>,
+    userId?: number,
+    targetStatus?: string,
+    auditActor?: AuditActorContext,
+  ) {
     if (!Array.isArray(rows) || rows.length === 0) {
       return { success: false, message: 'No rows provided', summary: { total: 0, created: 0, skipped: 0, failed: 0 } };
     }
@@ -7593,12 +7672,20 @@ export class SalesOrderService {
       }
     }
 
-    return {
+    const migrateResult = {
       success: true,
       message: `Migration complete: ${summary.created} created, ${summary.skipped} skipped, ${summary.failed} failed`,
       summary,
       details,
     };
+    await this.auditLogService.logMutationIfSuccess(migrateResult, {
+      action: 'MATERIAL_SALES_ORDER_MIGRATE',
+      entityType: 'sales-order',
+      actor: auditActor ?? { userId },
+      description: migrateResult.message,
+      after: summary as unknown as Record<string, unknown>,
+    });
+    return migrateResult;
   }
 
   private normalizeMigrationPaymentMethod(raw: string): string {
@@ -7792,6 +7879,7 @@ export class SalesOrderService {
   async updateMaterialSalesOrder(
     id: number,
     dto: UpdateMaterialSalesOrderDto,
+    auditActor?: AuditActorContext,
   ) {
     if (!Number.isFinite(id) || id <= 0) {
       return { success: false, message: 'Invalid sales order id' };
@@ -8280,11 +8368,20 @@ export class SalesOrderService {
         responseData.backorders = backorderInfo;
       }
 
-      return {
+      const updated = {
         success: true,
         message: 'Material sales order updated successfully',
         data: responseData,
       };
+      await this.auditLogService.logMutationIfSuccess(updated, {
+        action: 'MATERIAL_SALES_ORDER_UPDATE',
+        entityType: 'sales-order',
+        entityId: id,
+        actor: auditActor,
+        description: `Updated material sales order #${id}`,
+        requestBody: dto as unknown as Record<string, unknown>,
+      });
+      return updated;
     } catch (error) {
       
 
@@ -8311,6 +8408,7 @@ export class SalesOrderService {
     ids: number[],
     reason: string,
     userId?: number,
+    auditActor?: AuditActorContext,
   ): Promise<{ success: boolean; message: string; voided: number; skipped: number }> {
     if (!Array.isArray(ids) || ids.length === 0) {
       return { success: false, message: 'No order IDs provided', voided: 0, skipped: 0 };
@@ -8394,12 +8492,21 @@ export class SalesOrderService {
       }
     }
 
-    return {
+    const voidResult = {
       success: true,
       message: `${voided} order(s) voided, ${skipped} skipped.`,
       voided,
       skipped,
     };
+    await this.auditLogService.logMutationIfSuccess(voidResult, {
+      action: 'MATERIAL_SALES_ORDER_BULK_VOID',
+      entityType: 'sales-order',
+      actor: auditActor ?? { userId },
+      description: voidResult.message,
+      requestBody: { ids, reason },
+      after: { voided, skipped },
+    });
+    return voidResult;
   }
 
   // ─── Unvoid Material Sales Order ────────────────────────────────────────────
@@ -8407,6 +8514,7 @@ export class SalesOrderService {
   async unvoidMaterialSalesOrder(
     id: number,
     userId?: number,
+    auditActor?: AuditActorContext,
   ): Promise<{ success: boolean; message: string }> {
     if (!Number.isFinite(id) || id <= 0) {
       return { success: false, message: 'Invalid order ID' };
@@ -8467,7 +8575,15 @@ export class SalesOrderService {
       [id],
     );
 
-    return { success: true, message: 'Order restored to complete. Stock has been deducted.' };
+    const restored = { success: true, message: 'Order restored to complete. Stock has been deducted.' };
+    await this.auditLogService.logMutationIfSuccess(restored, {
+      action: 'MATERIAL_SALES_ORDER_UNVOID',
+      entityType: 'sales-order',
+      entityId: id,
+      actor: auditActor ?? { userId },
+      description: `Unvoided material sales order #${id}`,
+    });
+    return restored;
   }
 
   // ─── Soft Delete Material Sales Order (Draft only) ──────────────────────────
@@ -8475,6 +8591,7 @@ export class SalesOrderService {
   async softDeleteMaterialSalesOrder(
     id: number,
     userId?: number,
+    auditActor?: AuditActorContext,
   ): Promise<{ success: boolean; message: string }> {
     if (!Number.isFinite(id) || id <= 0) {
       return { success: false, message: 'Invalid order ID' };
@@ -8525,7 +8642,15 @@ export class SalesOrderService {
       [id, Number.isFinite(userId) && userId! > 0 ? userId : null],
     );
 
-    return { success: true, message: 'Draft sales order deleted successfully' };
+    const deleted = { success: true, message: 'Draft sales order deleted successfully' };
+    await this.auditLogService.logMutationIfSuccess(deleted, {
+      action: 'MATERIAL_SALES_ORDER_SOFT_DELETE',
+      entityType: 'sales-order',
+      entityId: id,
+      actor: auditActor ?? { userId },
+      description: `Soft-deleted draft material sales order #${id}`,
+    });
+    return deleted;
   }
 
   private getMaterialPaymentAutoStatus(method: string, termsDueDate?: string | null, postDated?: string | null): string {

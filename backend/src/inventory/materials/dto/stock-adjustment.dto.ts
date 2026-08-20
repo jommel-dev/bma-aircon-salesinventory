@@ -26,4 +26,9 @@ export class StockAdjustmentDto {
    * Optional remarks for the adjustment - max 500 characters
    */
   remarks?: string;
+
+  /**
+   * Password of the currently logged-in user, required to authorize the adjustment.
+   */
+  authorizationPassword?: string;
 }

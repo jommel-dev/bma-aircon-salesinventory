@@ -9,6 +9,7 @@ import type {
   UpsertAccountTitlePayload,
 } from './accounting.service';
 import { JwtAuthGuard } from 'src/auth/jwt-auth.guard';
+import { buildAuditActorFromRequest } from 'src/audit-log/audit-log.service';
 
 @Controller('accounting')
 export class AccountingController {
@@ -29,8 +30,14 @@ export class AccountingController {
   }
 
   @Post('account-titles')
-  async upsertAccountTitle(@Body() payload: UpsertAccountTitlePayload): Promise<{ success: boolean; data: unknown }> {
-    const data = await this.accountingService.upsertAccountTitle(payload);
+  async upsertAccountTitle(
+    @Body() payload: UpsertAccountTitlePayload,
+    @Req() request: { user?: Record<string, unknown>; ip?: string },
+  ): Promise<{ success: boolean; data: unknown }> {
+    const data = await this.accountingService.upsertAccountTitle(
+      payload,
+      buildAuditActorFromRequest(request),
+    );
     return {
       success: true,
       data,
@@ -72,6 +79,7 @@ export class AccountingController {
     const data = await this.accountingService.upsertReportPrintSettings(reportKey, payload, {
       branchId,
       userId,
+      actor: buildAuditActorFromRequest(request),
     });
     return {
       success: true,
@@ -157,8 +165,12 @@ export class AccountingController {
   @Post('general-journals/post')
   async postGeneralJournal(
     @Body() payload: CreateGeneralJournalPayload,
+    @Req() request: { user?: Record<string, unknown>; ip?: string },
   ): Promise<{ success: boolean; data: unknown }> {
-    const data = await this.accountingService.postGeneralJournal(payload);
+    const data = await this.accountingService.postGeneralJournal(
+      payload,
+      buildAuditActorFromRequest(request),
+    );
     return {
       success: true,
       data,
@@ -170,8 +182,13 @@ export class AccountingController {
   async updateGeneralJournal(
     @Param('journalNumber') journalNumber: string,
     @Body() payload: UpdateGeneralJournalPayload,
+    @Req() request: { user?: Record<string, unknown>; ip?: string },
   ): Promise<{ success: boolean; data: unknown }> {
-    const data = await this.accountingService.updateGeneralJournal(journalNumber, payload);
+    const data = await this.accountingService.updateGeneralJournal(
+      journalNumber,
+      payload,
+      buildAuditActorFromRequest(request),
+    );
     return {
       success: true,
       data,
@@ -185,7 +202,10 @@ export class AccountingController {
     @Req() request: { user?: Record<string, unknown> },
   ): Promise<{ success: boolean; data: unknown }> {
     const preparedBy = String(request.user?.fullname ?? request.user?.username ?? '').trim() || undefined;
-    const data = await this.accountingService.releaseChequeVoucher({ ...payload, preparedBy });
+    const data = await this.accountingService.releaseChequeVoucher(
+      { ...payload, preparedBy },
+      buildAuditActorFromRequest(request),
+    );
     return {
       success: true,
       data,
@@ -228,7 +248,11 @@ export class AccountingController {
     @Req() request: { user?: Record<string, unknown> },
   ): Promise<{ success: boolean; data: unknown }> {
     const preparedBy = String(request.user?.fullname ?? request.user?.username ?? '').trim() || undefined;
-    const data = await this.accountingService.updateChequeVoucher(cvNo, { ...payload, preparedBy });
+    const data = await this.accountingService.updateChequeVoucher(
+      cvNo,
+      { ...payload, preparedBy },
+      buildAuditActorFromRequest(request),
+    );
     return {
       success: true,
       data,

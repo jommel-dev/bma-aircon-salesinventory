@@ -82,6 +82,9 @@ export class UserManagementComponent implements OnInit {
   overrideSelectionByKey: Record<string, OverrideEffect> = {};
 
   createForm = this.createInitialForm();
+  isAuthModalOpen = false;
+  authPassword = '';
+  authError = '';
 
   constructor(
     private readonly userManagementService: UserManagementService,
@@ -268,6 +271,9 @@ export class UserManagementComponent implements OnInit {
     }
 
     this.isCreateDrawerOpen = false;
+    this.isAuthModalOpen = false;
+    this.authPassword = '';
+    this.authError = '';
     this.drawerMode = 'create';
     this.editingUserId = null;
     this.rolePermissionKeys = [];
@@ -288,7 +294,49 @@ export class UserManagementComponent implements OnInit {
     await this.loadRolePermissions(roleId);
   }
 
-  async submitCreateUser(): Promise<void> {
+  closeAuthModal(): void {
+    if (this.isCreatingUser) {
+      return;
+    }
+    this.isAuthModalOpen = false;
+    this.authPassword = '';
+    this.authError = '';
+  }
+
+  requestSaveUser(): void {
+    if (this.drawerMode === 'create') {
+      void this.submitCreateUser();
+      return;
+    }
+
+    const username = this.createForm.username.trim();
+    const fullname = this.createForm.fullname.trim();
+    const roleId = Number(this.createForm.roleId);
+    if (!username || !fullname) {
+      this.notificationService.warning('Incomplete Form', 'Username and full name are required.');
+      return;
+    }
+    if (!Number.isFinite(roleId) || roleId <= 0) {
+      this.notificationService.warning('Role Required', 'Please select a role from RBAC options.');
+      return;
+    }
+
+    this.authPassword = '';
+    this.authError = '';
+    this.isAuthModalOpen = true;
+  }
+
+  confirmAuthorizedSave(): void {
+    const password = this.authPassword.trim();
+    if (!password) {
+      this.authError = 'Password is required to authorize this change.';
+      return;
+    }
+
+    void this.submitCreateUser(password);
+  }
+
+  async submitCreateUser(authorizationPassword?: string): Promise<void> {
     if (this.isCreatingUser) {
       return;
     }
@@ -336,6 +384,7 @@ export class UserManagementComponent implements OnInit {
             ? await this.userManagementService.updateUser(Number(this.editingUserId), {
                 ...payload,
                 ...(password ? { password } : {}),
+                authorizationPassword,
               })
             : {
                 success: false,
@@ -343,9 +392,14 @@ export class UserManagementComponent implements OnInit {
               };
 
       if (!response.success) {
+        const message =
+          response.message ?? (this.drawerMode === 'create' ? 'Failed to create user.' : 'Failed to update user.');
+        if (this.drawerMode === 'edit') {
+          this.authError = message;
+        }
         this.notificationService.error(
           this.drawerMode === 'create' ? 'Create User Failed' : 'Update User Failed',
-          response.message ?? (this.drawerMode === 'create' ? 'Failed to create user.' : 'Failed to update user.'),
+          message,
         );
         return;
       }
@@ -380,15 +434,22 @@ export class UserManagementComponent implements OnInit {
           : 'User details have been updated successfully.',
       );
       this.isCreateDrawerOpen = false;
+      this.isAuthModalOpen = false;
+      this.authPassword = '';
+      this.authError = '';
       this.editingUserId = null;
       await this.loadUsers();
     } catch (error: unknown) {
+      const message = this.extractApiError(
+        error,
+        this.drawerMode === 'create' ? 'Failed to create user.' : 'Failed to update user.',
+      );
+      if (this.drawerMode === 'edit') {
+        this.authError = message;
+      }
       this.notificationService.error(
         this.drawerMode === 'create' ? 'Create User Failed' : 'Update User Failed',
-        this.extractApiError(
-          error,
-          this.drawerMode === 'create' ? 'Failed to create user.' : 'Failed to update user.',
-        ),
+        message,
       );
     } finally {
       this.isCreatingUser = false;

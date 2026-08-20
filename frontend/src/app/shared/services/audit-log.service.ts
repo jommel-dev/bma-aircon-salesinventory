@@ -25,6 +25,7 @@ export interface AuditLogListItem {
   username: string;
   roleName: string;
   branchId: number | null;
+  branchName?: string;
   ipAddress: string;
   description: string;
   metadata: AuditLogMetadata | null;
@@ -35,6 +36,10 @@ export interface AuditLogListResponse {
   success: boolean;
   message?: string;
   items?: AuditLogListItem[];
+  filters?: {
+    actions?: string[];
+    entityTypes?: string[];
+  };
   meta?: {
     page: number;
     limit: number;

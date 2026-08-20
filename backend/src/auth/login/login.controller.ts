@@ -8,6 +8,7 @@ import {
   Delete,
   HttpCode,
   HttpStatus,
+  Req,
 } from '@nestjs/common';
 import { LoginService } from './login.service';
 import { CreateLoginDto } from './dto/create-login.dto';
@@ -20,8 +21,13 @@ export class LoginController {
 
   @Post()
   @HttpCode(HttpStatus.OK)
-  create(@Body() createLoginDto: CreateLoginDto) {
-    return this.loginService.create(createLoginDto);
+  create(
+    @Body() createLoginDto: CreateLoginDto,
+    @Req() request: { ip?: string },
+  ) {
+    return this.loginService.create(createLoginDto, {
+      ipAddress: String(request.ip ?? '').trim() || undefined,
+    });
   }
 
   @Post('refresh')

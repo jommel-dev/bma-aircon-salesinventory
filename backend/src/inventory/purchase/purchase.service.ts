@@ -2379,20 +2379,52 @@ export class PurchaseService {
     }
   }
 
-  async revertInProgress(id: number, userId?: number) {
-    return this.transitionPurchaseStatus(id, 'in-progress', userId, {
+  async revertInProgress(id: number, userId?: number, auditActor?: AuditActorContext) {
+    const beforeSnapshot = await this.getPurchaseAuditSnapshot(id);
+    const result = await this.transitionPurchaseStatus(id, 'in-progress', userId, {
       approvalOnly: true,
       updateSerialsToInStock: false,
       successMessage: 'Purchase order reverted to in-progress',
     });
+
+    if (result.success) {
+      const afterSnapshot = await this.getPurchaseAuditSnapshot(id);
+      await this.auditLogService.logMutation({
+        action: 'PURCHASE_REVERT_IN_PROGRESS',
+        entityType: 'purchase-order',
+        entityId: id,
+        actor: auditActor ?? { userId },
+        description: `Reverted purchase order #${id} to in-progress`,
+        before: beforeSnapshot,
+        after: afterSnapshot,
+      });
+    }
+
+    return result;
   }
 
-  async revertToDeliveries(id: number, userId?: number) {
-    return this.transitionPurchaseStatus(id, 'in-progress', userId, {
+  async revertToDeliveries(id: number, userId?: number, auditActor?: AuditActorContext) {
+    const beforeSnapshot = await this.getPurchaseAuditSnapshot(id);
+    const result = await this.transitionPurchaseStatus(id, 'in-progress', userId, {
       approvalOnly: true,
       updateSerialsToInStock: false,
       successMessage: 'Purchase order reverted to deliveries',
     });
+
+    if (result.success) {
+      const afterSnapshot = await this.getPurchaseAuditSnapshot(id);
+      await this.auditLogService.logMutation({
+        action: 'PURCHASE_REVERT_DELIVERIES',
+        entityType: 'purchase-order',
+        entityId: id,
+        actor: auditActor ?? { userId },
+        description: `Reverted purchase order #${id} to deliveries`,
+        before: beforeSnapshot,
+        after: afterSnapshot,
+      });
+    }
+
+    return result;
   }
 
   async verifyAndReceive(id: number, userId?: number, auditActor?: AuditActorContext) {

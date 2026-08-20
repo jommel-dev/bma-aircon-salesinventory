@@ -61,7 +61,10 @@ export class VendorController {
   }
 
   @Delete(':id')
-  remove(@Param('id') id: string) {
-    return this.vendorService.remove(id);
+  remove(
+    @Param('id') id: string,
+    @Req() request: { user?: Record<string, unknown>; ip?: string },
+  ) {
+    return this.vendorService.remove(id, this.buildAuditContext(request));
   }
 }

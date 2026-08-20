@@ -85,6 +85,17 @@
           </div>
         </div>
 
+        <div class="mt-4">
+          <label class="mb-1 block text-xs font-medium text-gray-600 dark:text-gray-300">Confirm your password</label>
+          <input
+            type="password"
+            [(ngModel)]="authorizationPassword"
+            name="profileAuthorizationPassword"
+            class="w-full rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm dark:border-gray-700 dark:bg-gray-900"
+            placeholder="Required to save profile changes"
+          />
+        </div>
+
         <div class="mt-4 flex justify-end">
           <button
             type="button"

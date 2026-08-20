@@ -8,6 +8,7 @@ import { UpdateEmployeeDto } from './dto/update-employee.dto';
 import { CreateCutoffDto } from './dto/create-cutoff.dto';
 import { CreatePayrollDto } from './dto/create-payroll.dto';
 import { ConflictException, NotFoundException } from '@nestjs/common';
+import { buildAuditActorFromRequest } from 'src/audit-log/audit-log.service';
 
 @Controller('payroll')
 @UseGuards(JwtAuthGuard, PermissionGuard)
@@ -38,7 +39,11 @@ export class PayrollController {
     @Req() request: { user?: Record<string, unknown> },
   ): Promise<{ success: boolean; data: unknown }> {
     const userId = this.toPositiveNumber(request.user?.sub);
-    const createdEmployee = await this.payrollService.createEmployee(dto, userId);
+    const createdEmployee = await this.payrollService.createEmployee(
+      dto,
+      userId,
+      buildAuditActorFromRequest(request),
+    );
     return { success: true, data: createdEmployee };
   }
 
@@ -56,9 +61,14 @@ export class PayrollController {
   async updateEmployee(
     @Param('id') id: string,
     @Body() dto: UpdateEmployeeDto,
+    @Req() request: { user?: Record<string, unknown>; ip?: string },
   ): Promise<{ success: boolean; data?: unknown; message?: string }> {
     try {
-      const updatedEmployee = await this.payrollService.updateEmployee(Number(id), dto);
+      const updatedEmployee = await this.payrollService.updateEmployee(
+        Number(id),
+        dto,
+        buildAuditActorFromRequest(request),
+      );
       return { success: true, data: updatedEmployee };
     } catch (error) {
       if (error instanceof NotFoundException) {
@@ -89,7 +99,12 @@ export class PayrollController {
   ): Promise<{ success: boolean; data?: unknown; message?: string }> {
     try {
       const userId = this.toPositiveNumber(request.user?.sub) ?? 0;
-      const result = await this.payrollService.createEmployeePayroll(Number(id), dto, userId);
+      const result = await this.payrollService.createEmployeePayroll(
+        Number(id),
+        dto,
+        userId,
+        buildAuditActorFromRequest(request),
+      );
       return { success: true, data: result };
     } catch (error) {
       if (error instanceof ConflictException) {
@@ -122,7 +137,11 @@ export class PayrollController {
   ): Promise<{ success: boolean; data?: unknown; message?: string }> {
     try {
       const userId = this.toPositiveNumber(request.user?.sub);
-      const data = await this.payrollService.createCutoff(dto, userId);
+      const data = await this.payrollService.createCutoff(
+        dto,
+        userId,
+        buildAuditActorFromRequest(request),
+      );
       return { success: true, data };
     } catch (error) {
       if (error instanceof ConflictException) {
@@ -159,9 +178,14 @@ export class PayrollController {
   async updatePayrollRecord(
     @Param('id') id: string,
     @Body() dto: CreatePayrollDto,
+    @Req() request: { user?: Record<string, unknown>; ip?: string },
   ): Promise<{ success: boolean; data?: unknown; message?: string }> {
     try {
-      const result = await this.payrollService.updatePayrollRecord(Number(id), dto);
+      const result = await this.payrollService.updatePayrollRecord(
+        Number(id),
+        dto,
+        buildAuditActorFromRequest(request),
+      );
       return { success: true, data: result, message: 'Payroll record updated successfully' };
     } catch (error) {
       if (error instanceof NotFoundException) {

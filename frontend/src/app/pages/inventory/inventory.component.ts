@@ -129,6 +129,19 @@ export class InventoryComponent implements OnInit, AfterViewChecked {
     reorder_level: 0,
   };
 
+  private editOriginal = {
+    unit_price: 0,
+    sell_price: 0,
+    on_hand_stock: 0,
+  };
+
+  isAuthModalOpen = false;
+  authPassword = '';
+  authError = '';
+  authTitle = 'Authorize Inventory Changes';
+  authMessage = 'Enter your password to confirm cost, price, or stock changes.';
+  private pendingAuthorizedSave: (() => Promise<void>) | null = null;
+
   // --- Delete Confirmation Dialog ---
 
   /** Whether the delete confirmation dialog is visible */
@@ -182,6 +195,7 @@ export class InventoryComponent implements OnInit, AfterViewChecked {
     direction: 'increase',
     quantity: 1,
     remarks: '',
+    authorizationPassword: '',
   };
 
   // --- All-in-One Create Drawer State ---
@@ -636,27 +650,56 @@ export class InventoryComponent implements OnInit, AfterViewChecked {
         updateData[field] = numericValue;
       }
 
-      await this.materialInventoryService.updateMaterial(row.id, updateData);
+      const applyInlineUpdate = async (authorizationPassword?: string) => {
+        await this.materialInventoryService.updateMaterial(row.id, {
+          ...updateData,
+          ...(authorizationPassword ? { authorizationPassword } : {}),
+        });
 
-      // Update local data without full reload
-      if (field === 'material_name') {
-        row.material_name = newValue;
-      } else if (field === 'brand_name') {
-        (row as any).brand_name = newValue || 'No Brand';
-      } else if (field === 'unit_price') {
-        row.unit_price = numericValue!;
-      } else if (field === 'sell_price') {
-        row.sell_price = numericValue!;
-      }
-      // Recompute derived columns
+        if (field === 'material_name') {
+          row.material_name = newValue;
+        } else if (field === 'brand_name') {
+          (row as any).brand_name = newValue || 'No Brand';
+        } else if (field === 'unit_price') {
+          row.unit_price = numericValue!;
+        } else if (field === 'sell_price') {
+          row.sell_price = numericValue!;
+        }
+        if (field === 'unit_price' || field === 'sell_price') {
+          row.margin = Math.round((row.sell_price - row.unit_price + Number.EPSILON) * 100) / 100;
+          row.overallCost = Math.round((row.unit_price * row.on_hand_stock + Number.EPSILON) * 100) / 100;
+          row.overallPrice = Math.round((row.sell_price * row.on_hand_stock + Number.EPSILON) * 100) / 100;
+          row.overallMargin = Math.round((row.overallPrice - row.overallCost + Number.EPSILON) * 100) / 100;
+        }
+
+        this.cancelInlineEdit();
+      };
+
       if (field === 'unit_price' || field === 'sell_price') {
-        row.margin = Math.round((row.sell_price - row.unit_price + Number.EPSILON) * 100) / 100;
-        row.overallCost = Math.round((row.unit_price * row.on_hand_stock + Number.EPSILON) * 100) / 100;
-        row.overallPrice = Math.round((row.sell_price * row.on_hand_stock + Number.EPSILON) * 100) / 100;
-        row.overallMargin = Math.round((row.overallPrice - row.overallCost + Number.EPSILON) * 100) / 100;
+        this.isInlineSaving = false;
+        this.openAuthModal(
+          field === 'unit_price' ? 'Authorize Unit Price Change' : 'Authorize Sell Price Change',
+          'Enter your password to record this price movement.',
+          async () => {
+            this.isInlineSaving = true;
+            try {
+              await applyInlineUpdate(this.authPassword);
+              this.closeAuthModal();
+            } catch (err: any) {
+              this.authError =
+                err?.response?.data?.message ||
+                err?.message ||
+                'Failed to update material.';
+              throw err;
+            } finally {
+              this.isInlineSaving = false;
+            }
+          },
+        );
+        return;
       }
 
-      this.cancelInlineEdit();
+      await applyInlineUpdate();
     } catch (err: any) {
       // On error, just cancel — the value reverts visually
       this.cancelInlineEdit();
@@ -740,6 +783,11 @@ export class InventoryComponent implements OnInit, AfterViewChecked {
       on_hand_stock: material.on_hand_stock,
       reorder_level: material.reorder_level,
     };
+    this.editOriginal = {
+      unit_price: material.unit_price,
+      sell_price: material.sell_price,
+      on_hand_stock: material.on_hand_stock,
+    };
     this.editError = '';
     this.isEditSaving = false;
     this.isEditModalOpen = true;
@@ -751,29 +799,98 @@ export class InventoryComponent implements OnInit, AfterViewChecked {
   closeEditForm(): void {
     this.isEditModalOpen = false;
     this.editError = '';
+    this.closeAuthModal();
+  }
+
+  private editRequiresAuthorization(): boolean {
+    return (
+      this.numbersDiffer(this.editForm.unit_price, this.editOriginal.unit_price) ||
+      this.numbersDiffer(this.editForm.sell_price, this.editOriginal.sell_price) ||
+      this.numbersDiffer(this.editForm.on_hand_stock, this.editOriginal.on_hand_stock)
+    );
+  }
+
+  private numbersDiffer(left: unknown, right: unknown): boolean {
+    return Math.abs(Number(left ?? 0) - Number(right ?? 0)) > 0.000001;
+  }
+
+  openAuthModal(title: string, message: string, saveFn: () => Promise<void>): void {
+    this.authTitle = title;
+    this.authMessage = message;
+    this.authPassword = '';
+    this.authError = '';
+    this.pendingAuthorizedSave = saveFn;
+    this.isAuthModalOpen = true;
+  }
+
+  closeAuthModal(): void {
+    this.isAuthModalOpen = false;
+    this.authPassword = '';
+    this.authError = '';
+    this.pendingAuthorizedSave = null;
+  }
+
+  async confirmAuthModal(): Promise<void> {
+    const password = this.authPassword.trim();
+    if (!password) {
+      this.authError = 'Password is required to authorize this change.';
+      return;
+    }
+
+    if (!this.pendingAuthorizedSave) {
+      this.closeAuthModal();
+      return;
+    }
+
+    try {
+      await this.pendingAuthorizedSave();
+    } catch {
+      // Error is displayed by the pending save handler.
+    }
   }
 
   /**
    * Submit the edit form to update the material via the API.
    */
   async submitEditForm(): Promise<void> {
+    if (this.editRequiresAuthorization()) {
+      this.openAuthModal(
+        'Authorize Inventory Changes',
+        'Unit Price, Sell Price, or On Hand Stock changed. Enter your password to record the movement and save.',
+        () => this.performEditSave(this.authPassword),
+      );
+      return;
+    }
+
+    await this.performEditSave();
+  }
+
+  private async performEditSave(authorizationPassword?: string): Promise<void> {
     this.isEditSaving = true;
     this.editError = '';
 
     try {
       const { id, ...data } = this.editForm;
-      await this.materialInventoryService.updateMaterial(id, data);
+      await this.materialInventoryService.updateMaterial(id, {
+        ...data,
+        ...(authorizationPassword ? { authorizationPassword } : {}),
+      });
       this.isEditModalOpen = false;
+      this.isAuthModalOpen = false;
+      this.authPassword = '';
+      this.pendingAuthorizedSave = null;
 
-      // Refresh table data
       if (this.selectedBrandId !== null) {
         await this.loadMaterials(this.selectedBrandId);
       }
     } catch (err: any) {
-      this.editError =
+      const message =
         err?.response?.data?.message ||
         err?.message ||
         'Failed to update material.';
+      this.editError = message;
+      this.authError = message;
+      throw err;
     } finally {
       this.isEditSaving = false;
     }
@@ -934,6 +1051,7 @@ export class InventoryComponent implements OnInit, AfterViewChecked {
       direction: 'increase',
       quantity: 1,
       remarks: '',
+      authorizationPassword: '',
     };
     this.adjustmentError = '';
     this.isAdjustmentSaving = false;
@@ -983,7 +1101,14 @@ export class InventoryComponent implements OnInit, AfterViewChecked {
         direction: this.adjustmentForm.direction,
         quantity: Number(qty),
         remarks: remarks || undefined,
+        authorizationPassword: String(this.adjustmentForm.authorizationPassword ?? '').trim(),
       };
+
+      if (!dto.authorizationPassword) {
+        this.adjustmentError = 'Password is required to authorize this stock adjustment.';
+        this.isAdjustmentSaving = false;
+        return;
+      }
 
       await this.materialInventoryService.adjustStock(this.adjustmentMaterial.id, dto);
       this.isAdjustmentModalOpen = false;

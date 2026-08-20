@@ -21,6 +21,38 @@ export interface AuditActorContext {
   ipAddress?: string | null;
 }
 
+export function buildAuditActorFromRequest(
+  request: { user?: Record<string, unknown>; ip?: string },
+): AuditActorContext {
+  const userId = Number(request.user?.sub);
+  const branchId = Number(
+    request.user?.branchId ?? request.user?.branch_id ?? request.user?.branch,
+  );
+
+  return {
+    userId: Number.isFinite(userId) ? userId : undefined,
+    username: String(request.user?.username ?? '').trim() || undefined,
+    roleName: String(request.user?.roleName ?? request.user?.role_name ?? '').trim() || undefined,
+    branchId: Number.isFinite(branchId) ? branchId : undefined,
+    ipAddress: String(request.ip ?? '').trim() || undefined,
+  };
+}
+
+export function redactAuditRequestBody(value: unknown): Record<string, unknown> | null {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) {
+    return null;
+  }
+
+  const next: Record<string, unknown> = { ...(value as Record<string, unknown>) };
+  for (const key of Object.keys(next)) {
+    if (/password/i.test(key)) {
+      next[key] = '[redacted]';
+    }
+  }
+
+  return next;
+}
+
 export interface AuditFieldChange {
   field: string;
   oldValue: unknown;
@@ -48,6 +80,7 @@ type AuditLogListRow = {
   username: string | null;
   roleName: string | null;
   branchId: string | null;
+  branchName: string | null;
   ipAddress: string | null;
   metadata: Record<string, unknown> | null;
   createdAt: string | null;
@@ -104,7 +137,6 @@ export class AuditLogService {
       action?: unknown;
       entityType?: unknown;
     },
-    branchId?: number,
   ) {
     const page = this.normalizePage(query.page);
     const limit = this.normalizeLimit(query.limit);
@@ -116,11 +148,6 @@ export class AuditLogService {
     const params: unknown[] = [];
     const whereParts: string[] = [];
 
-    if (branchId) {
-      params.push(branchId);
-      whereParts.push(`al.branch_id = $${params.length}`);
-    }
-
     if (search) {
       params.push(`%${search}%`);
       const idx = params.length;
@@ -129,7 +156,9 @@ export class AuditLogService {
         OR LOWER(COALESCE(al.entity_type, '')) LIKE $${idx}
         OR LOWER(COALESCE(al.entity_id, '')) LIKE $${idx}
         OR LOWER(COALESCE(al.username, '')) LIKE $${idx}
+        OR LOWER(COALESCE(al.role_name, '')) LIKE $${idx}
         OR LOWER(COALESCE(al.metadata->>'description', '')) LIKE $${idx}
+        OR LOWER(COALESCE(b."branchName", '')) LIKE $${idx}
       )`);
     }
 
@@ -144,10 +173,12 @@ export class AuditLogService {
     }
 
     const whereSql = whereParts.length > 0 ? `WHERE ${whereParts.join(' AND ')}` : '';
+    const joinSql = `LEFT JOIN tblbranches b ON b.id = al.branch_id`;
 
     const countResult = await this.databaseService.query<AuditLogCountRow>(
       `SELECT COUNT(*)::text AS total
        FROM tblaudit_logs al
+       ${joinSql}
        ${whereSql}`,
       params,
     );
@@ -167,10 +198,12 @@ export class AuditLogService {
          al.username,
          al.role_name AS "roleName",
          al.branch_id::text AS "branchId",
+         COALESCE(b."branchName", '') AS "branchName",
          al.ip_address AS "ipAddress",
          al.metadata,
          al.created_at::text AS "createdAt"
        FROM tblaudit_logs al
+       ${joinSql}
        ${whereSql}
        ORDER BY al.created_at DESC, al.id DESC
        LIMIT $${limitIndex}
@@ -178,25 +211,38 @@ export class AuditLogService {
       listParams,
     );
 
+    const filterResult = await this.databaseService.query<{ action: string | null; entityType: string | null }>(
+      `SELECT DISTINCT
+         al.action,
+         al.entity_type AS "entityType"
+       FROM tblaudit_logs al
+       WHERE COALESCE(al.action, '') <> ''
+          OR COALESCE(al.entity_type, '') <> ''`,
+    );
+
+    const actions = Array.from(
+      new Set(
+        filterResult.rows
+          .map((row) => String(row.action ?? '').trim())
+          .filter((value) => value.length > 0),
+      ),
+    ).sort((left, right) => left.localeCompare(right));
+
+    const entityTypes = Array.from(
+      new Set(
+        filterResult.rows
+          .map((row) => String(row.entityType ?? '').trim())
+          .filter((value) => value.length > 0),
+      ),
+    ).sort((left, right) => left.localeCompare(right));
+
     return {
       success: true,
-      items: result.rows.map((row) => {
-        const metadata = this.toPlainMetadata(row.metadata);
-        return {
-          id: Number(row.id),
-          action: String(row.action ?? '').trim(),
-          entityType: String(row.entityType ?? '').trim(),
-          entityId: String(row.entityId ?? '').trim(),
-          userId: row.userId ? Number(row.userId) : null,
-          username: String(row.username ?? '').trim(),
-          roleName: String(row.roleName ?? '').trim(),
-          branchId: row.branchId ? Number(row.branchId) : null,
-          ipAddress: String(row.ipAddress ?? '').trim(),
-          description: String(metadata?.description ?? '').trim(),
-          metadata,
-          createdAt: row.createdAt,
-        };
-      }),
+      items: result.rows.map((row) => this.mapListRow(row)),
+      filters: {
+        actions,
+        entityTypes,
+      },
       meta: {
         page,
         limit,
@@ -206,16 +252,9 @@ export class AuditLogService {
     };
   }
 
-  async findOne(id: number, branchId?: number) {
+  async findOne(id: number) {
     if (!Number.isFinite(id) || id <= 0) {
       return { success: false, message: 'Invalid audit log id' };
-    }
-
-    const params: unknown[] = [id];
-    let branchSql = '';
-    if (branchId) {
-      params.push(branchId);
-      branchSql = `AND al.branch_id = $2`;
     }
 
     const result = await this.databaseService.query<AuditLogListRow>(
@@ -228,39 +267,43 @@ export class AuditLogService {
          al.username,
          al.role_name AS "roleName",
          al.branch_id::text AS "branchId",
+         COALESCE(b."branchName", '') AS "branchName",
          al.ip_address AS "ipAddress",
          al.metadata,
          al.created_at::text AS "createdAt"
        FROM tblaudit_logs al
+       LEFT JOIN tblbranches b ON b.id = al.branch_id
        WHERE al.id = $1
-       ${branchSql}
        LIMIT 1`,
-      params,
+      [id],
     );
 
     if (result.rowCount === 0) {
       return { success: false, message: 'Audit log not found' };
     }
 
-    const row = result.rows[0];
-    const metadata = this.toPlainMetadata(row.metadata);
-
     return {
       success: true,
-      item: {
-        id: Number(row.id),
-        action: String(row.action ?? '').trim(),
-        entityType: String(row.entityType ?? '').trim(),
-        entityId: String(row.entityId ?? '').trim(),
-        userId: row.userId ? Number(row.userId) : null,
-        username: String(row.username ?? '').trim(),
-        roleName: String(row.roleName ?? '').trim(),
-        branchId: row.branchId ? Number(row.branchId) : null,
-        ipAddress: String(row.ipAddress ?? '').trim(),
-        description: String(metadata?.description ?? '').trim(),
-        metadata,
-        createdAt: row.createdAt,
-      },
+      item: this.mapListRow(result.rows[0]),
+    };
+  }
+
+  private mapListRow(row: AuditLogListRow) {
+    const metadata = this.toPlainMetadata(row.metadata);
+    return {
+      id: Number(row.id),
+      action: String(row.action ?? '').trim(),
+      entityType: String(row.entityType ?? '').trim(),
+      entityId: String(row.entityId ?? '').trim(),
+      userId: row.userId ? Number(row.userId) : null,
+      username: String(row.username ?? '').trim(),
+      roleName: String(row.roleName ?? '').trim(),
+      branchId: row.branchId ? Number(row.branchId) : null,
+      branchName: String(row.branchName ?? '').trim(),
+      ipAddress: String(row.ipAddress ?? '').trim(),
+      description: String(metadata?.description ?? '').trim(),
+      metadata,
+      createdAt: row.createdAt,
     };
   }
 
@@ -342,6 +385,19 @@ export class AuditLogService {
     after?: Record<string, unknown> | null,
   ): AuditFieldChange[] {
     return this.buildChangesInternal(before ?? null, after ?? null);
+  }
+
+  async logMutationIfSuccess(result: unknown, entry: AuditMutationEntry): Promise<void> {
+    if (
+      result &&
+      typeof result === 'object' &&
+      'success' in result &&
+      (result as { success?: unknown }).success === false
+    ) {
+      return;
+    }
+
+    await this.logMutation(entry);
   }
 
   async logMutation(entry: AuditMutationEntry): Promise<void> {

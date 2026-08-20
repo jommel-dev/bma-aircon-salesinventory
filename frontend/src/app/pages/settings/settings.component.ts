@@ -94,9 +94,11 @@ export class SettingsComponent implements OnInit {
   selectedAuditLog: AuditLogListItem | null = null;
   isAuditLogDrawerOpen = false;
   auditLogCurrentPage = 1;
-  auditLogPageSize = 15;
+  auditLogPageSize = 50;
   auditLogTotal = 0;
   auditLogTotalPages = 1;
+  auditLogActionOptions: string[] = [];
+  auditLogEntityTypeOptions: string[] = [];
   newPermissionForm: CreatePermissionKeyPayload = {
     key: '',
     label: '',
@@ -276,26 +278,6 @@ export class SettingsComponent implements OnInit {
     }
   }
 
-  get auditLogActionOptions(): string[] {
-    return Array.from(
-      new Set(
-        this.auditLogs
-          .map((item) => String(item.action ?? '').trim())
-          .filter((item) => item.length > 0),
-      ),
-    ).sort((left, right) => left.localeCompare(right));
-  }
-
-  get auditLogEntityTypeOptions(): string[] {
-    return Array.from(
-      new Set(
-        this.auditLogs
-          .map((item) => String(item.entityType ?? '').trim())
-          .filter((item) => item.length > 0),
-      ),
-    ).sort((left, right) => left.localeCompare(right));
-  }
-
   async loadAuditLogs(page = 1): Promise<void> {
     this.isLoadingAuditLogs = true;
     this.auditLogError = '';
@@ -316,6 +298,12 @@ export class SettingsComponent implements OnInit {
       }
 
       this.auditLogs = Array.isArray(response.items) ? response.items : [];
+      this.auditLogActionOptions = Array.isArray(response.filters?.actions)
+        ? response.filters.actions
+        : [];
+      this.auditLogEntityTypeOptions = Array.isArray(response.filters?.entityTypes)
+        ? response.filters.entityTypes
+        : [];
       this.auditLogCurrentPage = response.meta?.page ?? page;
       this.auditLogPageSize = response.meta?.limit ?? this.auditLogPageSize;
       this.auditLogTotal = response.meta?.total ?? 0;

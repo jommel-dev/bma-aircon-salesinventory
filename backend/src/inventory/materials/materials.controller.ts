@@ -36,6 +36,7 @@ import { CreateMaterialDto } from './dto/create-material.dto';
 import { UpdateMaterialDto } from './dto/update-material.dto';
 import { StockAdjustmentDto } from './dto/stock-adjustment.dto';
 import { JwtAuthGuard } from '../../auth/jwt-auth.guard';
+import { buildAuditActorFromRequest } from 'src/audit-log/audit-log.service';
 
 /**
  * @Controller decorator defines the base route
@@ -71,8 +72,8 @@ export class MaterialsController {
    */
   @Post('bulk-upload')
   async bulkUpload(@Body() body: { rows: any[] }, @Request() req: any) {
-    const userId = req.user?.id || 1;
-    return this.materialsService.bulkUpload(body.rows, userId);
+    const userId = req.user?.id || req.user?.sub || 1;
+    return this.materialsService.bulkUpload(body.rows, userId, buildAuditActorFromRequest(req));
   }
 
   /**
@@ -109,8 +110,8 @@ export class MaterialsController {
    */
   @Post('migrate-stock')
   async migrateStock(@Body() body: { rows: any[] }, @Request() req: any) {
-    const userId = req.user?.id || 1;
-    return this.materialsService.migrateStock(body.rows, userId);
+    const userId = req.user?.id || req.user?.sub || 1;
+    return this.materialsService.migrateStock(body.rows, userId, buildAuditActorFromRequest(req));
   }
 
   /**
@@ -138,9 +139,8 @@ export class MaterialsController {
   @Post()
   async create(@Body() createMaterialDto: CreateMaterialDto, @Request() req: any) {
     // Extract user ID from request (set by auth middleware)
-    const userId = req.user?.id || 1;
-    
-    return this.materialsService.create(createMaterialDto, userId);
+    const userId = req.user?.id || req.user?.sub || 1;
+    return this.materialsService.create(createMaterialDto, userId, buildAuditActorFromRequest(req));
   }
 
   /**
@@ -381,8 +381,8 @@ export class MaterialsController {
     @Body() updateMaterialDto: UpdateMaterialDto,
     @Request() req: any,
   ) {
-    const userId = req.user?.id || 1;
-    return this.materialsService.update(id, updateMaterialDto, userId);
+    const userId = req.user?.id || req.user?.sub || 1;
+    return this.materialsService.update(id, updateMaterialDto, userId, buildAuditActorFromRequest(req));
   }
 
   /**
@@ -417,14 +417,12 @@ export class MaterialsController {
     @Body() stockAdjustmentDto: StockAdjustmentDto,
     @Request() req: any,
   ) {
-    const userId = req.user?.id || 1;
-
-    // Validate direction
     if (!stockAdjustmentDto.direction || !['increase', 'decrease'].includes(stockAdjustmentDto.direction)) {
       throw new BadRequestException('Direction must be "increase" or "decrease"');
     }
 
-    return this.materialsService.adjustStock(id, stockAdjustmentDto, userId);
+    const userId = req.user?.id || req.user?.sub || 1;
+    return this.materialsService.adjustStock(id, stockAdjustmentDto, userId, buildAuditActorFromRequest(req));
   }
 
   /**
@@ -442,8 +440,8 @@ export class MaterialsController {
    */
   @Delete(':id')
   async remove(@Param('id', ParseIntPipe) id: number, @Request() req: any) {
-    const userId = req.user?.id || 1;
-    await this.materialsService.remove(id, userId);
+    const userId = req.user?.id || req.user?.sub || 1;
+    await this.materialsService.remove(id, userId, buildAuditActorFromRequest(req));
     
     return {
       success: true,

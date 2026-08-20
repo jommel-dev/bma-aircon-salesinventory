@@ -42,6 +42,7 @@ export class ProfileComponent implements OnInit {
     newPassword: '',
     retryNewPassword: '',
   };
+  authorizationPassword = '';
 
   constructor(
     private readonly userManagementService: UserManagementService,
@@ -138,6 +139,12 @@ export class ProfileComponent implements OnInit {
       return;
     }
 
+    const authorizationPassword = String(this.authorizationPassword || '').trim();
+    if (!authorizationPassword) {
+      this.notificationService.warning('Validation', 'Enter your password to authorize profile changes.');
+      return;
+    }
+
     this.isSaving = true;
     try {
       const response = await this.userManagementService.updateUser(userId, {
@@ -147,6 +154,7 @@ export class ProfileComponent implements OnInit {
         birthdate: this.form.birthdate || undefined,
         email,
         profileImage: this.form.profileImage || undefined,
+        authorizationPassword,
       });
 
       if (!response.success) {
@@ -163,6 +171,7 @@ export class ProfileComponent implements OnInit {
       }
 
       this.notificationService.success('Success', 'Profile updated successfully.');
+      this.authorizationPassword = '';
       await this.loadProfile();
     } catch {
       this.notificationService.error('Error', 'Failed to update profile.');

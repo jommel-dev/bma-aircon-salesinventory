@@ -1,4 +1,4 @@
-import { Controller, Get, Param, Query, Req, UseGuards } from '@nestjs/common';
+import { Controller, Get, Param, Query, UseGuards } from '@nestjs/common';
 import { JwtAuthGuard } from 'src/auth/jwt-auth.guard';
 import { AuditLogService } from './audit-log.service';
 
@@ -17,24 +17,12 @@ export class AuditLogController {
       action?: string;
       entityType?: string;
     },
-    @Req() request: { user?: Record<string, unknown> },
   ) {
-    const branchId = Number(request.user?.branchId ?? request.user?.branch_id);
-    return this.auditLogService.findAll(
-      query,
-      Number.isFinite(branchId) && branchId > 0 ? branchId : undefined,
-    );
+    return this.auditLogService.findAll(query);
   }
 
   @Get(':id')
-  findOne(
-    @Param('id') id: string,
-    @Req() request: { user?: Record<string, unknown> },
-  ) {
-    const branchId = Number(request.user?.branchId ?? request.user?.branch_id);
-    return this.auditLogService.findOne(
-      Number(id),
-      Number.isFinite(branchId) && branchId > 0 ? branchId : undefined,
-    );
+  findOne(@Param('id') id: string) {
+    return this.auditLogService.findOne(Number(id));
   }
 }

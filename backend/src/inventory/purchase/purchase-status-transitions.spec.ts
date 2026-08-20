@@ -19,7 +19,7 @@ describe('PurchaseService - Status Transitions', () => {
 
   beforeEach(async () => {
     mockDatabaseService = {
-      query: jest.fn(),
+      query: jest.fn().mockResolvedValue({ rows: [], rowCount: 0 }),
       withTransaction: jest.fn(),
     };
     mockAuditLogService = {
@@ -167,6 +167,7 @@ describe('PurchaseService - Status Transitions', () => {
             }) // SELECT PO with status and po_type
             .mockResolvedValueOnce({ rowCount: 0, rows: [] }) // linked SO check (no transfer)
             .mockResolvedValueOnce({ rowCount: 1 }) // UPDATE status to received
+            .mockResolvedValue({ rows: [], rowCount: 0 }),
         };
         return fn(mockClient);
       });

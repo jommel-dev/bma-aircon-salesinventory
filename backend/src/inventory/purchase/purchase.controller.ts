@@ -239,12 +239,13 @@ export class PurchaseController {
   @Permissions(['purchase-order.button.revert-in-progress', 'purchase-order.revert', 'purchase_order.canUpdate'])
   async revertInProgress(
     @Param('id') id: string,
-    @Req() request: { user?: { sub?: unknown } },
+    @Req() request: { user?: Record<string, unknown>; ip?: string },
   ) {
     const userId = Number(request.user?.sub);
     const result = await this.purchaseService.revertInProgress(
       +id,
       Number.isFinite(userId) ? userId : undefined,
+      this.buildAuditContext(request),
     );
     if (!result.success) {
       if (result.message?.toLowerCase().includes('not found')) {
@@ -260,12 +261,13 @@ export class PurchaseController {
   @Permissions(['purchase-order.button.revert-deliveries', 'purchase-order.revert', 'purchase_order.canUpdate'])
   revertDeliveries(
     @Param('id') id: string,
-    @Req() request: { user?: { sub?: unknown } },
+    @Req() request: { user?: Record<string, unknown>; ip?: string },
   ) {
     const userId = Number(request.user?.sub);
     return this.purchaseService.revertToDeliveries(
       +id,
       Number.isFinite(userId) ? userId : undefined,
+      this.buildAuditContext(request),
     );
   }
 

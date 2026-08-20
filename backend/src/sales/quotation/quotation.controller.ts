@@ -126,6 +126,7 @@ export class QuotationController {
       +id,
       Number.isFinite(userId) ? userId : undefined,
       Number.isFinite(branchId) ? branchId : undefined,
+      this.buildAuditContext(request),
     );
   }
 
@@ -143,6 +144,7 @@ export class QuotationController {
       String(body.password ?? ''),
       Number.isFinite(userId) ? userId : undefined,
       roleName,
+      this.buildAuditContext(request),
     );
   }
 }

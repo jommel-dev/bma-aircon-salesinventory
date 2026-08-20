@@ -9,7 +9,10 @@ describe('AccountingService - normalizeReportPrintSettings signatory fields', ()
 
   beforeEach(() => {
     // Create service instance with a mock database service
-    service = new AccountingService({ query: jest.fn(), withTransaction: jest.fn() } as any);
+    service = new AccountingService(
+      { query: jest.fn(), withTransaction: jest.fn() } as any,
+      { logMutation: jest.fn() } as any,
+    );
   });
 
   const normalize = (payload: unknown): Record<string, unknown> => {

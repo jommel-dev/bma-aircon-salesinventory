@@ -1,5 +1,6 @@
 import { Injectable, BadRequestException } from '@nestjs/common';
 import { DatabaseService } from 'src/database/database.service';
+import { AuditActorContext, AuditLogService } from 'src/audit-log/audit-log.service';
 
 interface BackorderItem {
   salesOrderItemId: number;
@@ -19,7 +20,10 @@ interface BackorderCreationResult {
 
 @Injectable()
 export class BackorderService {
-  constructor(private readonly databaseService: DatabaseService) {}
+  constructor(
+    private readonly databaseService: DatabaseService,
+    private readonly auditLogService: AuditLogService,
+  ) {}
 
   /**
    * Process backorders for a sales order when it transitions to pending/approved status
@@ -209,9 +213,14 @@ export class BackorderService {
   /**
    * Fulfill a backorder (partially or fully)
    */
-  async fulfillBackorder(backorderId: number, fulfillQty: number, userId?: number) {
+  async fulfillBackorder(
+    backorderId: number,
+    fulfillQty: number,
+    userId?: number,
+    auditActor?: AuditActorContext,
+  ) {
     try {
-      return await this.databaseService.withTransaction(async (client) => {
+      const result = await this.databaseService.withTransaction(async (client) => {
         // Fetch backorder details
         const backorderResult = await client.query(
           `SELECT * FROM tblmaterial_backorder WHERE id = $1`,
@@ -269,6 +278,18 @@ export class BackorderService {
 
         return updateResult.rows[0];
       });
+
+      await this.auditLogService.logMutation({
+        action: 'BACKORDER_FULFILL',
+        entityType: 'backorder',
+        entityId: backorderId,
+        actor: auditActor ?? { userId },
+        description: `Fulfilled ${fulfillQty} units on backorder #${backorderId}`,
+        requestBody: { fulfillQty },
+        after: result as Record<string, unknown>,
+      });
+
+      return result;
     } catch (error) {
       throw new BadRequestException(
         error instanceof Error
@@ -281,9 +302,14 @@ export class BackorderService {
   /**
    * Cancel a backorder
    */
-  async cancelBackorder(backorderId: number, reason?: string, userId?: number) {
+  async cancelBackorder(
+    backorderId: number,
+    reason?: string,
+    userId?: number,
+    auditActor?: AuditActorContext,
+  ) {
     try {
-      return await this.databaseService.withTransaction(async (client) => {
+      const result = await this.databaseService.withTransaction(async (client) => {
         // Update backorder status to cancelled
         const updateResult = await client.query(
           `UPDATE tblmaterial_backorder
@@ -322,6 +348,18 @@ export class BackorderService {
 
         return backorder;
       });
+
+      await this.auditLogService.logMutation({
+        action: 'BACKORDER_CANCEL',
+        entityType: 'backorder',
+        entityId: backorderId,
+        actor: auditActor ?? { userId },
+        description: `Cancelled backorder #${backorderId}`,
+        requestBody: { reason: reason ?? null },
+        after: result as Record<string, unknown>,
+      });
+
+      return result;
     } catch (error) {
       throw new BadRequestException(
         error instanceof Error
