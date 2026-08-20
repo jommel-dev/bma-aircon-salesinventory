@@ -2,6 +2,7 @@ import { Module } from '@nestjs/common';
 import { ConfigModule } from '@nestjs/config';
 import { AppController } from './app.controller';
 import { AppService } from './app.service';
+import { AuthGuardsModule } from './auth/auth-guards.module';
 import { LoginModule } from './auth/login/login.module';
 import { DatabaseModule } from './database/database.module';
 import { BrandsModule } from './inventory/brands/brands.module';
@@ -32,6 +33,7 @@ import { DatabaseBackupModule } from './database-backup/database-backup.module';
       envFilePath: [`.env.${process.env.NODE_ENV ?? 'development'}`, '.env'],
     }),
     DatabaseModule,
+    AuthGuardsModule,
     LoginModule,
     BrandsModule,
     ProductsModule,

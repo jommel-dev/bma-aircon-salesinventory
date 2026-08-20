@@ -114,19 +114,19 @@ describe('MaterialsController', () => {
     it('should pass brandId to service when provided', async () => {
       await controller.findAll(undefined, '5');
 
-      expect(mockMaterialsService.findAll).toHaveBeenCalledWith(undefined, 5);
+      expect(mockMaterialsService.findAll).toHaveBeenCalledWith(undefined, 5, undefined);
     });
 
     it('should pass search to service when provided', async () => {
       await controller.findAll('copper', undefined);
 
-      expect(mockMaterialsService.findAll).toHaveBeenCalledWith('copper', undefined);
+      expect(mockMaterialsService.findAll).toHaveBeenCalledWith('copper', undefined, undefined);
     });
 
     it('should pass both brandId and search to service', async () => {
       await controller.findAll('pipe', '3');
 
-      expect(mockMaterialsService.findAll).toHaveBeenCalledWith('pipe', 3);
+      expect(mockMaterialsService.findAll).toHaveBeenCalledWith('pipe', 3, undefined);
     });
 
     it('should return empty items array when no materials found', async () => {

@@ -221,7 +221,7 @@ export class AuditLogService {
     );
 
     const actions = Array.from(
-      new Set(
+      new Set<string>(
         filterResult.rows
           .map((row) => String(row.action ?? '').trim())
           .filter((value) => value.length > 0),
@@ -229,7 +229,7 @@ export class AuditLogService {
     ).sort((left, right) => left.localeCompare(right));
 
     const entityTypes = Array.from(
-      new Set(
+      new Set<string>(
         filterResult.rows
           .map((row) => String(row.entityType ?? '').trim())
           .filter((value) => value.length > 0),

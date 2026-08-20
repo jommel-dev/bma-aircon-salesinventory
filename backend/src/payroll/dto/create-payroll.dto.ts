@@ -54,9 +54,10 @@ export class DailyRecordDto {
   @Min(0)
   commission: number;
 
+  @IsOptional()
   @IsNumber()
   @Min(0)
-  adjustedRate: number;
+  adjustedRate?: number;
 
   @IsOptional()
   @IsNumber()
