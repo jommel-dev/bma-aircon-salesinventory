@@ -1058,15 +1058,16 @@ export class PurchaseService {
 
     const capacityLabel = await this.getCapacityLabelById(executor, input.capacityId);
     const normalizedNetPrice = this.toOptionalNumber(input.unitPrice) ?? 0;
-    const shouldApplyNetPrice = await this.applyApprovedCapacityUnitPriceIfEligible(
+    if (!Number.isFinite(normalizedNetPrice) || normalizedNetPrice < 0.01) {
+      return;
+    }
+
+    await this.applyApprovedCapacityUnitPriceIfEligible(
       executor,
       input.productId,
       input.capacityId,
       normalizedNetPrice,
     );
-    if (!shouldApplyNetPrice) {
-      return;
-    }
 
     const normalizedSupplierId = this.toOptionalNumber(input.vendorId);
     const normalizedPoNo = String(input.purchaseOrderNo ?? '').trim();
@@ -1149,8 +1150,9 @@ export class PurchaseService {
     currentPrice: number,
     incomingPrice: number,
   ): boolean {
-    // Ignore obviously invalid placeholder values from PO input.
-    if (!Number.isFinite(incomingPrice) || incomingPrice <= 1) {
+    // Ignore empty / invalid PO unit costs. Any later order with a real cost
+    // (increase or decrease) should replace the current unit cost.
+    if (!Number.isFinite(incomingPrice) || incomingPrice < 0.01) {
       return false;
     }
 
@@ -1158,13 +1160,7 @@ export class PurchaseService {
       return true;
     }
 
-    if (incomingPrice >= currentPrice) {
-      return true;
-    }
-
-    // "Close" means within 10% below the current unit price.
-    const minimumClosePrice = currentPrice * 0.9;
-    return incomingPrice >= minimumClosePrice;
+    return this.toComparableNumberString(incomingPrice) !== this.toComparableNumberString(currentPrice);
   }
 
   private async applyApprovedCapacityUnitPriceIfEligible(
@@ -1310,6 +1306,110 @@ export class PurchaseService {
     }
 
     return processedItems;
+  }
+
+  private async applyMaterialUnitCostsForPurchase(
+    executor: { query: PoolClient['query'] },
+    purchaseOrderId: number,
+    userId?: number,
+  ): Promise<number> {
+    const itemColumns = await this.getTableColumns(executor, 'tbltransaction_material_items');
+    const materialIdCol = this.pickColumn(itemColumns, ['material_id', 'productId', 'product_id']);
+    const unitPriceCol = this.pickColumn(itemColumns, ['unitPrice', 'unit_price']);
+    const sellPriceCol = this.pickColumn(itemColumns, ['sellPrice', 'sell_price']);
+    const purchaseIdCol = this.pickColumn(itemColumns, ['purchase_id', 'purchaseId']);
+    const transTypeCol = this.pickColumn(itemColumns, ['trans_type', 'transType']);
+
+    if (!materialIdCol || !unitPriceCol || !purchaseIdCol) {
+      return 0;
+    }
+
+    const result = await executor.query<{
+      material_id: string;
+      unit_price: string;
+      sell_price: string | null;
+    }>(
+      `SELECT
+         "${materialIdCol}"::text AS material_id,
+         COALESCE("${unitPriceCol}", 0)::text AS unit_price,
+         ${sellPriceCol ? `COALESCE("${sellPriceCol}", 0)::text` : `'0'`} AS sell_price
+       FROM tbltransaction_material_items
+       WHERE "${purchaseIdCol}" = $1
+       ${transTypeCol ? `AND LOWER(COALESCE("${transTypeCol}", 'purchase')) = 'purchase'` : ''}`,
+      [purchaseOrderId],
+    );
+
+    let updated = 0;
+    for (const row of result.rows) {
+      const materialId = this.toOptionalNumber(row.material_id);
+      const newUnitPrice = this.toOptionalNumber(row.unit_price) ?? 0;
+      const newSellPrice = this.toOptionalNumber(row.sell_price) ?? 0;
+      if (!materialId || newUnitPrice < 0.01) {
+        continue;
+      }
+
+      const currentPrices = await executor.query<{ unit_price: string; sell_price: string }>(
+        `SELECT COALESCE(unit_price, 0)::text AS unit_price, COALESCE(sell_price, 0)::text AS sell_price
+         FROM tblmaterials
+         WHERE id = $1
+         LIMIT 1`,
+        [materialId],
+      );
+      if (currentPrices.rowCount === 0) {
+        continue;
+      }
+
+      const currentUnitPrice = this.toOptionalNumber(currentPrices.rows[0]?.unit_price) ?? 0;
+      const currentSellPrice = this.toOptionalNumber(currentPrices.rows[0]?.sell_price) ?? 0;
+      const unitChanged =
+        this.toComparableNumberString(newUnitPrice) !== this.toComparableNumberString(currentUnitPrice);
+      const sellChanged =
+        newSellPrice > 0
+        && this.toComparableNumberString(newSellPrice) !== this.toComparableNumberString(currentSellPrice);
+
+      if (!unitChanged && !sellChanged) {
+        continue;
+      }
+
+      const updateParts: string[] = ['updated_at = NOW()'];
+      const updateVals: unknown[] = [];
+      if (unitChanged) {
+        updateVals.push(newUnitPrice);
+        updateParts.push(`unit_price = $${updateVals.length}`);
+      }
+      if (sellChanged) {
+        updateVals.push(newSellPrice);
+        updateParts.push(`sell_price = $${updateVals.length}`);
+      }
+      if (userId) {
+        updateVals.push(userId);
+        updateParts.push(`updated_by = $${updateVals.length}`);
+      }
+      updateVals.push(materialId);
+      await executor.query(
+        `UPDATE tblmaterials SET ${updateParts.join(', ')} WHERE id = $${updateVals.length}`,
+        updateVals,
+      );
+
+      try {
+        await executor.query(
+          `INSERT INTO tblmaterial_price_history (material_id, unit_price, sell_price, created_by)
+           VALUES ($1, $2, $3, $4)`,
+          [
+            materialId,
+            newUnitPrice,
+            sellChanged ? newSellPrice : currentSellPrice,
+            userId ?? null,
+          ],
+        );
+      } catch {
+        // Non-fatal — current unit cost is already updated.
+      }
+
+      updated += 1;
+    }
+
+    return updated;
   }
 
   async create(
@@ -2025,6 +2125,8 @@ export class PurchaseService {
                 );
               }
             }
+
+            await this.applyMaterialUnitCostsForPurchase(client, purchaseOrderId, userId);
           }
         }
 
@@ -2387,6 +2489,10 @@ export class PurchaseService {
                 }
               }
             }
+
+            await this.applyMaterialUnitCostsForPurchase(client, id, userId);
+          } else {
+            await this.recordCapacityNetPricesForApprovedPurchase(client, id, userId);
           }
 
           return { purchaseId: id, status: 'received', isTransfer: false };
@@ -2597,6 +2703,8 @@ export class PurchaseService {
             ['completed', id],
           );
 
+          await this.applyMaterialUnitCostsForPurchase(client, id, userId);
+
           // Stock movements already recorded on 'received' transition.
           // completeRequest just finalizes the status.
 
@@ -2691,6 +2799,8 @@ export class PurchaseService {
           `UPDATE tblpurchase_orders SET "${statusColumn}" = $1 WHERE id = $2`,
           ['completed', id],
         );
+
+        await this.recordCapacityNetPricesForApprovedPurchase(client, id, userId);
 
         // 3. Update serial numbers status to in-stock
         await client.query(
