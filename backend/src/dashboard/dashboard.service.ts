@@ -812,6 +812,9 @@ try {
       const openBalancePredicate = this.getOpenBalancePredicate('ss');
       const overdueBalancePredicate = `${openBalancePredicate} AND ss.due_date IS NOT NULL AND (ss.due_date AT TIME ZONE 'UTC')::date < CURRENT_DATE`;
 
+      // Sales Summary is company-wide (no branch filter). Collected sales, unpaid S.O.,
+      // overdues, and cheque/card receivables are shared collectibles and must match
+      // for Sales, Admin, and Superadmin.
       const salesSummaryResult = await this.databaseService.query<SalesFinancialSummaryRow>(
         `${this.getSalesDashboardBaseCte()}
          SELECT
@@ -823,9 +826,7 @@ try {
            COUNT(*) FILTER (WHERE ${overdueBalancePredicate})::text AS "overdueCount",
            COALESCE(SUM(ss.outstanding_receivable_amount) FILTER (WHERE ss.normalized_status IN ('remitted', 'complete', 'completed')), 0)::text AS "chequeAmount",
            COALESCE(SUM(ss.outstanding_receivable_count) FILTER (WHERE ss.normalized_status IN ('remitted', 'complete', 'completed')), 0)::text AS "chequeCount"
-         FROM sales_scope ss
-         WHERE ($1::text IS NULL OR ss.branch_id = $1::text)`,
-        [branchParam],
+         FROM sales_scope ss`,
       );
 
       const activityResult = await this.databaseService.query<ActivityRow>(
@@ -1082,7 +1083,7 @@ try {
 
   async getSalesDetail(
     mode: DashboardSalesDetailMode,
-    branchId?: number,
+    _branchId?: number,
     options?: { page?: number; pageSize?: number; search?: string },
   ): Promise<{
     success: boolean;
@@ -1091,7 +1092,8 @@ try {
     meta?: { page: number; pageSize: number; total: number; totalPages: number };
   }> {
     try {
-      const branchParam = branchId ? String(branchId) : null;
+      // Receivable drill-downs stay company-wide so Sales matches Admin/Superadmin.
+      const branchParam = null;
       const searchParam = String(options?.search ?? '').trim() || null;
       const { page, pageSize, offset } = this.normalizeSalesDetailPagination(options?.page, options?.pageSize);
       const recordedSalesPredicate = this.getRecordedSalesPredicate('ss');
@@ -1371,7 +1373,6 @@ try {
       const message = error instanceof Error ? error.message : 'Unable to load sales detail';
       console.error('[DashboardService.getSalesDetail] failed', {
         mode,
-        branchId,
         options,
         error: message,
       });

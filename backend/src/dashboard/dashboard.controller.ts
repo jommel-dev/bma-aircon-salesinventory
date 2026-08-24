@@ -25,17 +25,18 @@ export class DashboardController {
     };
   }
 
-  @Get('overview')
-  getOverview(@Req() request: { user?: Record<string, unknown> }) {
+  private resolveBranchId(request: { user?: Record<string, unknown> }): number | undefined {
     const effectiveBranchId = Number(
       request.user?.branchId ?? request.user?.branch_id ?? request.user?.branch,
     );
+    return Number.isFinite(effectiveBranchId) && effectiveBranchId > 0
+      ? effectiveBranchId
+      : undefined;
+  }
 
-    return this.dashboardService.getOverview(
-      Number.isFinite(effectiveBranchId) && effectiveBranchId > 0
-        ? effectiveBranchId
-        : undefined,
-    );
+  @Get('overview')
+  getOverview(@Req() request: { user?: Record<string, unknown> }) {
+    return this.dashboardService.getOverview(this.resolveBranchId(request));
   }
 
   @Get('sales-detail')
@@ -44,28 +45,17 @@ export class DashboardController {
     @Query('page') page: string,
     @Query('pageSize') pageSize: string,
     @Query('search') search: string,
-    @Req() request: { user?: Record<string, unknown> },
   ) {
     const validModes = ['sales', 'unpaid', 'overdues', 'cheques'];
     const normalizedMode = validModes.includes(mode)
       ? (mode as 'sales' | 'unpaid' | 'overdues' | 'cheques')
       : 'sales';
 
-    const effectiveBranchId = Number(
-      request.user?.branchId ?? request.user?.branch_id ?? request.user?.branch,
-    );
-
-    return this.dashboardService.getSalesDetail(
-      normalizedMode,
-      Number.isFinite(effectiveBranchId) && effectiveBranchId > 0
-        ? effectiveBranchId
-        : undefined,
-      {
-        page: Number(page),
-        pageSize: Number(pageSize),
-        search,
-      },
-    );
+    return this.dashboardService.getSalesDetail(normalizedMode, undefined, {
+      page: Number(page),
+      pageSize: Number(pageSize),
+      search,
+    });
   }
 
   @Get('operations-detail')
@@ -78,15 +68,9 @@ export class DashboardController {
       ? (mode as 'purchase-orders' | 'credit-terms' | 'paid-purchases' | 'stock-alerts')
       : 'purchase-orders';
 
-    const effectiveBranchId = Number(
-      request.user?.branchId ?? request.user?.branch_id ?? request.user?.branch,
-    );
-
     return this.dashboardService.getOperationsDetail(
       normalizedMode,
-      Number.isFinite(effectiveBranchId) && effectiveBranchId > 0
-        ? effectiveBranchId
-        : undefined,
+      this.resolveBranchId(request),
     );
   }
 
@@ -105,15 +89,9 @@ export class DashboardController {
     },
     @Req() request: { user?: Record<string, unknown> },
   ) {
-    const effectiveBranchId = Number(
-      request.user?.branchId ?? request.user?.branch_id ?? request.user?.branch,
-    );
-
     return this.dashboardService.settleSalesOrder(
       body,
-      Number.isFinite(effectiveBranchId) && effectiveBranchId > 0
-        ? effectiveBranchId
-        : undefined,
+      undefined,
       this.buildAuditContext(request),
     );
   }
@@ -127,15 +105,9 @@ export class DashboardController {
     },
     @Req() request: { user?: Record<string, unknown> },
   ) {
-    const effectiveBranchId = Number(
-      request.user?.branchId ?? request.user?.branch_id ?? request.user?.branch,
-    );
-
     return this.dashboardService.settlePurchaseOrder(
       body,
-      Number.isFinite(effectiveBranchId) && effectiveBranchId > 0
-        ? effectiveBranchId
-        : undefined,
+      this.resolveBranchId(request),
       this.buildAuditContext(request),
     );
   }
@@ -145,15 +117,9 @@ export class DashboardController {
     @Body() body: { paymentId?: number; method?: 'cheque' | 'credit-card' },
     @Req() request: { user?: Record<string, unknown>; ip?: string },
   ) {
-    const effectiveBranchId = Number(
-      request.user?.branchId ?? request.user?.branch_id ?? request.user?.branch,
-    );
-
     return this.dashboardService.verifySalesReceivable(
       body,
-      Number.isFinite(effectiveBranchId) && effectiveBranchId > 0
-        ? effectiveBranchId
-        : undefined,
+      undefined,
       this.buildAuditContext(request),
     );
   }
