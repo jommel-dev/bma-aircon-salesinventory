@@ -44,7 +44,7 @@ export interface LineItem {
   cost: number;         // unit_price from material
   rate: number;         // sell_price, editable
   discount: number;     // fixed amount discount per item
-  qty: number;          // editable, integer 1-99999
+  qty: number;          // editable, integer 1-999999999
   total: number;        // computed: (rate - discount) * qty
   materialId?: number | null;
   isNonInventory: boolean;

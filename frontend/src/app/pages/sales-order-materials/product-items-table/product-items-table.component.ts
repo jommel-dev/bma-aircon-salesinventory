@@ -81,7 +81,7 @@ export class ProductItemsTableComponent {
 
   /**
    * Validates and applies a new QTY value for a line item.
-   * QTY must be an integer, 1–99999.
+   * QTY must be an integer, 1–999999999.
    * If it exceeds stock on hand, a warning message is displayed but the value is still accepted.
    */
   onQtyChange(index: number, value: string): void {

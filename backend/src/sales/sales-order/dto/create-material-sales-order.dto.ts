@@ -73,7 +73,7 @@ export class MaterialSalesOrderProductItemDto {
 
   @IsInt()
   @Min(1)
-  @Max(99999)
+  @Max(999999999)
   qty: number;
 
   @IsBoolean()
