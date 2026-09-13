@@ -109,6 +109,7 @@ export interface PoProductItem {
   id: number;
   transType: string;
   materialId: number | null;
+  productId?: string | number | null;
   materialName: string | null;
   materialCode: string | null;
   materialUnit: string | null;

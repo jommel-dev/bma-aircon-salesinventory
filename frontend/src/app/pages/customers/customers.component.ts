@@ -1,6 +1,7 @@
 import { CommonModule } from '@angular/common';
 import { Component, OnInit } from '@angular/core';
 import { FormsModule } from '@angular/forms';
+import { ActivatedRoute } from '@angular/router';
 import { DomSanitizer, SafeResourceUrl } from '@angular/platform-browser';
 import { PDFDocument, StandardFonts, rgb } from 'pdf-lib';
 import { PageBreadcrumbComponent } from '../../shared/components/common/page-breadcrumb/page-breadcrumb.component';
@@ -75,6 +76,7 @@ export class CustomersComponent implements OnInit {
     private readonly rbacService: RbacService,
     private readonly sanitizer: DomSanitizer,
     private readonly businessSettingsService: BusinessSettingsService,
+    private readonly route: ActivatedRoute,
   ) {}
 
   private mapVendorToStakeholder(vendor: VendorDetail): SalesCustomerDetail {
@@ -100,7 +102,29 @@ export class CustomersComponent implements OnInit {
   }
 
   ngOnInit(): void {
-    void this.loadCustomers();
+    const query = this.route.snapshot.queryParamMap.get('q') ?? '';
+    if (query.trim()) {
+      this.search = query.trim();
+    }
+    void this.loadCustomers().then(() => this.openCustomerFromQuery());
+  }
+
+  private async openCustomerFromQuery(): Promise<void> {
+    const id = this.route.snapshot.queryParamMap.get('id');
+    if (!id) {
+      return;
+    }
+    const existing = this.customers.find((customer) => String(customer.id) === String(id));
+    if (existing) {
+      this.openDetailsDrawer(existing);
+      return;
+    }
+    try {
+      const customer = await this.salesOrderService.getCustomer(id);
+      this.openDetailsDrawer(customer);
+    } catch {
+      // Keep the list visible if the customer cannot be opened.
+    }
   }
 
   get canCreateCustomer(): boolean { return this.rbacService.canAccess('customers', 'canCreate'); }

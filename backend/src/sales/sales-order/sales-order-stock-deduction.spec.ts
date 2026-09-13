@@ -74,7 +74,10 @@ describe('SalesOrderService – material SO stock deduction', () => {
         { provide: MaterialsService, useValue: {} },
         { provide: PurchaseService, useValue: {} },
         { provide: AuditLogService, useValue: { logMutation: jest.fn(), logMutationIfSuccess: jest.fn() } },
-        { provide: BackorderService, useValue: {} },
+        {
+          provide: BackorderService,
+          useValue: { cancelOpenBackordersForSalesOrder: jest.fn().mockResolvedValue(0) },
+        },
       ],
     }).compile();
 
@@ -245,6 +248,7 @@ describe('SalesOrderService – material SO stock deduction', () => {
       // material 5 unchanged; material 8 qty +2
       queue(
         { rows: [{ id: 8 }] }, // FOR UPDATE material 8
+        { rows: [{ net_qty: 1 }] },
         { rows: [{ available_stock: 10 }] },
         { rows: [], rowCount: 1 }, // UPDATE on_hand
       );
@@ -276,6 +280,7 @@ describe('SalesOrderService – material SO stock deduction', () => {
     it('deducts only the increased qty delta', async () => {
       queue(
         { rows: [{ id: 5 }] },
+        { rows: [{ net_qty: 10 }] },
         { rows: [{ available_stock: 50 }] },
         { rows: [], rowCount: 1 },
       );
@@ -351,6 +356,7 @@ describe('SalesOrderService – material SO stock deduction', () => {
     it('deducts stock when a new material line is added', async () => {
       queue(
         { rows: [{ id: 9 }] },
+        { rows: [{ net_qty: 0 }] },
         { rows: [{ available_stock: 7 }] },
         { rows: [], rowCount: 1 },
       );
@@ -397,9 +403,49 @@ describe('SalesOrderService – material SO stock deduction', () => {
       );
     });
 
+    it('does not re-deduct when previous snapshot is missing but stock was already taken', async () => {
+      queue(
+        { rows: [{ id: 5 }] },
+        { rows: [{ net_qty: 10 }] },
+      );
+
+      await callAdjust(
+        100,
+        [],
+        [{ materialId: 5, qty: 10, isNonInventory: false }],
+      );
+
+      expect(materialStockService.recordMovement).not.toHaveBeenCalled();
+    });
+
+    it('deducts only the extra qty when previous snapshot is missing', async () => {
+      queue(
+        { rows: [{ id: 5 }] },
+        { rows: [{ net_qty: 10 }] },
+        { rows: [{ available_stock: 20 }] },
+        { rows: [], rowCount: 1 },
+      );
+
+      await callAdjust(
+        100,
+        [],
+        [{ materialId: 5, qty: 15, isNonInventory: false }],
+      );
+
+      expect(materialStockService.recordMovement).toHaveBeenCalledWith(
+        expect.objectContaining({
+          materialId: 5,
+          movementType: 'OUT',
+          qty: 5,
+        }),
+        expect.anything(),
+      );
+    });
+
     it('skips increase deduct when available stock is zero', async () => {
       queue(
         { rows: [{ id: 5 }] },
+        { rows: [{ net_qty: 1 }] },
         { rows: [{ available_stock: 0 }] },
       );
 

@@ -26,6 +26,10 @@ if (!configuredApiBaseUrl && isProductionBuild) {
 }
 
 const API_BASE_URL = configuredApiBaseUrl || (isLocalHost ? 'http://localhost:3000' : fallbackProductionApiBaseUrl);
+
+export function getApiBaseUrl(): string {
+  return API_BASE_URL.replace(/\/+$/, '');
+}
 const ACTIVE_BRANCH_STORAGE_KEY = 'activeBranchId';
 
 export const apiClient = axios.create({

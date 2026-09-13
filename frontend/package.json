@@ -8,6 +8,7 @@
     "build:prod": "ng build --configuration production",
     "watch": "ng build --watch --configuration development",
     "test": "ng test",
+    "test:e2e": "npm --prefix ../e2e test",
     "firebase:deploy": "npx firebase-tools deploy --only hosting",
     "deploy:firebase": "npm run build:prod && npm run firebase:deploy"
   },
@@ -42,6 +43,7 @@
     "postcss": "^8.5.6",
     "prismjs": "^1.30.0",
     "rxjs": "~7.8.0",
+    "socket.io-client": "^4.8.3",
     "swiper": "^11.2.10",
     "tailwindcss": "^4.1.11",
     "tslib": "^2.3.0",

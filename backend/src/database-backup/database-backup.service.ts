@@ -1,6 +1,14 @@
 import { Injectable } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
+import { PoolClient } from 'pg';
 import { DatabaseService } from 'src/database/database.service';
+import {
+  buildImportBatches,
+  ImportBatch,
+  isIgnorableImportError,
+  isRetryableImportError,
+  splitSqlStatements,
+} from './sql-import.util';
 
 export type BackupMode = 'full' | 'schema_only' | 'data_only';
 
@@ -35,6 +43,12 @@ export class DatabaseBackupService {
     if (this.setupProgress.status === 'running') return;
     this.setupProgress = { status: 'running', progress: 0, total: 0, message: 'Starting...', error: '' };
     void this.runSchemaSetup();
+  }
+
+  startSqlImport(sql: string): void {
+    if (this.setupProgress.status === 'running') return;
+    this.setupProgress = { status: 'running', progress: 0, total: 0, message: 'Preparing backup import...', error: '' };
+    void this.runSqlImport(sql);
   }
 
   private async runSchemaSetup(): Promise<void> {
@@ -259,69 +273,200 @@ export class DatabaseBackupService {
   }
 
   /**
-   * Execute SQL statements directly (no blank check — caller must verify).
+   * Execute SQL in Supabase-safe batches. Never sends the whole dump as one query
+   * and never falls back to one round-trip per INSERT.
    */
   async executeSql(sql: string): Promise<{ success: boolean; message: string }> {
+    return this.runBatchedSql(sql, { updateProgress: false });
+  }
+
+  private async runSqlImport(sql: string): Promise<void> {
     try {
-      // Try executing the entire SQL as a single batch first (much faster for remote DBs)
-      try {
-        await this.db.query(sql);
-        return { success: true, message: 'Database imported successfully (batch mode).' };
-      } catch (batchErr: any) {
-        // If batch fails, fall back to statement-by-statement execution
-        console.warn('Batch SQL execution failed, falling back to statement-by-statement:', batchErr?.message?.slice(0, 200));
+      const result = await this.runBatchedSql(sql, { updateProgress: true });
+      if (result.success) {
+        this.setupProgress = {
+          status: 'done',
+          progress: this.setupProgress.total,
+          total: this.setupProgress.total,
+          message: result.message,
+          error: '',
+        };
+      } else {
+        this.setupProgress = { ...this.setupProgress, status: 'error', error: result.message };
+      }
+    } catch (err: any) {
+      this.setupProgress = { ...this.setupProgress, status: 'error', error: err?.message ?? 'Unknown import error' };
+    }
+  }
+
+  private async runBatchedSql(
+    sql: string,
+    options: { updateProgress: boolean },
+  ): Promise<{ success: boolean; message: string }> {
+    try {
+      const batches = buildImportBatches(sql);
+      if (batches.length === 0) {
+        return { success: false, message: 'Backup file contained no executable SQL statements.' };
       }
 
-      // Fallback: split and execute one by one
-      const statements = this.splitSqlStatements(sql);
-      let executed = 0;
-      let skipped = 0;
-      const errors: string[] = [];
+      if (options.updateProgress) {
+        this.setupProgress.total = batches.length;
+        this.setupProgress.progress = 0;
+        this.setupProgress.message = `Prepared ${batches.length} import batches...`;
+      }
 
-      for (const stmt of statements) {
-        const trimmed = stmt.trim();
-        if (!trimmed) continue;
+      return await this.db.withClient(async (client) => {
+        await this.prepareImportSession(client);
 
-        // Skip standalone BEGIN/COMMIT (we execute each statement in autocommit)
-        const upper = trimmed.toUpperCase();
-        if (upper === 'BEGIN;' || upper === 'BEGIN' || upper === 'COMMIT;' || upper === 'COMMIT') {
-          skipped++;
-          continue;
-        }
+        let executed = 0;
+        let skipped = 0;
+        const errors: string[] = [];
 
-        try {
-          await this.db.query(trimmed);
-          executed++;
-        } catch (stmtErr: any) {
-          const msg = stmtErr?.message ?? '';
-          // Skip non-critical errors
-          if (
-            msg.includes('already exists') ||
-            msg.includes('duplicate key') ||
-            msg.includes('does not exist') ||
-            msg.includes('could not create unique index')
-          ) {
-            skipped++;
-            continue;
+        for (let i = 0; i < batches.length; i++) {
+          const batch = batches[i];
+          if (options.updateProgress) {
+            this.setupProgress.progress = i;
+            this.setupProgress.message = this.describeImportBatch(batch, i, batches.length);
           }
-          // Log but don't stop on other errors
-          console.warn('SQL import warning:', msg.slice(0, 300));
-          errors.push(msg.slice(0, 100));
-          skipped++;
-        }
-      }
 
-      const errSummary = errors.length > 0 ? ` (${errors.length} warnings)` : '';
-      return {
-        success: true,
-        message: `Database imported successfully. ${executed} statements executed, ${skipped} skipped${errSummary}.`,
-      };
+          const result = await this.executeImportBatch(client, batch);
+          executed += result.executed;
+          skipped += result.skipped;
+          errors.push(...result.errors);
+
+          if (options.updateProgress) {
+            this.setupProgress.progress = i + 1;
+          }
+
+          if (batch.phase === 'data' && i < batches.length - 1) {
+            await this.sleep(25);
+          }
+        }
+
+        await this.restoreImportSession(client);
+
+        const errSummary = errors.length > 0 ? ` (${errors.length} warnings)` : '';
+        return {
+          success: true,
+          message: `Database imported successfully. ${executed} batches executed, ${skipped} skipped${errSummary}.`,
+        };
+      });
     } catch (err: any) {
       return {
         success: false,
         message: err?.message ?? 'Failed to import database.',
       };
     }
+  }
+
+  private describeImportBatch(batch: ImportBatch, index: number, total: number): string {
+    const labels: Record<string, string> = {
+      function: 'Creating functions',
+      sequence: 'Creating sequences',
+      table: 'Creating tables',
+      view: 'Creating views',
+      other: 'Applying schema',
+      data: batch.tableName ? `Importing ${batch.tableName}` : 'Importing data',
+      seqreset: 'Resetting sequences',
+      index: 'Creating indexes',
+      fk: 'Adding foreign keys',
+      trigger: 'Creating triggers',
+    };
+    return `${labels[batch.phase] ?? 'Importing'} (${index + 1} / ${total})`;
+  }
+
+  private async prepareImportSession(client: PoolClient): Promise<void> {
+    await client.query('SET statement_timeout = 0');
+    await client.query('SET lock_timeout = 0');
+    await client.query("SET client_encoding = 'UTF8'");
+    await client.query('SET standard_conforming_strings = on');
+    await client.query(`SET search_path = ${this.schema}, pg_catalog`);
+    try {
+      await client.query("SET session_replication_role = 'replica'");
+    } catch {
+      // Supabase may deny this; FK/trigger creation is already deferred until after data.
+    }
+  }
+
+  private async restoreImportSession(client: PoolClient): Promise<void> {
+    try {
+      await client.query("SET session_replication_role = 'origin'");
+    } catch {
+      // Ignore if the role was never changed.
+    }
+  }
+
+  private async executeImportBatch(
+    client: PoolClient,
+    batch: ImportBatch,
+  ): Promise<{ executed: number; skipped: number; errors: string[] }> {
+    try {
+      await this.queryWithRetry(client, batch.sql);
+      return { executed: 1, skipped: 0, errors: [] };
+    } catch (batchErr: any) {
+      const batchMsg = batchErr?.message ?? '';
+      if (isIgnorableImportError(batchMsg)) {
+        return { executed: 0, skipped: 1, errors: [] };
+      }
+
+      if (batch.statementCount > 1) {
+        return this.executeImportStatements(client, splitSqlStatements(batch.sql));
+      }
+
+      console.warn('SQL import warning:', batchMsg.slice(0, 300));
+      return { executed: 0, skipped: 1, errors: [batchMsg.slice(0, 120)] };
+    }
+  }
+
+  private async executeImportStatements(
+    client: PoolClient,
+    statements: string[],
+  ): Promise<{ executed: number; skipped: number; errors: string[] }> {
+    let executed = 0;
+    let skipped = 0;
+    const errors: string[] = [];
+
+    for (const statement of statements) {
+      const trimmed = statement.trim();
+      if (!trimmed) continue;
+      try {
+        await this.queryWithRetry(client, trimmed);
+        executed++;
+      } catch (stmtErr: any) {
+        const msg = stmtErr?.message ?? '';
+        if (isIgnorableImportError(msg)) {
+          skipped++;
+          continue;
+        }
+        console.warn('SQL import warning:', msg.slice(0, 300));
+        errors.push(msg.slice(0, 120));
+        skipped++;
+      }
+    }
+
+    return { executed, skipped, errors };
+  }
+
+  private async queryWithRetry(client: PoolClient, sql: string, attempts = 4): Promise<void> {
+    let lastError: any;
+    for (let attempt = 1; attempt <= attempts; attempt++) {
+      try {
+        await client.query(sql);
+        return;
+      } catch (err: any) {
+        lastError = err;
+        const message = err?.message ?? '';
+        if (!isRetryableImportError(message) || attempt === attempts) {
+          throw err;
+        }
+        await this.sleep(400 * attempt);
+      }
+    }
+    throw lastError;
+  }
+
+  private sleep(ms: number): Promise<void> {
+    return new Promise((resolve) => setTimeout(resolve, ms));
   }
 
   // ─── Private Helpers ────────────────────────────────────────────────────────
@@ -706,56 +851,6 @@ export class DatabaseBackupService {
     return `'${String(value).replace(/'/g, "''")}'`;
   }
 
-  private splitSqlStatements(sql: string): string[] {
-    const statements: string[] = [];
-    let current = '';
-    let inDollarQuote = false;
-    let dollarTag = '';
-    const lines = sql.split('\n');
-
-    for (const line of lines) {
-      // Skip pure comment lines only when NOT in a dollar-quoted block
-      if (!inDollarQuote && line.trim().startsWith('--')) {
-        continue;
-      }
-
-      // Check for $$ or $tag$ delimiters
-      // Count occurrences properly — each pair toggles the state
-      const dollarMatches = line.match(/\$([a-zA-Z_]*)\$/g);
-      if (dollarMatches) {
-        for (const match of dollarMatches) {
-          if (!inDollarQuote) {
-            inDollarQuote = true;
-            dollarTag = match;
-          } else if (match === dollarTag) {
-            inDollarQuote = false;
-            dollarTag = '';
-          }
-        }
-      }
-
-      current += line + '\n';
-
-      // If not in a dollar-quoted block and line ends with ;
-      if (!inDollarQuote && line.trimEnd().endsWith(';')) {
-        const trimmed = current.trim();
-        if (trimmed && !trimmed.startsWith('--')) {
-          statements.push(trimmed);
-        }
-        current = '';
-      }
-    }
-
-    if (current.trim()) {
-      const trimmed = current.trim();
-      if (trimmed && !trimmed.startsWith('--')) {
-        statements.push(trimmed);
-      }
-    }
-
-    return statements;
-  }
-
   private async recordBackupHistory(
     mode: BackupMode,
     filename: string,
@@ -933,68 +1028,8 @@ export class DatabaseBackupService {
       }
     }
 
-    // Try batch execution first
-    this.setupProgress.message = 'Executing schema (batch mode)...';
-    this.setupProgress.total = 1;
-
-    try {
-      await this.db.query(schemaSql);
-      this.setupProgress.progress = 1;
-      return { success: true, message: 'Database initialized successfully (batch mode).' };
-    } catch (batchErr: any) {
-      console.warn('Batch execution failed, falling back to statement-by-statement:', batchErr?.message?.slice(0, 200));
-    }
-
-    // Fallback: statement by statement with progress
-    this.setupProgress.message = 'Splitting SQL statements...';
-    const statements = this.splitSqlStatements(schemaSql);
-    const total = statements.length;
-    this.setupProgress.total = total;
-    this.setupProgress.progress = 0;
-
-    let executed = 0;
-    let skipped = 0;
-
-    for (let i = 0; i < statements.length; i++) {
-      const trimmed = statements[i].trim();
-      if (!trimmed) { skipped++; this.setupProgress.progress = i + 1; continue; }
-
-      const upper = trimmed.toUpperCase();
-      if (upper === 'BEGIN;' || upper === 'BEGIN' || upper === 'COMMIT;' || upper === 'COMMIT') {
-        skipped++;
-        this.setupProgress.progress = i + 1;
-        continue;
-      }
-
-      // Update progress message every 10 statements
-      if (i % 10 === 0) {
-        this.setupProgress.message = `Executing statement ${i + 1} of ${total}...`;
-      }
-      this.setupProgress.progress = i + 1;
-
-      try {
-        await this.db.query(trimmed);
-        executed++;
-      } catch (stmtErr: any) {
-        const msg = stmtErr?.message ?? '';
-        if (
-          msg.includes('already exists') ||
-          msg.includes('duplicate key') ||
-          msg.includes('does not exist') ||
-          msg.includes('could not create unique index')
-        ) {
-          skipped++;
-          continue;
-        }
-        console.warn(`SQL statement ${i + 1} warning:`, msg.slice(0, 200));
-        skipped++;
-      }
-    }
-
-    return {
-      success: true,
-      message: `Database initialized. ${executed} executed, ${skipped} skipped.`,
-    };
+    this.setupProgress.message = 'Applying schema in safe batches...';
+    return this.runBatchedSql(schemaSql, { updateProgress: true });
   }
 
   /**

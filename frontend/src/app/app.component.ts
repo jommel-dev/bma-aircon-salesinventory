@@ -3,6 +3,7 @@ import { RouterModule } from '@angular/router';
 import { IdleSessionService } from './shared/services/idle-session.service';
 import { NotificationToastComponent } from './shared/components/common/notification-toast/notification-toast.component';
 import { RbacService } from './shared/services/rbac.service';
+import { StockRealtimeService } from './shared/services/stock-realtime.service';
 import { Title } from '@angular/platform-browser';
 
 @Component({
@@ -20,11 +21,13 @@ export class AppComponent implements OnInit {
     private readonly idleSessionService: IdleSessionService,
     private readonly rbacService: RbacService,
     private readonly titleService: Title,
+    private readonly stockRealtimeService: StockRealtimeService,
   ) { }
 
   ngOnInit(): void {
     this.idleSessionService.start();
     void this.rbacService.syncEffectivePermissions();
+    this.stockRealtimeService.connect();
     // void this.appTitle();
   }
 

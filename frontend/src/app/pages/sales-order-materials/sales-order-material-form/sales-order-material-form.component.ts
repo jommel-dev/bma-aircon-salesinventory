@@ -16,6 +16,8 @@ import {
   SalesOrderMaterialService,
 } from '../../../shared/services/sales-order-material.service';
 import { NotificationService } from '../../../shared/services/notification.service';
+import { StockRealtimeService } from '../../../shared/services/stock-realtime.service';
+import { Subscription } from 'rxjs';
 import {
   PrintSalesOrderService,
   PrintSalesOrderData,
@@ -64,6 +66,7 @@ export class SalesOrderMaterialFormComponent implements OnInit, OnDestroy {
 
   // ─── Product Items (managed by child component in later tasks) ──────────────
   productItems: LineItem[] = [];
+  private loadedQtyByMaterial = new Map<number, number>();
 
   // ─── Form State ─────────────────────────────────────────────────────────────
   remarks = '';
@@ -115,6 +118,7 @@ export class SalesOrderMaterialFormComponent implements OnInit, OnDestroy {
 
   private customerDebounceTimer: ReturnType<typeof setTimeout> | null = null;
   private materialSearchDebounceTimer: ReturnType<typeof setTimeout> | null = null;
+  private stockUpdatesSub: Subscription | null = null;
   private readonly debounceMs = 300;
 
   constructor(
@@ -125,6 +129,7 @@ export class SalesOrderMaterialFormComponent implements OnInit, OnDestroy {
     private readonly notificationService: NotificationService,
     private readonly printSalesOrderService: PrintSalesOrderService,
     private readonly sanitizer: DomSanitizer,
+    private readonly stockRealtimeService: StockRealtimeService,
   ) {}
 
   private readonly DRAFT_STORAGE_KEY = 'so_material_form_draft';
@@ -136,6 +141,10 @@ export class SalesOrderMaterialFormComponent implements OnInit, OnDestroy {
     this.paymentDetails = [this.createEmptyPaymentDetail()];
 
     void this.loadCustomerOptions();
+    this.stockRealtimeService.connect();
+    this.stockUpdatesSub = this.stockRealtimeService.updates$.subscribe((items) => {
+      this.applyLiveStockUpdates(items);
+    });
 
     if (this.orderId) {
       void this.loadExistingOrder();
@@ -152,6 +161,12 @@ export class SalesOrderMaterialFormComponent implements OnInit, OnDestroy {
     if (this.draftAutoSaveTimer) {
       clearInterval(this.draftAutoSaveTimer);
       this.draftAutoSaveTimer = null;
+    }
+    this.stockUpdatesSub?.unsubscribe();
+    this.stockUpdatesSub = null;
+    if (this.stockRefreshTimer) {
+      clearTimeout(this.stockRefreshTimer);
+      this.stockRefreshTimer = null;
     }
   }
 
@@ -417,6 +432,7 @@ export class SalesOrderMaterialFormComponent implements OnInit, OnDestroy {
     this.materialSearchResults = [];
     this.isMaterialDropdownOpen = false;
     this.materialSearchNoResults = false;
+    void this.refreshLiveStock();
   }
 
   /** Validation error specific to non-inventory item addition. */
@@ -744,37 +760,104 @@ export class SalesOrderMaterialFormComponent implements OnInit, OnDestroy {
    * The backorder system will automatically create negative stock records when order is pending.
    * Returns { warnings: [], errors: [] }
    */
-  private validateStockAvailability(): { warnings: string[]; errors: string[] } {
+  private stockRefreshTimer: ReturnType<typeof setTimeout> | null = null;
+
+  private applyLiveStockUpdates(
+    items: Array<{ materialId: number; availableQty: number }>,
+  ): void {
+    const availableByMaterial = new Map(
+      items.map((item) => [item.materialId, item.availableQty]),
+    );
+    this.productItems = this.productItems.map((item) => {
+      const materialId = Number(item.materialId ?? 0);
+      if (!materialId || item.isNonInventory || !availableByMaterial.has(materialId)) {
+        return item;
+      }
+      return { ...item, onHandStock: availableByMaterial.get(materialId) };
+    });
+  }
+
+  private async refreshLiveStock(): Promise<void> {
+    const inventoryItems = this.productItems.filter(
+      (item) => !item.isNonInventory && Number(item.materialId ?? 0) > 0,
+    );
+    if (inventoryItems.length === 0) {
+      return;
+    }
+
+    try {
+      const result = await this.salesOrderMaterialService.checkMaterialStock(
+        inventoryItems.map((item) => ({
+          materialId: Number(item.materialId),
+          qty: Number(item.qty) || 0,
+          isNonInventory: false,
+        })),
+        this.orderId ?? undefined,
+      );
+      const availableByMaterial = new Map(
+        (result.items ?? []).map((row) => [row.materialId, row.availableQty]),
+      );
+      this.productItems = this.productItems.map((item) => {
+        const materialId = Number(item.materialId ?? 0);
+        if (!materialId || item.isNonInventory || !availableByMaterial.has(materialId)) {
+          return item;
+        }
+        return { ...item, onHandStock: availableByMaterial.get(materialId) };
+      });
+    } catch {
+      // Keep the last known stock figures if the live check fails.
+    }
+  }
+
+  private validateStockAvailability(submissionStatus?: string): { warnings: string[]; errors: string[] } {
     const warnings: string[] = [];
     const errors: string[] = [];
+    const status = (this.orderStatus ?? '').toLowerCase();
+    const isCompletedEdit = status === 'complete' || status === 'completed';
+    const byMaterial = new Map<
+      number,
+      { qty: number; stock: number; description: string }
+    >();
 
-    this.productItems.forEach((item) => {
-      // Skip non-inventory items
+    for (const item of this.productItems) {
       if (item.isNonInventory) {
-        return;
+        continue;
+      }
+      const materialId = Number(item.materialId ?? 0);
+      if (!materialId || item.onHandStock == null) {
+        continue;
       }
 
-      // Skip items without stock information (e.g., non-inventory or missing data)
-      if (item.onHandStock == null) {
-        return;
+      const current = byMaterial.get(materialId) ?? {
+        qty: 0,
+        stock: Number(item.onHandStock) || 0,
+        description: item.description,
+      };
+      current.qty += Number(item.qty) || 0;
+      current.stock = Number(item.onHandStock) || 0;
+      current.description = item.description;
+      byMaterial.set(materialId, current);
+    }
+
+    for (const [materialId, row] of byMaterial) {
+      const originalQty = this.loadedQtyByMaterial.get(materialId) ?? 0;
+      const qtyToCheck = isCompletedEdit ? Math.max(0, row.qty - originalQty) : row.qty;
+      if (qtyToCheck <= 0) {
+        continue;
       }
 
-      const stock = item.onHandStock;
-      const qty = item.qty;
-      const description = item.description;
+      const message =
+        row.stock <= 0
+          ? `${row.description}: no available stock for ${qtyToCheck} unit(s).`
+          : qtyToCheck > row.stock
+            ? `${row.description}: ordered ${qtyToCheck}, available ${row.stock}. Shortage ${qtyToCheck - row.stock}.`
+            : '';
+      if (!message) {
+        continue;
+      }
 
-      // Zero stock - Warning (backorder will be created automatically)
-      if (stock === 0) {
-        warnings.push(`⚠️ ${description}: No stock on hand. Will be recorded as backorder (negative stock).`);
-      }
-      // Quantity greater than stock - Warning (backorder will be created automatically)
-      else if (qty > stock) {
-        const excessQty = qty - stock;
-        warnings.push(
-          `⚠️ ${description}: Quantity (${qty}) exceeds stock (${stock}). ${excessQty} unit(s) will be recorded as backorder.`,
-        );
-      }
-    });
+      warnings.push(`⚠️ ${message} Shortage will be fulfilled as a backorder.`);
+    }
 
     return { warnings, errors };
   }
@@ -954,12 +1037,18 @@ export class SalesOrderMaterialFormComponent implements OnInit, OnDestroy {
   }
 
   async proceedWithSubmission(): Promise<void> {
+    if (this.isSubmitting) return;
+    this.isSubmitting = true;
     this.isValidationModalOpen = false;
-    if (this.pendingPostComplete) {
-      this.pendingPostComplete = false;
-      await this.performSubmissionWithPostComplete(this.pendingSubmissionStatus);
-    } else {
-      await this.performSubmission(this.pendingSubmissionStatus);
+    try {
+      if (this.pendingPostComplete) {
+        this.pendingPostComplete = false;
+        await this.performSubmissionWithPostComplete(this.pendingSubmissionStatus);
+      } else {
+        await this.performSubmission(this.pendingSubmissionStatus);
+      }
+    } finally {
+      this.isSubmitting = false;
     }
   }
 
@@ -984,8 +1073,9 @@ export class SalesOrderMaterialFormComponent implements OnInit, OnDestroy {
       const isDraft = status === 'draft';
 
       if (!isDraft) {
+        await this.refreshLiveStock();
         // Validate stock availability
-        const { warnings: stockWarnings, errors: stockErrors } = this.validateStockAvailability();
+        const { warnings: stockWarnings, errors: stockErrors } = this.validateStockAvailability(status);
 
         // Validate payment setup
         const { errors: paymentErrors } = this.validatePaymentSetup();
@@ -1054,7 +1144,8 @@ export class SalesOrderMaterialFormComponent implements OnInit, OnDestroy {
       const isDraft = status === 'draft';
 
       if (!isDraft) {
-        const { warnings: stockWarnings, errors: stockErrors } = this.validateStockAvailability();
+        await this.refreshLiveStock();
+        const { warnings: stockWarnings, errors: stockErrors } = this.validateStockAvailability(status);
         const { errors: paymentErrors } = this.validatePaymentSetup();
         const allErrors = [...stockErrors, ...paymentErrors];
 
@@ -1083,7 +1174,7 @@ export class SalesOrderMaterialFormComponent implements OnInit, OnDestroy {
         resultOrderId = this.orderId;
       } else {
         const result = await this.salesOrderMaterialService.createMaterialSalesOrder(payload);
-        resultOrderId = result?.data?.salesOrderId ?? null;
+        resultOrderId = result?.data?.salesOrderId ?? result?.salesOrderId ?? result?.id ?? null;
       }
 
       this.notificationService.success('Success', 'Order completed successfully.');
@@ -1274,6 +1365,17 @@ export class SalesOrderMaterialFormComponent implements OnInit, OnDestroy {
         onHandStock: item.onHandStock ?? undefined,
         reorderLevel: item.reorderLevel ?? undefined,
       }));
+      this.loadedQtyByMaterial = new Map<number, number>();
+      for (const item of this.productItems) {
+        const materialId = Number(item.materialId ?? 0);
+        if (!materialId || item.isNonInventory) {
+          continue;
+        }
+        this.loadedQtyByMaterial.set(
+          materialId,
+          (this.loadedQtyByMaterial.get(materialId) ?? 0) + Number(item.qty ?? 0),
+        );
+      }
 
       // Order status
       this.orderStatus = order.status ?? '';

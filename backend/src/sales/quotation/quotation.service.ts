@@ -6,6 +6,7 @@ import { CreateQuotationDto } from './dto/create-quotation.dto';
 import { ListQuotationQueryDto } from './dto/list-quotation-query.dto';
 import { UpdateQuotationDto } from './dto/update-quotation.dto';
 import { AuditActorContext, AuditLogService } from 'src/audit-log/audit-log.service';
+import { BackorderService } from '../backorder/backorder.service';
 
 type TableQueryExecutor = { query: PoolClient['query'] };
 
@@ -16,6 +17,7 @@ export class QuotationService {
   constructor(
     private readonly databaseService: DatabaseService,
     private readonly auditLogService: AuditLogService,
+    private readonly backorderService: BackorderService,
   ) {}
 
   private async getQuotationAuditSnapshot(id: number): Promise<Record<string, unknown> | null> {
@@ -173,6 +175,35 @@ export class QuotationService {
          AND expires_at IS NOT NULL
          AND expires_at <= NOW()`
     );
+  }
+
+  private isMaterialQuotationLine(item: {
+    description?: unknown;
+    materialId?: unknown;
+    itemCode?: unknown;
+    rate?: unknown;
+    isNonInventory?: unknown;
+    productId?: unknown;
+    capacityId?: unknown;
+  }): boolean {
+    const materialId = this.toOptionalNumber(item.materialId);
+    if (materialId != null && materialId > 0) {
+      return true;
+    }
+    if (item.isNonInventory === true) {
+      return true;
+    }
+    if (item.itemCode != null && String(item.itemCode).trim() !== '') {
+      return true;
+    }
+
+    const productId = this.toOptionalNumber(item.productId);
+    const capacityId = this.toOptionalNumber(item.capacityId);
+    if (productId != null || capacityId != null) {
+      return false;
+    }
+
+    return Boolean(item.description) || item.rate != null;
   }
 
   private calculateItemLineTotal(item: {
@@ -520,7 +551,7 @@ export class QuotationService {
 
         for (const item of productItems) {
           // Determine if this is a material-style item or AC unit item
-          const isMaterialItem = item.description || item.materialId != null || item.rate != null;
+          const isMaterialItem = this.isMaterialQuotationLine(item);
 
           let unitPrice: number;
           let sellPrice: number;
@@ -948,6 +979,7 @@ export class QuotationService {
       return { success: false, message: 'Invalid quotation id' };
     }
 
+    const hasProductItems = Array.isArray(updateQuotationDto.productItems);
     const productItems = Array.isArray(updateQuotationDto.productItems)
       ? updateQuotationDto.productItems
       : [];
@@ -970,6 +1002,7 @@ export class QuotationService {
           customerContactNumber: string | null;
           customerEmail: string | null;
           customerTinNumber: string | null;
+          totalAmount: string | null;
         }>(
           `SELECT
              id,
@@ -982,7 +1015,8 @@ export class QuotationService {
              customer_contact_person AS "customerContactPerson",
              customer_contact_number AS "customerContactNumber",
              customer_email AS "customerEmail",
-             customer_tin_number AS "customerTinNumber"
+             customer_tin_number AS "customerTinNumber",
+             total_amount::text AS "totalAmount"
            FROM tblquotation
            WHERE id = $1
            LIMIT 1`,
@@ -1072,10 +1106,13 @@ export class QuotationService {
           patchRecord.branch_id = branchId;
         }
 
-        let totalAmount = this.toOptionalNumber(updateQuotationDto.totalAmount) ?? 0;
-        if (productItems.length > 0) {
+        let totalAmount =
+          this.toOptionalNumber(updateQuotationDto.totalAmount) ??
+          this.toOptionalNumber(existingResult.rows[0].totalAmount) ??
+          0;
+        if (hasProductItems && productItems.length > 0) {
           const computedTotal = productItems.reduce((sum, item) => {
-            const isMaterialItem = item.description || item.materialId != null || item.rate != null;
+            const isMaterialItem = this.isMaterialQuotationLine(item);
 
             if (isMaterialItem) {
               const rate = Number(item.rate ?? item.sellPrice ?? 0);
@@ -1089,9 +1126,11 @@ export class QuotationService {
 
           totalAmount = computedTotal > 0
             ? computedTotal
-            : (this.toOptionalNumber(updateQuotationDto.totalAmount) ?? 0);
+            : (this.toOptionalNumber(updateQuotationDto.totalAmount) ?? totalAmount);
+          patchRecord.total_amount = totalAmount;
+        } else if (updateQuotationDto.totalAmount !== undefined && !hasProductItems) {
+          patchRecord.total_amount = totalAmount;
         }
-        patchRecord.total_amount = totalAmount;
         patchRecord.expires_at = this.computeExpiresAt(nextQuoteDate, nextValidityDays);
 
         if (Object.keys(patchRecord).length > 0) {
@@ -1111,7 +1150,7 @@ export class QuotationService {
           await client.query(`DELETE FROM tblquotation_items WHERE quotation_id = $1`, [id]);
 
           for (const item of productItems) {
-            const isMaterialItem = item.description || item.materialId != null || item.rate != null;
+            const isMaterialItem = this.isMaterialQuotationLine(item);
 
             let unitPrice: number;
             let sellPrice: number;
@@ -1298,6 +1337,7 @@ export class QuotationService {
           remarks: string | null;
           convertedSalesId: string | null;
           isDeleted: boolean | null;
+          expiresAt: string | null;
         }>(
           `SELECT
              q.id,
@@ -1314,10 +1354,12 @@ export class QuotationService {
              COALESCE(to_jsonb(q)->>'status', null) AS status,
              COALESCE(to_jsonb(q)->>'remarks', null) AS remarks,
              COALESCE(to_jsonb(q)->>'converted_sales_id', to_jsonb(q)->>'convertedSalesId', null) AS "convertedSalesId",
-             COALESCE(NULLIF(to_jsonb(q)->>'is_deleted', ''), 'false')::boolean AS "isDeleted"
+             COALESCE(NULLIF(to_jsonb(q)->>'is_deleted', ''), 'false')::boolean AS "isDeleted",
+             COALESCE(to_jsonb(q)->>'expires_at', to_jsonb(q)->>'expiresAt', null) AS "expiresAt"
            FROM tblquotation q
            WHERE q.id = $1
-           LIMIT 1`,
+           LIMIT 1
+           FOR UPDATE`,
           [id],
         );
         this.logger.log(
@@ -1344,11 +1386,17 @@ export class QuotationService {
           throw new Error('Expired quotation can no longer be converted to Sales Order');
         }
 
+        if (quotation.expiresAt && new Date(quotation.expiresAt).getTime() <= Date.now()) {
+          throw new Error('Quotation has expired and can no longer be converted to Sales Order');
+        }
+
         if (status === 'converted' && this.toOptionalNumber(quotation.convertedSalesId)) {
           return {
             quotationId: id,
             salesOrderId: this.toOptionalNumber(quotation.convertedSalesId),
             alreadyConverted: true,
+            hasMaterialItems: false,
+            soNumber: null,
           };
         }
 
@@ -1436,11 +1484,33 @@ export class QuotationService {
           throw new Error('tblsales_order columns are not aligned with expected fields');
         }
 
+        const soNumberColumn = this.pickColumn(salesColumns, ['so_number', 'soNumber']);
+        let allocatedSoNumber: string | null = null;
+        if (soNumberColumn) {
+          try {
+            const updated = await client.query<{ current_value: number; prefix: string }>(
+              `UPDATE tblsequences
+               SET current_value = current_value + 1
+               WHERE name = 'sales_order_number'
+               RETURNING current_value, prefix`,
+            );
+            if ((updated.rowCount ?? 0) > 0) {
+              const prefix = updated.rows[0].prefix || new Date().getFullYear().toString();
+              allocatedSoNumber = `${prefix}-${Number(updated.rows[0].current_value) || 1}`;
+            }
+          } catch {
+            allocatedSoNumber = null;
+          }
+        }
+
         const salesRecord: Record<string, unknown> = {
           [salesCustomerIdColumn]: customerId,
           [totalAmountColumn]: this.toOptionalNumber(quotation.totalAmount) ?? 0,
           [statusColumn]: 'pending',
         };
+        if (soNumberColumn && allocatedSoNumber) {
+          salesRecord[soNumberColumn] = allocatedSoNumber;
+        }
 
         if (scheduleDateColumn) {
           salesRecord[scheduleDateColumn] = this.toIsoDateOrNull(quotation.quoteDate) ?? new Date().toISOString();
@@ -1659,8 +1729,21 @@ export class QuotationService {
           quotationId: id,
           salesOrderId,
           alreadyConverted: false,
+          hasMaterialItems: materialItems.length > 0,
+          soNumber: allocatedSoNumber,
         };
       });
+
+      if (result.hasMaterialItems && result.salesOrderId) {
+        try {
+          await this.backorderService.processBackordersForSalesOrder(result.salesOrderId, userId);
+        } catch (error) {
+          this.logger.error(
+            `[convertToSalesOrder] [${id}] backorder processing failed for SO #${result.salesOrderId}`,
+            error instanceof Error ? error.stack : undefined,
+          );
+        }
+      }
 
       const afterSnapshot = await this.getQuotationAuditSnapshot(id);
       await this.auditLogService.logMutation({

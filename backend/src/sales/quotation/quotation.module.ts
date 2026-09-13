@@ -4,9 +4,10 @@ import { QuotationController } from './quotation.controller';
 import { DatabaseModule } from 'src/database/database.module';
 import { JwtAuthGuard } from 'src/auth/jwt-auth.guard';
 import { AuditLogModule } from 'src/audit-log/audit-log.module';
+import { BackorderModule } from '../backorder/backorder.module';
 
 @Module({
-  imports: [DatabaseModule, AuditLogModule],
+  imports: [DatabaseModule, AuditLogModule, BackorderModule],
   controllers: [QuotationController],
   providers: [QuotationService, JwtAuthGuard],
 })

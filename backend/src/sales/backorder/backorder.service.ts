@@ -1,6 +1,7 @@
 import { Injectable, BadRequestException } from '@nestjs/common';
 import { DatabaseService } from 'src/database/database.service';
 import { AuditActorContext, AuditLogService } from 'src/audit-log/audit-log.service';
+import { MaterialStockService } from 'src/inventory/material-stock/material-stock.service';
 
 interface BackorderItem {
   salesOrderItemId: number;
@@ -23,12 +24,13 @@ export class BackorderService {
   constructor(
     private readonly databaseService: DatabaseService,
     private readonly auditLogService: AuditLogService,
+    private readonly materialStockService: MaterialStockService,
   ) {}
 
   /**
    * Process backorders for a sales order when it transitions to pending/approved status
-   * Creates backorder records for any line items where ordered qty > available stock
-   * Also records negative inventory movements
+   * Creates backorder records for any line items where ordered qty > available stock.
+   * Does not deduct on_hand_stock — completion is the only outbound deduct path.
    */
   async processBackordersForSalesOrder(
     salesOrderId: number,
@@ -38,18 +40,44 @@ export class BackorderService {
 
     try {
       const result = await this.databaseService.withTransaction(async (client) => {
-        // Fetch all line items for the sales order
-        // Use tblmaterials.on_hand_stock as the source of truth for available inventory
+        const statusResult = await client.query<{ status: string | null }>(
+          `SELECT LOWER(TRIM(COALESCE(status, ''))) AS status
+           FROM tblsales_order
+           WHERE id = $1`,
+          [salesOrderId],
+        );
+        const soStatus = String(statusResult.rows[0]?.status ?? '');
+        const isCompletedSo = soStatus === 'complete' || soStatus === 'completed';
+
         const itemsResult = await client.query(
-          `SELECT 
+          `SELECT
             soi.id as item_id,
             soi.sales_order_id,
             soi.material_id,
             soi.description,
             soi.qty as ordered_qty,
-            COALESCE(m.on_hand_stock, 0) as on_hand_qty
+            COALESCE(soi.is_non_inventory, false) as is_non_inventory,
+            COALESCE(m.on_hand_stock, 0) as on_hand_qty,
+            COALESCE(deducted.qty, 0) as already_deducted_qty
           FROM tblsales_order_items soi
           LEFT JOIN tblmaterials m ON soi.material_id = m.id
+          LEFT JOIN (
+            SELECT
+              source_id,
+              material_id,
+              SUM(
+                CASE
+                  WHEN UPPER(TRIM(COALESCE(movement_type, ''))) = 'OUT' THEN qty
+                  WHEN UPPER(TRIM(COALESCE(movement_type, ''))) = 'RETURN' THEN -qty
+                  ELSE 0
+                END
+              )::int AS qty
+            FROM tblmaterial_stock_movement
+            WHERE UPPER(TRIM(COALESCE(source_type, ''))) = 'SO'
+            GROUP BY source_id, material_id
+          ) deducted
+            ON deducted.source_id = soi.sales_order_id
+           AND deducted.material_id = soi.material_id
           WHERE soi.sales_order_id = $1 AND soi.material_id IS NOT NULL`,
           [salesOrderId],
         );
@@ -60,13 +88,34 @@ export class BackorderService {
           material_id: number;
           description: string;
           ordered_qty: number;
+          is_non_inventory: boolean;
           on_hand_qty: number;
+          already_deducted_qty: number;
         }>;
 
         // Process each item to check for backorders
         for (const item of items) {
-          if (item.ordered_qty > item.on_hand_qty) {
-            const backorderQty = item.ordered_qty - item.on_hand_qty;
+          if (item.is_non_inventory) {
+            continue;
+          }
+          const deductedQty = Math.max(0, Number(item.already_deducted_qty) || 0);
+          const coveredQty = isCompletedSo
+            ? deductedQty
+            : Math.max(0, Number(item.on_hand_qty) || 0);
+          if (item.ordered_qty > coveredQty) {
+            const backorderQty = item.ordered_qty - coveredQty;
+
+            const existing = await client.query(
+              `SELECT id FROM tblmaterial_backorder
+               WHERE sales_order_id = $1
+                 AND sales_order_item_id = $2
+                 AND status IN ('pending', 'partial_fulfilled')
+               LIMIT 1`,
+              [salesOrderId, item.item_id],
+            );
+            if ((existing.rowCount ?? 0) > 0) {
+              continue;
+            }
 
             // Create backorder record
             const backorderResult = await client.query(
@@ -86,32 +135,37 @@ export class BackorderService {
             );
 
             if (backorderResult.rowCount > 0) {
-              const backorderId = backorderResult.rows[0].id;
-
-              // Record negative stock movement
-              await client.query(
-                `INSERT INTO tblmaterial_stock_movement
-                  (material_id, movement_type, qty, source_type, source_id, source_line_key, backorder_id, status_snapshot, remarks, created_by)
-                VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)`,
-                [
-                  item.material_id,
-                  'OUT',
-                  backorderQty,
-                  'SO',
-                  salesOrderId,
-                  `backorder_${backorderId}`,
-                  backorderId,
-                  'backorder',
-                  `Backorder from Sales Order ${salesOrderId}: ${item.description}`,
-                  userId || null,
-                ],
-              );
-
               createdBackorders.push({
-                backorderId,
+                backorderId: backorderResult.rows[0].id,
                 materialId: item.material_id,
                 backorderQty,
                 createdAt: backorderResult.rows[0].created_at,
+              });
+            }
+          }
+        }
+
+        if (isCompletedSo) {
+          const materialIds = [
+            ...new Set(
+              items
+                .filter((item) => !item.is_non_inventory)
+                .map((item) => Number(item.material_id))
+                .filter((id) => Number.isFinite(id) && id > 0),
+            ),
+          ];
+          for (const materialId of materialIds) {
+            const stockResult = await client.query<{ on_hand: number }>(
+              `SELECT COALESCE(on_hand_stock, 0)::int AS on_hand
+               FROM tblmaterials
+               WHERE id = $1`,
+              [materialId],
+            );
+            const onHand = Number(stockResult.rows[0]?.on_hand ?? 0);
+            if (onHand > 0) {
+              await this.allocateIncomingStockToBackorders(materialId, onHand, {
+                client,
+                userId,
               });
             }
           }
@@ -148,6 +202,7 @@ export class BackorderService {
         mb.ordered_qty,
         mb.backorder_qty,
         mb.fulfilled_qty,
+        (mb.backorder_qty - COALESCE(mb.fulfilled_qty, 0)) AS remaining_qty,
         mb.status,
         mb.expected_fulfillment_date,
         mb.supplier_reference,
@@ -179,16 +234,17 @@ export class BackorderService {
         m.material_code,
         mb.backorder_qty,
         mb.fulfilled_qty,
+        (mb.backorder_qty - COALESCE(mb.fulfilled_qty, 0)) AS remaining_qty,
         mb.status,
         mb.expected_fulfillment_date,
         mb.supplier_reference,
         mb.created_at,
-        c.customer_name,
+        c.name AS customer_name,
         u.username as created_by_name
       FROM tblmaterial_backorder mb
       LEFT JOIN tblmaterials m ON mb.material_id = m.id
       LEFT JOIN tblsales_order so ON mb.sales_order_id = so.id
-      LEFT JOIN tblcustomer c ON so.customer_id = c.customer_id
+      LEFT JOIN tblcustomer c ON so.customer_id = c.id
       LEFT JOIN tblusers u ON mb.created_by = u.id
       WHERE mb.status IN ('pending', 'partial_fulfilled')
       ORDER BY mb.expected_fulfillment_date ASC, mb.created_at DESC
@@ -208,6 +264,163 @@ export class BackorderService {
       limit,
       offset,
     };
+  }
+
+  /**
+   * Apply inbound stock (already posted by a PO receive) to open backorders FIFO.
+   * Does not write another IN — the purchase path already increased on_hand_stock.
+   * Does write the deferred SO OUT so completed short orders finally deduct.
+   */
+  async allocateIncomingStockToBackorders(
+    materialId: number,
+    incomingQty: number,
+    options?: {
+      userId?: number;
+      purchaseId?: number;
+      client?: { query: (sql: string, params?: unknown[]) => Promise<{ rows: any[]; rowCount?: number | null }> };
+    },
+  ): Promise<{
+    allocatedQty: number;
+    allocations: Array<{ backorderId: number; qty: number; status: string }>;
+  }> {
+    const qty = Number(incomingQty);
+    if (!Number.isFinite(materialId) || materialId <= 0 || !Number.isFinite(qty) || qty <= 0) {
+      return { allocatedQty: 0, allocations: [] };
+    }
+
+    const run = async (client: {
+      query: (sql: string, params?: unknown[]) => Promise<{ rows: any[]; rowCount?: number | null }>;
+    }) => {
+      const open = await client.query(
+        `SELECT id, sales_order_id, backorder_qty, fulfilled_qty
+         FROM tblmaterial_backorder
+         WHERE material_id = $1
+           AND status IN ('pending', 'partial_fulfilled')
+         ORDER BY created_at ASC, id ASC
+         FOR UPDATE`,
+        [materialId],
+      );
+
+      let remainingIncoming = qty;
+      const allocations: Array<{ backorderId: number; qty: number; status: string }> = [];
+      if (open.rowCount === 0 || open.rows.length === 0) {
+        return { allocatedQty: 0, allocations };
+      }
+      const soIds = [
+        ...new Set(
+          (open.rows as Array<{ sales_order_id: number }>)
+            .map((row) => Number(row.sales_order_id))
+            .filter((id) => Number.isFinite(id) && id > 0),
+        ),
+      ];
+      const soNumbers = new Map<number, string>();
+      if (soIds.length > 0) {
+        const soResult = await client.query(
+          `SELECT id, NULLIF(TRIM(COALESCE(
+             so_number::text,
+             to_jsonb(so)->>'so_number',
+             to_jsonb(so)->>'soNumber',
+             ''
+           )), '') AS so_number
+           FROM tblsales_order so
+           WHERE id = ANY($1::int[])`,
+          [soIds],
+        );
+        for (const row of soResult.rows as Array<{ id: number; so_number: string | null }>) {
+          if (row.so_number) {
+            soNumbers.set(Number(row.id), row.so_number);
+          }
+        }
+      }
+
+      let poNumber: string | null = null;
+      if (options?.purchaseId) {
+        const poResult = await client.query(
+          `SELECT NULLIF(TRIM(COALESCE(
+             po_number::text,
+             to_jsonb(po)->>'po_number',
+             to_jsonb(po)->>'poNumber',
+             ''
+           )), '') AS po_number
+           FROM tblpurchase_orders po
+           WHERE id = $1`,
+          [options.purchaseId],
+        );
+        poNumber = (poResult?.rows?.[0] as { po_number?: string | null } | undefined)?.po_number ?? null;
+      }
+      const supplierReference = options?.purchaseId
+        ? `PO #${poNumber || options.purchaseId}`
+        : null;
+
+      for (const row of open.rows as Array<{
+        id: number;
+        sales_order_id: number;
+        backorder_qty: number;
+        fulfilled_qty: number;
+      }>) {
+        if (remainingIncoming <= 0) {
+          break;
+        }
+
+        const remainingOnBackorder = Number(row.backorder_qty) - Number(row.fulfilled_qty);
+        if (!Number.isFinite(remainingOnBackorder) || remainingOnBackorder <= 0) {
+          continue;
+        }
+
+        const applyQty = Math.min(remainingIncoming, remainingOnBackorder);
+        const nextFulfilled = Number(row.fulfilled_qty) + applyQty;
+        const nextStatus = nextFulfilled >= Number(row.backorder_qty) ? 'fulfilled' : 'partial_fulfilled';
+
+        await client.query(
+          `UPDATE tblmaterial_backorder
+           SET fulfilled_qty = $1,
+               status = $2,
+               updated_at = NOW(),
+               updated_by = $3,
+               supplier_reference = COALESCE(NULLIF(supplier_reference, ''), $4)
+           WHERE id = $5`,
+          [nextFulfilled, nextStatus, options?.userId ?? null, supplierReference, row.id],
+        );
+
+        await client.query(
+          `UPDATE tblmaterials
+           SET on_hand_stock = GREATEST(COALESCE(on_hand_stock, 0) - $1, 0),
+               updated_at = NOW()
+           WHERE id = $2`,
+          [applyQty, materialId],
+        );
+
+        await this.materialStockService.recordMovement(
+          {
+            materialId,
+            movementType: 'OUT',
+            qty: applyQty,
+            sourceType: 'SO',
+            sourceId: Number(row.sales_order_id),
+            sourceLineKey: `backorder_fulfillment_${row.id}-${options?.purchaseId ?? 'inbound'}`,
+            statusSnapshot: 'backorder_fulfillment',
+            remarks: `Backorder fulfillment for SO #${
+              soNumbers.get(Number(row.sales_order_id)) ?? row.sales_order_id
+            }${
+              options?.purchaseId ? ` from PO #${poNumber || options.purchaseId}` : ''
+            }`,
+            createdBy: options?.userId,
+          },
+          { client },
+        );
+
+        allocations.push({ backorderId: Number(row.id), qty: applyQty, status: nextStatus });
+        remainingIncoming -= applyQty;
+      }
+
+      return { allocatedQty: qty - remainingIncoming, allocations };
+    };
+
+    if (options?.client) {
+      return run(options.client);
+    }
+
+    return this.databaseService.withTransaction((client) => run(client));
   }
 
   /**
@@ -234,8 +447,8 @@ export class BackorderService {
         const backorder = backorderResult.rows[0];
 
         // Validate fulfillment quantity
-        const remainingQty = backorder.backorder_qty - backorder.fulfilled_qty;
-        if (fulfillQty <= 0 || fulfillQty > remainingQty) {
+        const remainingQty = Number(backorder.backorder_qty) - Number(backorder.fulfilled_qty);
+        if (!Number.isFinite(fulfillQty) || fulfillQty <= 0 || fulfillQty > remainingQty) {
           throw new BadRequestException(
             `Invalid fulfillment quantity. Remaining: ${remainingQty}`,
           );
@@ -257,23 +470,26 @@ export class BackorderService {
           [fulfillQty, userId || null, backorderId],
         );
 
-        // Record stock IN movement for fulfillment
+        await this.materialStockService.recordMovement(
+          {
+            materialId: Number(backorder.material_id),
+            movementType: 'IN',
+            qty: fulfillQty,
+            sourceType: 'SO',
+            sourceId: Number(backorder.sales_order_id),
+            sourceLineKey: `backorder_fulfillment_${backorderId}-${Date.now()}`,
+            statusSnapshot: 'backorder_fulfillment',
+            remarks: `Backorder fulfillment: ${fulfillQty} units received`,
+            createdBy: userId,
+          },
+          { client },
+        );
+
         await client.query(
-          `INSERT INTO tblmaterial_stock_movement
-            (material_id, movement_type, qty, source_type, source_id, source_line_key, backorder_id, status_snapshot, remarks, created_by)
-          VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)`,
-          [
-            backorder.material_id,
-            'IN',
-            fulfillQty,
-            'SO',
-            backorder.sales_order_id,
-            `backorder_fulfillment_${backorderId}`,
-            backorderId,
-            'backorder_fulfillment',
-            `Backorder fulfillment: ${fulfillQty} units received`,
-            userId || null,
-          ],
+          `UPDATE tblmaterials
+           SET on_hand_stock = COALESCE(on_hand_stock, 0) + $1, updated_at = NOW()
+           WHERE id = $2`,
+          [fulfillQty, backorder.material_id],
         );
 
         return updateResult.rows[0];
@@ -325,28 +541,7 @@ export class BackorderService {
           throw new BadRequestException('Backorder not found or already cancelled');
         }
 
-        const backorder = updateResult.rows[0];
-
-        // Reverse the negative stock movement
-        await client.query(
-          `INSERT INTO tblmaterial_stock_movement
-            (material_id, movement_type, qty, source_type, source_id, source_line_key, backorder_id, status_snapshot, remarks, created_by)
-          VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)`,
-          [
-            backorder.material_id,
-            'IN',
-            backorder.backorder_qty - backorder.fulfilled_qty,
-            'SO',
-            backorder.sales_order_id,
-            `backorder_cancelled_${backorderId}`,
-            backorderId,
-            'backorder_cancelled',
-            `Backorder cancelled: ${reason || 'No reason provided'}`,
-            userId || null,
-          ],
-        );
-
-        return backorder;
+        return updateResult.rows[0];
       });
 
       await this.auditLogService.logMutation({
@@ -367,5 +562,18 @@ export class BackorderService {
           : 'Failed to cancel backorder',
       );
     }
+  }
+
+  async cancelOpenBackordersForSalesOrder(salesOrderId: number, userId?: number): Promise<number> {
+    const result = await this.databaseService.query(
+      `UPDATE tblmaterial_backorder
+       SET status = 'cancelled',
+           cancelled_at = NOW(),
+           cancelled_by = $1
+       WHERE sales_order_id = $2
+         AND status IN ('pending', 'partial_fulfilled')`,
+      [userId || null, salesOrderId],
+    );
+    return result.rowCount ?? 0;
   }
 }

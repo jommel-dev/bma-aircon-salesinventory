@@ -595,7 +595,7 @@ export class PoMaterialsFormComponent implements OnInit, OnDestroy {
         totalSetQty: item.qty,
       })),
       remarks: this.remarks?.trim() || '',
-      status: this.mode === 'edit' ? this.orderStatus : 'for_approval',
+      status: this.mode === 'edit' ? this.orderStatus : 'complete',
     };
 
     // ✅ FIX: Set vendorId if present, but ALWAYS include the nested vendor details if a name exists!
@@ -713,7 +713,7 @@ export class PoMaterialsFormComponent implements OnInit, OnDestroy {
       this.orderStatus = order.status ?? '';
       this.poNumber = order.poNumber ?? '';
       // Read-only for all statuses except in-progress
-      this.isReadOnly = ['for_approval', 'approved', 'received', 'completed'].includes(this.orderStatus);
+      this.isReadOnly = ['for_approval', 'approved', 'received', 'completed', 'complete'].includes(this.orderStatus);
 
       // Vendor
       if (order.vendorId) {
@@ -728,7 +728,7 @@ export class PoMaterialsFormComponent implements OnInit, OnDestroy {
 
       // Product items - map all fields from API response to PoLineItem
       this.productItems = (order.productItems ?? []).map((item) => ({
-        materialId: item.materialId,
+        materialId: item.materialId ?? (item.productId != null ? Number(item.productId) : null),
         description: item.materialName ?? '',
         itemCode: item.materialCode,
         unit: item.materialUnit ?? '',
@@ -826,39 +826,26 @@ export class PoMaterialsFormComponent implements OnInit, OnDestroy {
    * Visible when status is in-progress and user can create/update.
    */
   get showSubmitForApproval(): boolean {
-    return this.orderStatus === 'in-progress' && this.canCreateOrUpdate();
+    return false;
   }
 
-  /**
-   * Whether the "Approve" button should be shown.
-   * Visible when status is for_approval and user has approval permission.
-   */
   get showApprove(): boolean {
-    return this.orderStatus === 'for_approval' && this.canApprovePurchaseOrder();
+    return false;
   }
 
-  /**
-   * Whether the "Receive" button should be shown.
-   * Visible when status is approved and user has receive permission.
-   */
   get showReceive(): boolean {
-    return this.orderStatus === 'approved' && this.canReceivePurchaseOrder();
+    return false;
   }
 
-  /**
-   * Whether the "Complete" button should be shown.
-   * Visible when status is received and user has complete permission.
-   */
   get showComplete(): boolean {
-    return this.orderStatus === 'received' && this.canCompletePurchaseOrder();
+    return (
+      ['for_approval', 'approved', 'received', 'in-progress'].includes(this.orderStatus) &&
+      this.canCompletePurchaseOrder()
+    );
   }
 
-  /**
-   * Whether the "Revert to In Progress" button should be shown.
-   * Visible when status is for_approval and user has revert permission.
-   */
   get showRevert(): boolean {
-    return this.orderStatus === 'for_approval' && this.canRevertPurchaseOrder();
+    return false;
   }
 
   // ─── Status Transition Actions ──────────────────────────────────────────────

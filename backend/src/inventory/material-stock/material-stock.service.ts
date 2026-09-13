@@ -1,9 +1,13 @@
-import { Injectable } from '@nestjs/common';
+import { Injectable, Optional } from '@nestjs/common';
 import { DatabaseService } from 'src/database/database.service';
+import { StockRealtimeService } from 'src/realtime/stock-realtime.service';
 
 @Injectable()
 export class MaterialStockService {
-  constructor(private readonly db: DatabaseService) {}
+  constructor(
+    private readonly db: DatabaseService,
+    @Optional() private readonly stockRealtimeService?: StockRealtimeService,
+  ) {}
 
   async getBalance(materialId: number) {
     const res = await this.db.query(
@@ -129,6 +133,11 @@ export class MaterialStockService {
 
       // Return current balance and movement
       const balanceRow = (await executor.query(`SELECT material_id, on_hand, reserved, available, updated_at FROM tblmaterial_stock_balance WHERE material_id = $1`, [dto.materialId])).rows[0];
+      // When the caller owns the transaction, publish after that transaction commits
+      // so other connections read the new tblmaterials.on_hand_stock.
+      if (!isExternalClient) {
+        void this.stockRealtimeService?.publish([dto.materialId]);
+      }
       return { movement, balance: balanceRow };
     } catch (err) {
       if (!isExternalClient) {

@@ -319,7 +319,8 @@ export class MaterialsController {
    * - id: Material ID (number)
    * 
    * Returns price history and stock movements for the material,
-   * each ordered by created_at DESC and limited to 100 records.
+   * each limited to 100 records. Movements are newest-first, with IN
+   * listed before OUT when timestamps match (PO inbound before backorder).
    * 
    * Response Example:
    * {

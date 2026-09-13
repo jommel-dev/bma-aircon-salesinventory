@@ -179,7 +179,7 @@ describe('UpdatePurchaseDto', () => {
       );
     });
 
-    it('should reject totalSetQty above 999999', () => {
+    it('should reject totalSetQty above 9999999', () => {
       const dto = {
         poType: 'ACM',
         vendorId: 'vendor-123',
@@ -188,7 +188,7 @@ describe('UpdatePurchaseDto', () => {
             transType: 'purchase',
             materialId: 1,
             unitPrice: 50,
-            totalSetQty: 1000000,
+            totalSetQty: 10000000,
           },
         ],
       } as unknown as UpdatePurchaseDto;

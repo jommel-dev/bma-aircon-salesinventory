@@ -25,6 +25,8 @@ import { AuditLogModule } from './audit-log/audit-log.module';
 import { PartsModule } from './inventory/parts/parts.module';
 import { PayrollModule } from './payroll/payroll.module';
 import { DatabaseBackupModule } from './database-backup/database-backup.module';
+import { StockRealtimeModule } from './realtime/stock-realtime.module';
+import { SearchModule } from './search/search.module';
 
 @Module({
   imports: [
@@ -55,6 +57,8 @@ import { DatabaseBackupModule } from './database-backup/database-backup.module';
     PartsModule,
     PayrollModule,
     DatabaseBackupModule,
+    StockRealtimeModule,
+    SearchModule,
   ],
   controllers: [AppController],
   providers: [AppService],

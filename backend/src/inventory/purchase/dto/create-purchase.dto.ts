@@ -81,7 +81,7 @@ export class CreatePurchaseDto {
 	 * - productItems must be a non-empty array
 	 * - Each item: unitPrice in [0.01, 999999.99]
 	 * - Each item: discountPrice in [0, 999999.99]
-	 * - Each item: totalSetQty must be integer in [1, 999999]
+	 * - Each item: totalSetQty must be integer in [1, 9999999]
 	 * - Each ACM item must have materialId or non-empty materialName
 	 * - vendorId or vendor.name (non-empty) is required
 	 */
@@ -151,13 +151,13 @@ export class CreatePurchaseDto {
 				}
 			}
 
-			// totalSetQty validation: integer in [1, 999999]
+			// totalSetQty validation: integer in [1, 9999999]
 			const totalSetQty = item.totalSetQty !== undefined && item.totalSetQty !== null
 				? Number(item.totalSetQty)
 				: null;
 			if (totalSetQty === null || !Number.isFinite(totalSetQty)) {
 				throw new BadRequestException(
-					`productItems[${index}].totalSetQty: Quantity is required and must be between 1 and 999,999`,
+					`productItems[${index}].totalSetQty: Quantity is required and must be between 1 and 9,999,999`,
 				);
 			}
 			if (!Number.isInteger(totalSetQty)) {
@@ -165,9 +165,9 @@ export class CreatePurchaseDto {
 					`productItems[${index}].totalSetQty: Quantity must be a whole number`,
 				);
 			}
-			if (totalSetQty < 1 || totalSetQty > 999999) {
+			if (totalSetQty < 1 || totalSetQty > 9999999) {
 				throw new BadRequestException(
-					`productItems[${index}].totalSetQty: Quantity must be between 1 and 999,999`,
+					`productItems[${index}].totalSetQty: Quantity must be between 1 and 9,999,999`,
 				);
 			}
 		}

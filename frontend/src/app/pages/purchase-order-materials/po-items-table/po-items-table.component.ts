@@ -83,11 +83,11 @@ export class PoItemsTableComponent {
 
   /**
    * Validates and applies a new QTY value for a line item.
-   * QTY must be an integer, 1–99999.
+   * QTY must be an integer, 1–9999999.
    */
   onQtyChange(index: number, value: string): void {
     const parsed = parseInt(value, 10);
-    if (isNaN(parsed) || parsed < 1 || parsed > 999999999) {
+    if (isNaN(parsed) || parsed < 1 || parsed > 9999999) {
       return;
     }
 

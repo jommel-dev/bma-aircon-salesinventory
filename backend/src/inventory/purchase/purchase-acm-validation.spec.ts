@@ -4,6 +4,7 @@ import { PurchaseService } from './purchase.service';
 import { DatabaseService } from 'src/database/database.service';
 import { MaterialStockService } from 'src/inventory/material-stock/material-stock.service';
 import { AuditLogService } from 'src/audit-log/audit-log.service';
+import { BackorderService } from 'src/sales/backorder/backorder.service';
 
 describe('PurchaseService - ACM Validation', () => {
   let service: PurchaseService;
@@ -29,6 +30,7 @@ describe('PurchaseService - ACM Validation', () => {
         { provide: DatabaseService, useValue: mockDatabaseService },
         { provide: MaterialStockService, useValue: mockMaterialStockService },
         { provide: AuditLogService, useValue: mockAuditLogService },
+        { provide: BackorderService, useValue: { allocateIncomingStockToBackorders: jest.fn() } },
       ],
     }).compile();
 
@@ -70,10 +72,10 @@ describe('PurchaseService - ACM Validation', () => {
 
       const result = service.create(dto as any);
       await expect(result).rejects.toThrow(BadRequestException);
-      await expect(result).rejects.toThrow('productItems[0].totalSetQty: Quantity must be between 1 and 999,999');
+      await expect(result).rejects.toThrow('productItems[0].totalSetQty: Quantity must be between 1 and 9,999,999');
     });
 
-    it('should reject ACM items with quantity greater than 999999', async () => {
+    it('should reject ACM items with quantity greater than 9999999', async () => {
       const dto = {
         poType: 'ACM' as const,
         vendorId: '1',
@@ -81,14 +83,14 @@ describe('PurchaseService - ACM Validation', () => {
           {
             transType: 'purchase',
             materialName: 'Test Material',
-            totalSetQty: 1000000,
+            totalSetQty: 10000000,
           },
         ],
       };
 
       const result = service.create(dto as any);
       await expect(result).rejects.toThrow(BadRequestException);
-      await expect(result).rejects.toThrow('productItems[0].totalSetQty: Quantity must be between 1 and 999,999');
+      await expect(result).rejects.toThrow('productItems[0].totalSetQty: Quantity must be between 1 and 9,999,999');
     });
 
     it('should reject ACM items with non-integer quantity', async () => {
@@ -215,7 +217,7 @@ describe('PurchaseService - ACM Validation', () => {
       }
     });
 
-    it('should accept quantity at boundary value 999999', async () => {
+    it('should accept quantity of 1000000 (above the old 999999 cap)', async () => {
       mockDatabaseService.withTransaction.mockImplementation(async (fn) => {
         const mockClient = {
           query: jest.fn()
@@ -233,7 +235,7 @@ describe('PurchaseService - ACM Validation', () => {
           {
             transType: 'purchase',
             materialName: 'Test Material',
-            totalSetQty: 999999,
+            totalSetQty: 1000000,
           },
         ],
       };
@@ -242,7 +244,39 @@ describe('PurchaseService - ACM Validation', () => {
         await service.create(dto as any);
       } catch (error) {
         if (error instanceof BadRequestException) {
-          fail(`Should not throw BadRequestException for qty=999999: ${error.message}`);
+          fail(`Should not throw BadRequestException for qty=1000000: ${error.message}`);
+        }
+      }
+    });
+
+    it('should accept quantity at boundary value 9999999', async () => {
+      mockDatabaseService.withTransaction.mockImplementation(async (fn) => {
+        const mockClient = {
+          query: jest.fn()
+            .mockResolvedValueOnce({ rows: [{ column_name: 'id' }, { column_name: 'name' }, { column_name: 'address' }, { column_name: 'contact_person' }, { column_name: 'contact_number' }, { column_name: 'created_at' }, { column_name: 'updated_at' }], rowCount: 7 })
+            .mockResolvedValueOnce({ rows: [{ id: '1' }], rowCount: 1 })
+            .mockResolvedValue({ rows: [], rowCount: 0 }),
+        };
+        return fn(mockClient);
+      });
+
+      const dto = {
+        poType: 'ACM' as const,
+        vendorId: '1',
+        productItems: [
+          {
+            transType: 'purchase',
+            materialName: 'Test Material',
+            totalSetQty: 9999999,
+          },
+        ],
+      };
+
+      try {
+        await service.create(dto as any);
+      } catch (error) {
+        if (error instanceof BadRequestException) {
+          fail(`Should not throw BadRequestException for qty=9999999: ${error.message}`);
         }
       }
     });

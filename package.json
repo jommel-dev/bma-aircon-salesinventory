@@ -1,0 +1,9 @@
+{
+  "name": "3bma-system-v2",
+  "private": true,
+  "scripts": {
+    "test:scenarios": "npm --prefix backend run test:scenarios",
+    "test:e2e:live": "npm --prefix backend run test:e2e:live",
+    "test:e2e:ui": "npm --prefix e2e test"
+  }
+}

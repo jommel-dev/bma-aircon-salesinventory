@@ -96,7 +96,7 @@ export class DatabaseBackupController {
    * Only works if the database has no user tables.
    */
   @Post('import')
-  @UseInterceptors(FileInterceptor('file'))
+  @UseInterceptors(FileInterceptor('file', { limits: { fileSize: 80 * 1024 * 1024 } }))
   async importBackup(
     @UploadedFile() file: Express.Multer.File,
     @Req() request: { user?: Record<string, unknown>; ip?: string },
@@ -115,19 +115,26 @@ export class DatabaseBackupController {
       throw new BadRequestException('File is empty.');
     }
 
-    const result = await this.backupService.importSql(sql);
-    await this.auditLogService.logMutationIfSuccess(result, {
-      action: 'DATABASE_BACKUP_IMPORT',
+    const isBlank = await this.backupService.isDatabaseBlank();
+    if (!isBlank) {
+      throw new BadRequestException('Database is not empty. Import is only allowed on a blank database.');
+    }
+
+    this.backupService.startSqlImport(sql);
+
+    await this.auditLogService.logMutation({
+      action: 'DATABASE_BACKUP_IMPORT_START',
       entityType: 'database-backup',
       actor: buildAuditActorFromRequest(request),
-      description: `Imported database backup from ${file.originalname}`,
+      description: `Started database backup import from ${file.originalname}`,
       requestBody: {
         filename: file.originalname,
         mimetype: file.mimetype,
         size: file.size,
       },
     });
-    return result;
+
+    return { success: true, message: 'Database import started.' };
   }
 
   /**

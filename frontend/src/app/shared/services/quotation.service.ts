@@ -116,6 +116,8 @@ interface QuotationMutationResponse {
     quotationId?: number;
     salesOrderId?: number;
     alreadyConverted?: boolean;
+    hasMaterialItems?: boolean;
+    soNumber?: string | null;
   };
 }
 

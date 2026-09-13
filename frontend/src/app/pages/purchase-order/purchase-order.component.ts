@@ -2,6 +2,7 @@
 import { CommonModule } from '@angular/common';
 import { Component, HostListener, OnDestroy, OnInit } from '@angular/core';
 import { FormsModule } from '@angular/forms';
+import { ActivatedRoute } from '@angular/router';
 import { PageBreadcrumbComponent } from '../../shared/components/common/page-breadcrumb/page-breadcrumb.component';
 import {
   CreatePurchaseRequestPayload,
@@ -256,6 +257,7 @@ export class PurchaseOrderComponent implements OnInit, OnDestroy {
     private readonly purchaseOrderService: PurchaseOrderService,
     private readonly rbacService: RbacService,
     private readonly notificationService: NotificationService,
+    private readonly route: ActivatedRoute,
   ) {
     // Initialize form arrays here to avoid circular dependency with createEmptyProductItem
     this.createForm.paymentDetails = [this.createEmptyPaymentItem()];
@@ -266,6 +268,11 @@ export class PurchaseOrderComponent implements OnInit, OnDestroy {
     const availableTabs = this.getVisibleTabs();
     if (availableTabs.length > 0) {
       this.activeTab = availableTabs[0];
+    }
+
+    const query = this.route.snapshot.queryParamMap.get('q') ?? '';
+    if (query.trim()) {
+      this.search = query.trim();
     }
 
     void this.loadTabData(this.activeTab);
@@ -2902,7 +2909,7 @@ export class PurchaseOrderComponent implements OnInit, OnDestroy {
     const item = this.createForm.productItems[index];
     if (!item) return false;
     const qty = Number(item.quantity);
-    return !Number.isFinite(qty) || !Number.isInteger(qty) || qty < 1 || qty > 999999;
+    return !Number.isFinite(qty) || !Number.isInteger(qty) || qty < 1 || qty > 9999999;
   }
 
   selectPartsBrand(productIndex: number, brand: BrandOption): void {
@@ -3910,13 +3917,13 @@ export class PurchaseOrderComponent implements OnInit, OnDestroy {
           return `Capacity is required for item ${index + 1}.`;
         }
       } else if (item.productType === 'ACM') {
-        // ACM: validate material name (required) and quantity (1-999999)
+        // ACM: validate material name (required) and quantity (1-9999999)
         if (!item.materialName?.trim()) {
           return `Material name is required for item ${index + 1}.`;
         }
 
         const acmQty = Number(item.quantity);
-        if (!Number.isFinite(acmQty) || !Number.isInteger(acmQty) || acmQty < 1 || acmQty > 999999) {
+        if (!Number.isFinite(acmQty) || !Number.isInteger(acmQty) || acmQty < 1 || acmQty > 9999999) {
           return `Quantity must be a whole number between 1 and 999,999 for item ${index + 1}.`;
         }
       } else {

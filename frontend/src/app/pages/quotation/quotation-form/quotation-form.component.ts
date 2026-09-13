@@ -64,6 +64,10 @@ export class QuotationFormComponent implements OnInit {
   remarks = '';
   isSubmitting = false;
   validationError = '';
+  currentStatus = 'draft';
+  isAcQuotation = false;
+  isFormReadonly = false;
+  private selectedCustomerName = '';
 
   // ─── Quotation Print Preview ────────────────────────────────────────────────
   isPrintModalOpen = false;
@@ -110,12 +114,14 @@ export class QuotationFormComponent implements OnInit {
 
   onCustomerSearchChange(value: string): void {
     this.customerSearch = value;
-    this.selectedCustomerId = null;
     this.isCustomerDropdownOpen = true;
+    if (this.selectedCustomerId && value.trim() !== this.selectedCustomerName) {
+      this.selectedCustomerId = null;
+      this.customerForm.address = '';
+      this.customerForm.contact_person = '';
+      this.customerForm.contact_number = '';
+    }
     this.customerForm.name = value.trim();
-    this.customerForm.address = '';
-    this.customerForm.contact_person = '';
-    this.customerForm.contact_number = '';
 
     // Check for exact match
     const normalized = value.trim().toLowerCase();
@@ -143,6 +149,7 @@ export class QuotationFormComponent implements OnInit {
     if (!selected) return;
 
     this.customerSearch = selected.name;
+    this.selectedCustomerName = selected.name ?? '';
     this.customerForm.name = selected.name ?? '';
     this.customerForm.address = selected.address ?? '';
     this.customerForm.contact_person = selected.contact_person ?? '';
@@ -390,6 +397,23 @@ export class QuotationFormComponent implements OnInit {
   // ─── Private Helpers ────────────────────────────────────────────────────────
 
   private validateForm(): boolean {
+    if (this.isFormReadonly || this.isAcQuotation) {
+      this.validationError = this.isAcQuotation
+        ? 'This HVAC/AC quotation cannot be edited in the materials form. Open it from View/Print only.'
+        : 'This quotation can no longer be edited.';
+      return false;
+    }
+
+    if (!this.customerForm.name.trim()) {
+      this.validationError = 'Customer name is required.';
+      return false;
+    }
+
+    if (this.productItems.length === 0) {
+      this.validationError = 'Add at least one line item before saving.';
+      return false;
+    }
+
     // Validate non-inventory items have valid Rate and QTY
     const invalidItems = this.productItems.filter(
       (item) => item.isNonInventory && (item.rate === 0 || item.rate == null || item.qty == null || item.qty < 1),
@@ -409,7 +433,7 @@ export class QuotationFormComponent implements OnInit {
     const payload: any = {
       quoteDate: this.quoteDate,
       validityDays: this.validityDays,
-      status: 'draft',
+      status: this.currentStatus || 'draft',
       productItems: this.productItems.map((item) => ({
         materialId: item.materialId != null ? Number(item.materialId) : null,
         description: item.description,
@@ -494,9 +518,12 @@ export class QuotationFormComponent implements OnInit {
       // Populate quote date
       this.quoteDate = quotation.quoteDate?.split('T')[0] ?? this.getTodayDate();
       this.validityDays = quotation.validityDays ?? 14;
+      this.currentStatus = String(quotation.status ?? 'draft').trim().toLowerCase() || 'draft';
+      this.isFormReadonly = ['converted', 'expired', 'cancelled'].includes(this.currentStatus);
 
       // Populate customer info
       this.customerSearch = quotation.customerName ?? '';
+      this.selectedCustomerName = quotation.customerName ?? '';
       if (quotation.customerId) {
         this.selectedCustomerId = quotation.customerId;
       }
@@ -536,6 +563,20 @@ export class QuotationFormComponent implements OnInit {
 
       // Populate remarks
       this.remarks = quotation.remarks ?? '';
+
+      this.isAcQuotation = (quotation.productItems ?? []).some((item) => {
+        const remarks = String(item.remarks ?? '');
+        const isMaterialMeta = remarks.startsWith('{') && remarks.includes('"type":"material"');
+        const isAcMeta = remarks.startsWith('__QMETA__');
+        const hasProduct = item.productId != null && String(item.productId).trim() !== '';
+        const hasCapacity = item.capacityId != null && String(item.capacityId).trim() !== '';
+        return isAcMeta || ((hasProduct || hasCapacity) && !item.materialId && !isMaterialMeta);
+      });
+      if (this.isAcQuotation) {
+        this.isFormReadonly = true;
+        this.validationError =
+          'This HVAC/AC quotation cannot be edited in the materials form. Use View/Print instead.';
+      }
     } catch (error: any) {
       const message =
         error?.response?.data?.message ?? error?.message ?? 'Failed to load quotation.';

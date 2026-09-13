@@ -161,6 +161,20 @@ export class SalesOrderController {
     );
   }
 
+  @Post('materials/stock-check')
+  checkMaterialStock(
+    @Body()
+    body: {
+      items?: Array<{ materialId?: number | null; qty?: number; isNonInventory?: boolean }>;
+      excludeSalesOrderId?: number;
+    },
+  ) {
+    return this.salesOrderService.checkMaterialStockAvailability(
+      body.items ?? [],
+      body.excludeSalesOrderId,
+    );
+  }
+
   @Post('materials')
   createMaterialSalesOrder(
     @Body() dto: CreateMaterialSalesOrderDto,

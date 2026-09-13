@@ -8,6 +8,7 @@ import {
 } from './auth-storage';
 import { RbacService } from './rbac.service';
 import { BranchService } from './branch.service';
+import { StockRealtimeService } from './stock-realtime.service';
 
 export interface LoginResponse {
   success: boolean;
@@ -29,6 +30,7 @@ export class AuthService {
   constructor(
     private readonly rbacService: RbacService,
     private readonly branchService: BranchService,
+    private readonly stockRealtimeService: StockRealtimeService,
   ) {}
 
   async login(username: string, password: string, persist = false): Promise<LoginResponse> {
@@ -40,6 +42,7 @@ export class AuthService {
     if (response.data.success && response.data.accessToken && response.data.refreshToken) {
       setSessionTokens(response.data.accessToken, response.data.refreshToken, persist);
       await this.rbacService.syncEffectivePermissions();
+      this.stockRealtimeService.connect();
     }
 
     return response.data;
@@ -47,6 +50,7 @@ export class AuthService {
 
   logout(): void {
     this.rbacService.clearEffectivePermissionCache();
+    this.stockRealtimeService.disconnect();
     clearAccessToken();
     this.branchService.reset();
   }
@@ -71,6 +75,7 @@ export class AuthService {
         isSessionPersistent(),
       );
       await this.rbacService.syncEffectivePermissions();
+      this.stockRealtimeService.connect();
     }
 
     return response.data;

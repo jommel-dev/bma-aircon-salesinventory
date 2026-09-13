@@ -1,5 +1,6 @@
 import { NestFactory } from '@nestjs/core';
 import { ValidationPipe } from '@nestjs/common';
+import { IoAdapter } from '@nestjs/platform-socket.io';
 import { json, urlencoded } from 'express';
 import { AppModule } from './app.module';
 import { ApiExceptionFilter } from './common/filters/api-exception.filter';
@@ -14,6 +15,7 @@ async function bootstrap() {
   console.log('CORS_ORIGINS:', process.env.CORS_ORIGINS || 'http://localhost:4200');
 
   const app = await NestFactory.create(AppModule);
+  app.useWebSocketAdapter(new IoAdapter(app));
 
   // Increase body size limit for bulk migrations
   app.use(json({ limit: '10mb' }));

@@ -157,6 +157,8 @@ interface MaterialSalesOrderDetailApiResponse {
 interface MaterialSalesOrderMutationApiResponse {
   success: boolean;
   message?: string;
+  id?: number;
+  salesOrderId?: number;
   data?: {
     salesOrderId?: number;
   };
@@ -227,6 +229,9 @@ export class SalesOrderMaterialService {
       '/sales-order/materials',
       payload,
     );
+    if (!response.data?.success) {
+      throw new Error(response.data?.message || 'Failed to create sales order');
+    }
     return response.data;
   }
 
@@ -241,6 +246,9 @@ export class SalesOrderMaterialService {
       `/sales-order/materials/${id}`,
       payload,
     );
+    if (!response.data?.success) {
+      throw new Error(response.data?.message || 'Failed to update sales order');
+    }
     return response.data;
   }
 
@@ -268,6 +276,26 @@ export class SalesOrderMaterialService {
   /**
     * Smart search materials by material code.
    */
+  async checkMaterialStock(
+    items: Array<{ materialId?: number | null; qty?: number; isNonInventory?: boolean }>,
+    excludeSalesOrderId?: number,
+  ): Promise<{
+    items: Array<{
+      materialId: number;
+      requestedQty: number;
+      onHandStock: number;
+      reservedQty: number;
+      availableQty: number;
+      shortageQty: number;
+    }>;
+  }> {
+    const response = await apiClient.post('/sales-order/materials/stock-check', {
+      items,
+      excludeSalesOrderId,
+    });
+    return response.data;
+  }
+
   async searchMaterials(q: string, limit: number = 200): Promise<MaterialSearchResult[]> {
     const response = await apiClient.get<MaterialSearchApiResponse>(
       '/inventory/materials/search',

@@ -1,4 +1,4 @@
-import { BadRequestException, Injectable, NotFoundException } from '@nestjs/common';
+import { BadRequestException, Injectable, NotFoundException, Optional } from '@nestjs/common';
 import { CreateSalesOrderDto } from './dto/create-sales-order.dto';
 import { CreateStatementOfAccountDto } from './dto/create-statement-of-account.dto';
 import { CreateCustomerDto } from './dto/create-customer.dto';
@@ -16,6 +16,7 @@ import { MaterialsService } from 'src/inventory/materials/materials.service';
 import { PurchaseService } from 'src/inventory/purchase/purchase.service';
 import { AuditActorContext, AuditLogService } from 'src/audit-log/audit-log.service';
 import { BackorderService } from '../backorder/backorder.service';
+import { StockRealtimeService } from 'src/realtime/stock-realtime.service';
 
 type SalesMode =
   | 'deliveries'
@@ -73,6 +74,7 @@ export class SalesOrderService {
     private readonly purchaseService: PurchaseService,
     private readonly auditLogService: AuditLogService,
     private readonly backorderService: BackorderService,
+    @Optional() private readonly stockRealtimeService?: StockRealtimeService,
   ) {}
 
   private async ensureSalesOrderSoftDeleteColumns(): Promise<void> {
@@ -6983,6 +6985,97 @@ export class SalesOrderService {
     }
   }
 
+  async checkMaterialStockAvailability(
+    items: Array<{
+      materialId?: number | null;
+      qty?: number;
+      isNonInventory?: boolean;
+    }>,
+    excludeSalesOrderId?: number,
+  ): Promise<{
+    items: Array<{
+      materialId: number;
+      requestedQty: number;
+      onHandStock: number;
+      reservedQty: number;
+      availableQty: number;
+      shortageQty: number;
+    }>;
+  }> {
+    const qtyByMaterial = this.aggregateInventoryQtyByMaterial(items);
+    const materialIds = [...qtyByMaterial.keys()];
+    if (materialIds.length === 0) {
+      return { items: [] };
+    }
+
+    const excludeId =
+      Number.isFinite(excludeSalesOrderId) && Number(excludeSalesOrderId) > 0
+        ? Number(excludeSalesOrderId)
+        : null;
+
+    const stockResult = await this.databaseService.query<{
+      id: number;
+      on_hand: number;
+      reserved_qty: number;
+    }>(
+      `SELECT
+         m.id,
+         COALESCE(m.on_hand_stock, 0)::int AS on_hand,
+         COALESCE(reserved.qty, 0)::int AS reserved_qty
+       FROM tblmaterials m
+       LEFT JOIN (
+         SELECT soi.material_id, SUM(soi.qty)::int AS qty
+         FROM tblsales_order_items soi
+         INNER JOIN tblsales_order so ON so.id = soi.sales_order_id
+         WHERE LOWER(TRIM(COALESCE(so.status, ''))) = 'pending'
+           AND COALESCE(soi.is_non_inventory, false) = false
+           AND soi.material_id IS NOT NULL
+           AND ($2::int IS NULL OR so.id <> $2)
+         GROUP BY soi.material_id
+       ) reserved ON reserved.material_id = m.id
+       WHERE m.id = ANY($1::int[])`,
+      [materialIds, excludeId],
+    );
+
+    const stockById = new Map<number, { onHandStock: number; reservedQty: number }>(
+      stockResult.rows.map((row) => [
+        Number(row.id),
+        {
+          onHandStock: Math.max(0, Number(row.on_hand) || 0),
+          reservedQty: Math.max(0, Number(row.reserved_qty) || 0),
+        },
+      ]),
+    );
+
+    return {
+      items: materialIds.map((materialId) => {
+        const requestedQty = qtyByMaterial.get(materialId) ?? 0;
+        const stock = stockById.get(materialId) ?? { onHandStock: 0, reservedQty: 0 };
+        const availableQty = Math.max(0, stock.onHandStock - stock.reservedQty);
+        return {
+          materialId,
+          requestedQty,
+          onHandStock: stock.onHandStock,
+          reservedQty: stock.reservedQty,
+          availableQty,
+          shortageQty: Math.max(0, requestedQty - availableQty),
+        };
+      }),
+    };
+  }
+
+  private isCompletedMaterialSoStatus(status: string): boolean {
+    return ['complete', 'completed', 'done', 'delivered', 'closed'].includes(status);
+  }
+
+  private isNonInventoryLine(value: unknown): boolean {
+    if (value === true || value === 1) {
+      return true;
+    }
+    const normalized = String(value ?? '').trim().toLowerCase();
+    return normalized === 'true' || normalized === 't' || normalized === '1' || normalized === 'yes';
+  }
+
   private aggregateInventoryQtyByMaterial(
     items: Array<{
       materialId?: number | null;
@@ -6995,7 +7088,7 @@ export class SalesOrderService {
     for (const item of items) {
       const materialId = Number(item.materialId ?? 0);
       const orderedQty = Number(item.qty ?? 0);
-      const isNonInventory = Boolean(item.isNonInventory);
+      const isNonInventory = this.isNonInventoryLine(item.isNonInventory);
 
       if (!materialId || materialId <= 0 || orderedQty <= 0 || isNonInventory) {
         continue;
@@ -7032,6 +7125,170 @@ export class SalesOrderService {
       [salesOrderId, materialId, baseKey],
     );
     return Number(netResult.rows[0]?.net_qty ?? 0);
+  }
+
+  private async returnNetCompletionStock(
+    client: PoolClient,
+    salesOrderId: number,
+    reason?: string,
+  ): Promise<void> {
+    const existingItemsResult = await client.query<{
+      material_id: number | null;
+      qty: number;
+      is_non_inventory: boolean;
+    }>(
+      `SELECT material_id, qty, is_non_inventory
+       FROM tblsales_order_items
+       WHERE sales_order_id = $1`,
+      [salesOrderId],
+    );
+
+    for (const row of existingItemsResult.rows) {
+      const materialId = Number(row.material_id);
+      const qty = Number(row.qty ?? 0);
+      const isNonInventory = Boolean(row.is_non_inventory);
+
+      if (!materialId || materialId <= 0 || qty <= 0 || isNonInventory) {
+        continue;
+      }
+
+      const returnQty = Math.max(
+        0,
+        await this.getNetCompletionDeductedQty(client, salesOrderId, materialId),
+      );
+      if (returnQty <= 0) {
+        continue;
+      }
+
+      try {
+        await this.materialStockService.recordMovement(
+          {
+            materialId,
+            movementType: 'RETURN',
+            qty: returnQty,
+            sourceType: 'SO',
+            sourceId: salesOrderId,
+            sourceLineKey: `SO-${salesOrderId}-MAT-${materialId}-VOID-${Date.now()}`,
+            statusSnapshot: 'voided',
+            remarks: reason
+              ? `Stock returned for voided Material SO #${salesOrderId}. ${reason}`
+              : `Stock returned for voided Material SO #${salesOrderId}`,
+          },
+          { client },
+        );
+      } catch (moveErr: any) {
+        if (moveErr?.message?.includes('unique') || moveErr?.message?.includes('duplicate')) {
+          continue;
+        }
+        throw moveErr;
+      }
+
+      await client.query(
+        `UPDATE tblmaterials
+         SET on_hand_stock = COALESCE(on_hand_stock, 0) + $1
+         WHERE id = $2`,
+        [returnQty, materialId],
+      );
+    }
+  }
+
+  private async deductReturnedStockOnUnvoid(
+    client: PoolClient,
+    salesOrderId: number,
+  ): Promise<void> {
+    const items = await client.query<{
+      material_id: number | null;
+      qty: number;
+      is_non_inventory: boolean;
+    }>(
+      `SELECT material_id, qty, is_non_inventory
+       FROM tblsales_order_items
+       WHERE sales_order_id = $1`,
+      [salesOrderId],
+    );
+
+    for (const item of items.rows) {
+      const materialId = Number(item.material_id);
+      const qty = Number(item.qty ?? 0);
+      if (!materialId || materialId <= 0 || qty <= 0 || item.is_non_inventory) {
+        continue;
+      }
+
+      const baseKey = `SO-${salesOrderId}-MAT-${materialId}`;
+      const movementResult = await client.query<{ returned_qty: number; unvoided_qty: number }>(
+        `SELECT
+           COALESCE(SUM(CASE WHEN movement_type = 'RETURN' THEN qty ELSE 0 END), 0) AS returned_qty,
+           COALESCE(SUM(CASE
+             WHEN movement_type = 'OUT' AND source_line_key LIKE $3 || '-UNVOID%' THEN qty
+             ELSE 0
+           END), 0) AS unvoided_qty
+         FROM tblmaterial_stock_movement
+         WHERE source_type = 'SO'
+           AND source_id = $1
+           AND material_id = $2
+           AND (
+             source_line_key = $3
+             OR source_line_key LIKE $3 || '-%'
+           )`,
+        [salesOrderId, materialId, baseKey],
+      );
+      const deductQty = Math.max(
+        0,
+        Number(movementResult.rows[0]?.returned_qty ?? 0) -
+          Number(movementResult.rows[0]?.unvoided_qty ?? 0),
+      );
+      if (deductQty <= 0) {
+        continue;
+      }
+
+      await client.query(
+        `UPDATE tblmaterials
+         SET on_hand_stock = GREATEST(COALESCE(on_hand_stock, 0) - $1, 0), updated_at = NOW()
+         WHERE id = $2`,
+        [deductQty, materialId],
+      );
+
+      await this.materialStockService.recordMovement(
+        {
+          materialId,
+          movementType: 'OUT',
+          qty: deductQty,
+          sourceType: 'SO',
+          sourceId: salesOrderId,
+          sourceLineKey: `SO-${salesOrderId}-MAT-${materialId}-UNVOID-${Date.now()}`,
+          statusSnapshot: 'complete',
+          remarks: `Stock deducted: SO #${salesOrderId} restored from voided to complete`,
+        },
+        { client },
+      );
+    }
+  }
+
+  private async allocateMaterialSoNumber(client: PoolClient): Promise<string | null> {
+    try {
+      const updated = await client.query<{ current_value: number; prefix: string }>(
+        `UPDATE tblsequences
+         SET current_value = current_value + 1
+         WHERE name = 'sales_order_number'
+         RETURNING current_value, prefix`,
+      );
+
+      if ((updated.rowCount ?? 0) === 0) {
+        const prefix = new Date().getFullYear().toString();
+        await client.query(
+          `INSERT INTO tblsequences (name, current_value, prefix)
+           VALUES ('sales_order_number', 1, $1)`,
+          [prefix],
+        );
+        return `${prefix}-1`;
+      }
+
+      const currentValue = Number(updated.rows[0].current_value) || 1;
+      const prefix = updated.rows[0].prefix || new Date().getFullYear().toString();
+      return `${prefix}-${currentValue}`;
+    } catch {
+      return null;
+    }
   }
 
   private async resolveCompletionMovementKey(
@@ -7137,9 +7394,8 @@ export class SalesOrderService {
     for (const materialId of materialIds) {
       const oldQty = previousQty.get(materialId) ?? 0;
       const nextQty = newQty.get(materialId) ?? 0;
-      const delta = nextQty - oldQty;
 
-      if (delta === 0) {
+      if (oldQty === nextQty && oldQty > 0) {
         continue;
       }
 
@@ -7148,13 +7404,26 @@ export class SalesOrderService {
         [materialId],
       );
 
+      const alreadyDeducted = await this.getNetCompletionDeductedQty(
+        client,
+        salesOrderId,
+        materialId,
+      );
+      const baseline = oldQty > 0 ? oldQty : alreadyDeducted;
+      const delta = nextQty - baseline;
+
+      if (delta === 0) {
+        continue;
+      }
+
       if (delta > 0) {
         const stockResult = await client.query<{ available_stock: number }>(
           `SELECT COALESCE(on_hand_stock, 0) as available_stock FROM tblmaterials WHERE id = $1`,
           [materialId],
         );
         const availableStock = Number(stockResult.rows[0]?.available_stock ?? 0);
-        const deductQty = Math.max(0, Math.min(delta, availableStock));
+        const maxAdditional = Math.max(0, nextQty - alreadyDeducted);
+        const deductQty = Math.max(0, Math.min(delta, maxAdditional, availableStock));
 
         if (deductQty <= 0) {
           continue;
@@ -7188,12 +7457,7 @@ export class SalesOrderService {
           [deductQty, materialId],
         );
       } else {
-        const netAlreadyDeducted = await this.getNetCompletionDeductedQty(
-          client,
-          salesOrderId,
-          materialId,
-        );
-        const returnQty = Math.max(0, Math.min(Math.abs(delta), netAlreadyDeducted));
+        const returnQty = Math.max(0, Math.min(Math.abs(delta), alreadyDeducted));
 
         if (returnQty <= 0) {
           continue;
@@ -7291,6 +7555,8 @@ export class SalesOrderService {
     const status = dto.status;
     const productItems = Array.isArray(dto.productItems) ? dto.productItems : [];
 
+    // Shortage on complete is allowed: deduct what is on hand, then create backorders.
+
     // Require at least 1 product item when status is 'pending'
     if (status === 'pending' && productItems.length === 0) {
       throw new BadRequestException(
@@ -7320,12 +7586,16 @@ export class SalesOrderService {
         totalAmount = Math.round(totalAmount * 100) / 100;
 
         // Insert into tblsales_order
+        const allocatedSoNumber = await this.allocateMaterialSoNumber(client);
         const salesRecord: Record<string, unknown> = {
           customer_id: customerId,
           total_amount: totalAmount,
           status: status,
           "salesType": 'sales', // Always 'sales' for new material orders
         };
+        if (allocatedSoNumber) {
+          salesRecord['so_number'] = allocatedSoNumber;
+        }
 
         if (userId) {
           salesRecord['created_by'] = userId;
@@ -7447,9 +7717,11 @@ export class SalesOrderService {
         success: true,
         message: 'Material sales order created successfully',
         id: result.salesOrderId,
+        salesOrderId: result.salesOrderId,
+        data: { salesOrderId: result.salesOrderId },
       };
 
-      if (status === 'pending') {
+      if (status === 'pending' || status === 'complete') {
         try {
           const backorderInfo = await this.backorderService.processBackordersForSalesOrder(result.salesOrderId, userId);
           if (backorderInfo.backorderCount > 0) {
@@ -7460,6 +7732,11 @@ export class SalesOrderService {
           console.error('Backorder processing error:', error);
         }
       }
+
+      void this.stockRealtimeService?.publishForSalesOrder(
+        result.salesOrderId,
+        productItems,
+      );
 
       await this.auditLogService.logMutationIfSuccess(responseData, {
         action: 'MATERIAL_SALES_ORDER_CREATE',
@@ -7726,12 +8003,17 @@ export class SalesOrderService {
     // Always exclude soft-deleted records
     whereParts.push(`so.deleted_at IS NULL`);
 
-    // Always filter by salesType = 'sales'
+    // Always filter by salesType = 'sales' and only orders that have material lines
     whereParts.push(`LOWER(COALESCE(so."salesType", '')) = 'sales'`);
+    whereParts.push(`EXISTS (SELECT 1 FROM tblsales_order_items soi WHERE soi.sales_order_id = so.id)`);
 
-    // Filter by status
-    params.push(status);
-    whereParts.push(`LOWER(COALESCE(so.status, '')) = $${params.length}`);
+    // Filter by status (treat complete/completed as the same tab)
+    if (status === 'complete' || status === 'completed') {
+      whereParts.push(`LOWER(COALESCE(so.status, '')) IN ('complete', 'completed')`);
+    } else {
+      params.push(status);
+      whereParts.push(`LOWER(COALESCE(so.status, '')) = $${params.length}`);
+    }
 
     // Date range filter (only applied when status = 'complete')
     if (status === 'complete') {
@@ -8002,11 +8284,9 @@ export class SalesOrderService {
           // 7a. Stock return: when status transitions from 'complete' to 'voided', return stock BEFORE deleting items
           const previousStatus = String(existingOrder.status ?? '').trim().toLowerCase();
           const newStatus = String(dto.status ?? '').trim().toLowerCase();
-          const isPreviousComplete =
-            previousStatus === 'complete' || previousStatus === 'completed';
+          const isPreviousComplete = this.isCompletedMaterialSoStatus(previousStatus);
           const isNewComplete =
-            newStatus === 'complete' ||
-            newStatus === 'completed' ||
+            this.isCompletedMaterialSoStatus(newStatus) ||
             (newStatus === '' && isPreviousComplete);
           const isAdjustingCompletedOrder =
             isPreviousComplete && isNewComplete && dto.productItems !== undefined;
@@ -8035,99 +8315,15 @@ export class SalesOrderService {
             }));
           }
 
-          if (
-            newStatus === 'voided' &&
-            (previousStatus === 'complete' || previousStatus === 'completed')
-          ) {
-            // Fetch the line items from DB before they get deleted
-            const existingItemsResult = await client.query<{
-              material_id: number | null;
-              qty: number;
-              is_non_inventory: boolean;
-            }>(
-              `SELECT material_id, qty, is_non_inventory
-              FROM tblsales_order_items
-              WHERE sales_order_id = $1`,
-              [id],
+          if (newStatus === 'voided' && isPreviousComplete) {
+            await this.returnNetCompletionStock(client, id);
+          }
+
+          if (newStatus === 'voided') {
+            await this.backorderService.cancelOpenBackordersForSalesOrder(
+              id,
+              auditActor?.userId ?? undefined,
             );
-
-            for (const row of existingItemsResult.rows) {
-              const materialId = Number(row.material_id);
-              const qty = Number(row.qty ?? 0);
-              const isNonInventory = Boolean(row.is_non_inventory);
-
-              if (!materialId || materialId <= 0 || qty <= 0 || isNonInventory) {
-                continue;
-              }
-
-              // Only count completion-related movements (exclude backorder OUT rows)
-              const baseKey = `SO-${id}-MAT-${materialId}`;
-              const movementResult = await client.query<{ qty: number }>(
-                `SELECT COALESCE(SUM(qty), 0) AS qty
-                FROM tblmaterial_stock_movement
-                WHERE source_type = 'SO'
-                  AND source_id = $1
-                  AND material_id = $2
-                  AND movement_type = 'OUT'
-                  AND (
-                    source_line_key = $3
-                    OR source_line_key LIKE $3 || '-%'
-                  )`,
-                [id, materialId, baseKey],
-              );
-              const deductedQty = Number(movementResult.rows[0]?.qty ?? 0);
-
-              // Check how much was already returned
-              const returnedResult = await client.query<{ qty: number }>(
-                `SELECT COALESCE(SUM(qty), 0) AS qty
-                FROM tblmaterial_stock_movement
-                WHERE source_type = 'SO'
-                  AND source_id = $1
-                  AND material_id = $2
-                  AND movement_type = 'RETURN'
-                  AND (
-                    source_line_key = $3
-                    OR source_line_key LIKE $3 || '-%'
-                  )`,
-                [id, materialId, baseKey],
-              );
-              const alreadyReturned = Number(returnedResult.rows[0]?.qty ?? 0);
-
-              const returnQty = Math.max(0, deductedQty - alreadyReturned);
-
-              if (returnQty > 0) {
-                // Record RETURN movement
-                try {
-                  await this.materialStockService.recordMovement(
-                    {
-                      materialId,
-                      movementType: 'RETURN',
-                      qty: returnQty,
-                      sourceType: 'SO',
-                      sourceId: id,
-                      sourceLineKey: `SO-${id}-MAT-${materialId}-VOID`,
-                      statusSnapshot: 'voided',
-                      remarks: `Stock returned for voided Material SO #${id}`,
-                    },
-                    { client },
-                  );
-                } catch (moveErr: any) {
-                  if (moveErr?.message?.includes('unique') || moveErr?.message?.includes('duplicate')) {
-                    // Already recorded — idempotent, skip
-                  } else {
-                    throw moveErr;
-                  }
-                }
-
-                // Also add back to tblmaterials.on_hand_stock
-                await client.query(
-                  `UPDATE tblmaterials
-                  SET on_hand_stock = COALESCE(on_hand_stock, 0) + $1
-                  WHERE id = $2`,
-                  [returnQty, materialId],
-                );
-              }
-            }
           }
 
           console.log('Step 7a success');
@@ -8147,6 +8343,29 @@ export class SalesOrderService {
               const effectiveRate = Math.max(rate - discount, 0);
               const qty = Number(item.qty ?? 0);
               const total = Math.round(effectiveRate * qty * 100) / 100;
+              const isOthers =
+                !item.itemCode || item.itemCode.trim() === 'Others' || Boolean(item.isNonInventory);
+
+              if (isOthers) {
+                await client.query(
+                  `INSERT INTO tblsales_order_items
+                    (sales_order_id, description, item_code, brand, cost, rate, discount, qty, total, is_non_inventory)
+                  VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)`,
+                  [
+                    id,
+                    item.description,
+                    item.itemCode ?? null,
+                    item.brand ?? null,
+                    Number(item.cost ?? 0),
+                    rate,
+                    discount,
+                    qty,
+                    total,
+                    true,
+                  ],
+                );
+                continue;
+              }
 
               await client.query(
                 `INSERT INTO tblsales_order_items
@@ -8154,19 +8373,19 @@ export class SalesOrderService {
                 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)`,
                 [
                   id,
-                item.materialId ?? null,
-                item.description,
-                item.itemCode ?? null,
-                item.brand ?? null,
-                Number(item.cost ?? 0),
-                rate,
-                discount,
-                qty,
-                total,
-                Boolean(item.isNonInventory),
-              ],
-            );
-          }
+                  item.materialId ?? null,
+                  item.description,
+                  item.itemCode ?? null,
+                  item.brand ?? null,
+                  Number(item.cost ?? 0),
+                  rate,
+                  discount,
+                  qty,
+                  total,
+                  Boolean(item.isNonInventory),
+                ],
+              );
+            }
           }
 
           console.log('Step 7b success');
@@ -8290,11 +8509,7 @@ export class SalesOrderService {
           //   }
           // }
           // 9. Stock: first-time complete deducts full lines; complete-order edits apply deltas only
-          if (
-            (newStatus === 'complete' || newStatus === 'completed') &&
-            previousStatus !== 'complete' &&
-            previousStatus !== 'completed'
-          ) {
+          if (isNewComplete && !isPreviousComplete) {
             let itemsToDeduct = productItems;
             if (itemsToDeduct.length === 0) {
               const dbItems = await client.query<{ material_id: number | null; qty: number; is_non_inventory: boolean }>(
@@ -8347,7 +8562,7 @@ export class SalesOrderService {
       const newStatus = result.newStatus;
       let backorderInfo: any = null;
 
-      if (newStatus === 'pending' && previousStatus !== 'pending') {
+      if (newStatus === 'pending' || newStatus === 'complete' || newStatus === 'completed') {
         try {
           backorderInfo = await this.backorderService.processBackordersForSalesOrder(id);
         } catch (error) {
@@ -8381,10 +8596,17 @@ export class SalesOrderService {
         description: `Updated material sales order #${id}`,
         requestBody: dto as unknown as Record<string, unknown>,
       });
+      void this.stockRealtimeService?.publishForSalesOrder(
+        id,
+        Array.isArray(dto.productItems) ? dto.productItems : [],
+      );
       return updated;
     } catch (error) {
       
 
+      if (error instanceof BadRequestException) {
+        throw error;
+      }
       if (error instanceof NotFoundException) {
         return { success: false, message: error.message };
       }
@@ -8443,48 +8665,22 @@ export class SalesOrderService {
           continue;
         }
 
-        // Return stock (all voided orders were complete)
-        const items = await this.databaseService.query<{ material_id: number | null; qty: number; is_non_inventory: boolean }>(
-          `SELECT material_id, qty, is_non_inventory FROM tblsales_order_items WHERE sales_order_id = $1`,
-          [id],
-        );
+        await this.databaseService.withTransaction(async (client) => {
+          await this.returnNetCompletionStock(
+            client,
+            id,
+            reason ? `Reason: ${reason}` : undefined,
+          );
 
-          for (const item of items.rows) {
-            const materialId = Number(item.material_id);
-            const qty = Number(item.qty ?? 0);
-            if (!materialId || materialId <= 0 || qty <= 0 || item.is_non_inventory) continue;
-
-            // Return stock
-            await this.databaseService.query(
-              `UPDATE tblmaterials SET on_hand_stock = COALESCE(on_hand_stock, 0) + $1, updated_at = NOW() WHERE id = $2`,
-              [qty, materialId],
-            );
-
-            // Record return movement
-            try {
-              await this.materialStockService.recordMovement({
-                materialId,
-                movementType: 'RETURN',
-                qty,
-                sourceType: 'SO',
-                sourceId: id,
-                sourceLineKey: `SO-${id}-MAT-${materialId}-VOID-${Date.now()}`,
-                statusSnapshot: 'voided',
-                remarks: `Stock returned: SO #${id} voided. Reason: ${reason || 'No reason provided'}`,
-              });
-            } catch {
-              // Non-fatal
-            }
-          }
-
-        // Update status to voided with reason in remarks
-        const voidRemarks = reason ? `[VOIDED] ${reason}` : '[VOIDED]';
-        await this.databaseService.query(
-          `UPDATE tblsales_order
-           SET status = 'voided', remarks = CONCAT(COALESCE(remarks, ''), $1)
-           WHERE id = $2`,
-          ['\n' + voidRemarks, id],
-        );
+          const voidRemarks = reason ? `[VOIDED] ${reason}` : '[VOIDED]';
+          await client.query(
+            `UPDATE tblsales_order
+             SET status = 'voided', remarks = CONCAT(COALESCE(remarks, ''), $1)
+             WHERE id = $2`,
+            ['\n' + voidRemarks, id],
+          );
+          await this.backorderService.cancelOpenBackordersForSalesOrder(id, userId);
+        });
 
         voided++;
       } catch {
@@ -8535,45 +8731,13 @@ export class SalesOrderService {
       return { success: false, message: `Order is not voided (current status: ${currentStatus})` };
     }
 
-    // Deduct stock again (restore to complete means items are sold again)
-    const items = await this.databaseService.query<{ material_id: number | null; qty: number; is_non_inventory: boolean }>(
-      `SELECT material_id, qty, is_non_inventory FROM tblsales_order_items WHERE sales_order_id = $1`,
-      [id],
-    );
-
-    for (const item of items.rows) {
-      const materialId = Number(item.material_id);
-      const qty = Number(item.qty ?? 0);
-      if (!materialId || materialId <= 0 || qty <= 0 || item.is_non_inventory) continue;
-
-      // Deduct stock
-      await this.databaseService.query(
-        `UPDATE tblmaterials SET on_hand_stock = GREATEST(COALESCE(on_hand_stock, 0) - $1, 0), updated_at = NOW() WHERE id = $2`,
-        [qty, materialId],
+    await this.databaseService.withTransaction(async (client) => {
+      await this.deductReturnedStockOnUnvoid(client, id);
+      await client.query(
+        `UPDATE tblsales_order SET status = 'complete' WHERE id = $1`,
+        [id],
       );
-
-      // Record OUT movement
-      try {
-        await this.materialStockService.recordMovement({
-          materialId,
-          movementType: 'OUT',
-          qty,
-          sourceType: 'SO',
-          sourceId: id,
-          sourceLineKey: `SO-${id}-MAT-${materialId}-UNVOID-${Date.now()}`,
-          statusSnapshot: 'complete',
-          remarks: `Stock deducted: SO #${id} restored from voided to complete`,
-        });
-      } catch {
-        // Non-fatal
-      }
-    }
-
-    // Update status back to complete
-    await this.databaseService.query(
-      `UPDATE tblsales_order SET status = 'complete' WHERE id = $1`,
-      [id],
-    );
+    });
 
     const restored = { success: true, message: 'Order restored to complete. Stock has been deducted.' };
     await this.auditLogService.logMutationIfSuccess(restored, {

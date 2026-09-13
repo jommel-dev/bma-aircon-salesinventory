@@ -1,4 +1,4 @@
-import { BadRequestException, Injectable, OnModuleInit } from '@nestjs/common';
+import { BadRequestException, Injectable, OnModuleInit, Optional } from '@nestjs/common';
 import { CreatePurchaseDto } from './dto/create-purchase.dto';
 import { UpdatePurchaseDto } from './dto/update-purchase.dto';
 import { DatabaseService } from 'src/database/database.service';
@@ -9,6 +9,8 @@ import { PoolClient } from 'pg';
 import { createHash, randomUUID } from 'crypto';
 import { MaterialStockService } from 'src/inventory/material-stock/material-stock.service';
 import { AuditActorContext, AuditLogService } from 'src/audit-log/audit-log.service';
+import { BackorderService } from 'src/sales/backorder/backorder.service';
+import { StockRealtimeService } from 'src/realtime/stock-realtime.service';
 
 type PurchaseRow = {
   id: number;
@@ -119,7 +121,26 @@ export class PurchaseService {
     private readonly databaseService: DatabaseService,
     private readonly materialStockService: MaterialStockService,
     private readonly auditLogService: AuditLogService,
+    private readonly backorderService: BackorderService,
+    @Optional() private readonly stockRealtimeService?: StockRealtimeService,
   ) {}
+
+  private async allocateInboundToBackorders(
+    client: PoolClient,
+    materialId: number,
+    qty: number,
+    purchaseId: number,
+    userId?: number,
+  ): Promise<void> {
+    if (!Number.isFinite(materialId) || materialId <= 0 || !Number.isFinite(qty) || qty <= 0) {
+      return;
+    }
+    await this.backorderService.allocateIncomingStockToBackorders(materialId, qty, {
+      client,
+      userId,
+      purchaseId,
+    });
+  }
 
   async onModuleInit() {
     try {
@@ -692,7 +713,7 @@ export class PurchaseService {
   /**
    * Validates ACM product items before processing.
    * - Material name is required
-   * - Quantity must be between 1 and 999999
+   * - Quantity must be between 1 and 9999999
    */
   private validateAcmProductItems(
     productItems: Array<Record<string, unknown>>,
@@ -729,7 +750,7 @@ export class PurchaseService {
         );
       }
 
-      // Quantity validation: must be between 1 and 999999
+      // Quantity validation: must be between 1 and 9999999
       const quantity = this.toOptionalNumber(item.totalSetQty ?? item.quantity);
       const unitTypesQty = Array.isArray(item.unitTypesQty) ? item.unitTypesQty : [];
       const qtyFromList = unitTypesQty.reduce((sum: number, current: any) => {
@@ -738,9 +759,9 @@ export class PurchaseService {
       }, 0);
       const effectiveQty = qtyFromList > 0 ? qtyFromList : (quantity ?? 0);
 
-      if (effectiveQty < 1 || effectiveQty > 999999) {
+      if (effectiveQty < 1 || effectiveQty > 9999999) {
         throw new BadRequestException(
-          `productItems[${index}].totalSetQty: Quantity must be between 1 and 999,999`,
+          `productItems[${index}].totalSetQty: Quantity must be between 1 and 9,999,999`,
         );
       }
 
@@ -1432,9 +1453,9 @@ export class PurchaseService {
     // Validate ACM-specific fields before processing (DTO-level validation)
     const poType = String(createPurchaseDto.poType ?? 'ACU').trim().toUpperCase();
     if (poType === 'ACM') {
-      // ACM type: Automatically complete on creation (skip approval)
-      status = 'complete';
+      // ACM has no approval/receive workflow: save posts stock and completes.
       CreatePurchaseDto.validateAcm(createPurchaseDto);
+      status = 'complete';
     }
 
     try {
@@ -2083,7 +2104,7 @@ export class PurchaseService {
         }
 
         // For ACM type with 'complete' status: automatically add materials to stock
-        if (poType === 'ACM' && status === 'complete') {
+        if (poType === 'ACM' && ['complete', 'completed'].includes(status)) {
           const materialItemColumns = await this.getTableColumns(client, 'tbltransaction_material_items');
           const materialIdCol = this.pickColumn(materialItemColumns, ['material_id', 'productId', 'product_id']);
           const quantityCol = this.pickColumn(materialItemColumns, ['quantity', 'totalSetQty', 'total_set_qty']);
@@ -2123,6 +2144,13 @@ export class PurchaseService {
                   },
                   { client },
                 );
+                await this.allocateInboundToBackorders(
+                  client,
+                  materialId,
+                  qty,
+                  purchaseOrderId,
+                  userId,
+                );
               }
             }
 
@@ -2149,9 +2177,15 @@ export class PurchaseService {
         after: afterSnapshot,
       });
 
+      if (poType === 'ACM') {
+        void this.stockRealtimeService?.publish(
+          productItems.map((item) => Number((item as { materialId?: number }).materialId)),
+        );
+      }
+
       return {
         success: true,
-        message: poType === 'ACM' ? 'Purchase order created successfully and materials added to stock' : 'Purchase request created successfully',
+        message: poType === 'ACM' ? 'Purchase order created successfully' : 'Purchase request created successfully',
         data: result,
       };
     } catch (error) {
@@ -2518,6 +2552,7 @@ export class PurchaseService {
                     },
                     { client },
                   );
+                  await this.allocateInboundToBackorders(client, materialId, qty, id, userId);
                 }
               }
             }
@@ -2710,18 +2745,70 @@ export class PurchaseService {
         }
         const poType = this.normalizePoType(poTypeResult.rows[0]?.po_type);
 
-        // For ACM (Materials), skip serial validation, complete, and record stock movements
+        // For ACM (Materials), skip serial validation and complete immediately.
         if (poType === 'ACM') {
-          // Validate source status: must be 'received' to transition to 'completed'
           const statusCheckResult = await client.query<{ status: string | null }>(
             `SELECT status FROM tblpurchase_orders WHERE id = $1 LIMIT 1`,
             [id],
           );
           const currentStatus = String(statusCheckResult.rows[0]?.status ?? '').trim().toLowerCase();
-          if (currentStatus !== 'received') {
+          const alreadyComplete = ['complete', 'completed'].includes(currentStatus);
+          const needsStockPost = [
+            'for_approval',
+            'for approval',
+            'approved',
+            'in-progress',
+            'in_progress',
+          ].includes(currentStatus);
+
+          if (!alreadyComplete && currentStatus !== 'received' && !needsStockPost) {
             throw new Error(
-              `Cannot complete purchase order from status '${currentStatus}'. Purchase order must be in 'received' status.`,
+              `Cannot complete purchase order from status '${currentStatus}'.`,
             );
+          }
+
+          if (needsStockPost) {
+            const materialItemColumns = await this.getTableColumns(client, 'tbltransaction_material_items');
+            const materialIdCol = this.pickColumn(materialItemColumns, ['material_id', 'productId', 'product_id']);
+            const quantityCol = this.pickColumn(materialItemColumns, ['quantity', 'totalSetQty', 'total_set_qty']);
+            const purchaseIdCol = this.pickColumn(materialItemColumns, ['purchase_id', 'purchaseId']);
+            const transTypeCol = this.pickColumn(materialItemColumns, ['trans_type', 'transType']);
+
+            if (materialIdCol && quantityCol && purchaseIdCol) {
+              const materialItemsResult = await client.query<{ material_id: string; quantity: string; item_id: string }>(
+                `SELECT "${materialIdCol}" AS material_id, "${quantityCol}" AS quantity, id AS item_id
+                 FROM tbltransaction_material_items
+                 WHERE "${purchaseIdCol}" = $1
+                 ${transTypeCol ? `AND LOWER(COALESCE("${transTypeCol}", 'purchase')) = 'purchase'` : ''}`,
+                [id],
+              );
+
+              for (const row of materialItemsResult.rows) {
+                const materialId = this.toOptionalNumber(row.material_id);
+                const qty = this.toOptionalNumber(row.quantity) ?? 0;
+                if (materialId && qty > 0) {
+                  await client.query(
+                    `UPDATE tblmaterials SET on_hand_stock = COALESCE(on_hand_stock, 0) + $1, updated_at = NOW() WHERE id = $2`,
+                    [qty, materialId],
+                  );
+                  await this.materialStockService.recordMovement(
+                    {
+                      materialId,
+                      movementType: 'IN',
+                      qty,
+                      sourceType: 'PO',
+                      sourceId: id,
+                      sourceLineKey: `po-${id}-item-${row.item_id}`,
+                      statusSnapshot: 'complete',
+                      remarks: `Inbound from ACM purchase order #${id} (auto-completed)`,
+                      createdBy: userId,
+                    },
+                    { client },
+                  );
+                  await this.allocateInboundToBackorders(client, materialId, qty, id, userId);
+                }
+              }
+            }
           }
 
           const purchaseColumns = await this.getTableColumns(client, 'tblpurchase_orders');
@@ -2736,9 +2823,6 @@ export class PurchaseService {
           );
 
           await this.applyMaterialUnitCostsForPurchase(client, id, userId);
-
-          // Stock movements already recorded on 'received' transition.
-          // completeRequest just finalizes the status.
 
           return { purchaseId: id, status: 'completed' };
         }
@@ -2856,6 +2940,10 @@ export class PurchaseService {
         before: beforeSnapshot,
         after: afterSnapshot,
       });
+
+      if (String((result as { status?: string })?.status ?? '') === 'completed') {
+        void this.stockRealtimeService?.publishForPurchase(id);
+      }
 
       return { success: true, message: 'Purchase request completed', data: result };
     } catch (error) {
@@ -3315,6 +3403,7 @@ export class PurchaseService {
           id: product.id,
           transType: product.transType ?? 'purchase',
           productId: normalizedProductId,
+          materialId: normalizedProductId,
           capacityId: normalizedCapacityId,
           unitPrice: this.toOptionalNumber(product.unitPrice) ?? 0,
           sellPrice: this.toOptionalNumber(product.sellPrice) ?? 0,
@@ -4502,7 +4591,7 @@ export class PurchaseService {
                 await this.materialStockService.recordMovement({
                   materialId: matId,
                   qty: Math.abs(diff),
-                  movementType: 'ADJUST',
+                  movementType: diff > 0 ? 'IN' : 'OUT',
                   sourceType: 'PO',
                   sourceId: id,
                   sourceLineKey: `PO-${id}-ADJ-${matId}-${Date.now()}`,
@@ -4513,6 +4602,10 @@ export class PurchaseService {
                 if (!moveErr?.message?.includes('unique') && !moveErr?.message?.includes('duplicate')) {
                   console.warn('PO stock adjustment movement error:', moveErr?.message?.slice(0, 200));
                 }
+              }
+
+              if (diff > 0) {
+                await this.allocateInboundToBackorders(client, matId, diff, id);
               }
             }
 
@@ -4623,7 +4716,7 @@ export class PurchaseService {
         }
 
         const currentStatus = String(poResult.rows[0].status ?? '').trim().toLowerCase();
-        const nonCancellable = ['approved', 'completed', 'cancelled'];
+        const nonCancellable = ['approved', 'completed', 'complete', 'received', 'cancelled'];
         if (nonCancellable.includes(currentStatus)) {
           throw new Error(
             `Cannot cancel a purchase order with status '${currentStatus}'`,
@@ -4912,6 +5005,7 @@ export class PurchaseService {
       whereParts.push(`(
         LOWER(COALESCE(base.po_number, '')) LIKE $${searchIndex}
         OR LOWER(COALESCE(base.vendor_name, '')) LIKE $${searchIndex}
+        OR LOWER(COALESCE(base.original_status, '')) LIKE $${searchIndex}
         OR LOWER(COALESCE(base.computed_status, '')) LIKE $${searchIndex}
       )`);
     }
@@ -4925,55 +5019,19 @@ export class PurchaseService {
 
     const whereSql = whereParts.length > 0 ? `WHERE ${whereParts.join(' AND ')}` : '';
 
-    const computedStatusExpression =
-      mode === 'deliveries'
-        ? `CASE
-             WHEN COALESCE(sc.serial_count, 0) > 0 THEN 'in-progress'
-             ELSE 'pending'
-           END`
-        : `COALESCE(po.status, 'pending')`;
+    const computedStatusExpression = `COALESCE(po.status, 'pending')`;
 
     const baseCte = `
       WITH serial_counts AS (
-        SELECT po_id, SUM(item_qty)::int AS serial_count
-        FROM (
-          SELECT 
-            COALESCE(to_jsonb(tpi)->>'purchaseId', to_jsonb(tpi)->>'purchase_id', to_jsonb(tpi)->>'po_id') AS po_id,
-            COALESCE(
-              CASE 
-                WHEN COALESCE(to_jsonb(tpi)->>'totalSetQty', to_jsonb(tpi)->>'total_set_qty', to_jsonb(tpi)->>'quantity', '') ~ '^-?\\d+$'
-                THEN COALESCE(to_jsonb(tpi)->>'totalSetQty', to_jsonb(tpi)->>'total_set_qty', to_jsonb(tpi)->>'quantity', '0')::int
-                ELSE 0
-              END, 0
-            ) as item_qty
-          FROM tbltransaction_product_items tpi
-          WHERE LOWER(COALESCE(to_jsonb(tpi)->>'transType', to_jsonb(tpi)->>'trans_type', 'purchase')) = 'purchase'
-          UNION ALL
-          SELECT 
-            COALESCE(to_jsonb(tpi)->>'purchaseId', to_jsonb(tpi)->>'purchase_id', to_jsonb(tpi)->>'po_id') AS po_id,
-            COALESCE(
-              CASE 
-                WHEN COALESCE(to_jsonb(tpi)->>'totalSetQty', to_jsonb(tpi)->>'total_set_qty', to_jsonb(tpi)->>'quantity', '') ~ '^-?\\d+$'
-                THEN COALESCE(to_jsonb(tpi)->>'totalSetQty', to_jsonb(tpi)->>'total_set_qty', to_jsonb(tpi)->>'quantity', '0')::int
-                ELSE 0
-              END, 0
-            ) as item_qty
-          FROM tbltransaction_parts_items tpi
-          WHERE LOWER(COALESCE(to_jsonb(tpi)->>'transType', to_jsonb(tpi)->>'trans_type', 'purchase')) = 'purchase'
-          UNION ALL
-          SELECT 
-            COALESCE(to_jsonb(tpi)->>'purchaseId', to_jsonb(tpi)->>'purchase_id', to_jsonb(tpi)->>'po_id') AS po_id,
-            COALESCE(
-              CASE 
-                WHEN COALESCE(to_jsonb(tpi)->>'totalSetQty', to_jsonb(tpi)->>'total_set_qty', to_jsonb(tpi)->>'quantity', '') ~ '^-?\\d+$'
-                THEN COALESCE(to_jsonb(tpi)->>'totalSetQty', to_jsonb(tpi)->>'total_set_qty', to_jsonb(tpi)->>'quantity', '0')::int
-                ELSE 0
-              END, 0
-            ) as item_qty
-          FROM tbltransaction_material_items tpi
-          WHERE LOWER(COALESCE(to_jsonb(tpi)->>'transType', to_jsonb(tpi)->>'trans_type', 'purchase')) = 'purchase'
-        ) all_items
-        GROUP BY po_id
+        SELECT
+          COALESCE(
+            to_jsonb(sn)->>'purchaseId',
+            to_jsonb(sn)->>'purchase_id',
+            to_jsonb(sn)->>'po_id'
+          ) AS po_id,
+          COUNT(*)::int AS serial_count
+        FROM tblserial_numbers sn
+        GROUP BY 1
       ),
       base AS (
         SELECT

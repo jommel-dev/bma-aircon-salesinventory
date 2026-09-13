@@ -12,7 +12,7 @@ export class UpdatePurchaseDto extends PartialType(CreatePurchaseDto) {
 	 * - productItems must be a non-empty array
 	 * - Each item: unitPrice in [0.01, 999999.99]
 	 * - Each item: discountPrice in [0, 999999.99]
-	 * - Each item: totalSetQty must be integer in [1, 999999]
+	 * - Each item: totalSetQty must be integer in [1, 9999999]
 	 * - Each ACM item must have materialId or non-empty materialName
 	 * - vendorId or vendor.name (non-empty) is required
 	 */

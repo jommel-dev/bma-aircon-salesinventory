@@ -29,7 +29,6 @@ export class PoMaterialsListComponent implements OnInit {
   tabs: TabDefinition[] = [
     { key: 'my_requests', label: 'My Requests' },
     { key: 'deliveries', label: 'Deliveries' },
-    { key: 'approvals', label: 'Approvals' },
     { key: 'master_data', label: 'Master Data' },
   ];
 
@@ -130,6 +129,7 @@ export class PoMaterialsListComponent implements OnInit {
   getStatusClass(status: string): string {
     const statusLower = (status || '').toLowerCase().replace(/[-\s]/g, '_');
     switch (statusLower) {
+      case 'complete':
       case 'completed':
         return 'bg-green-100 text-green-800 dark:bg-green-900/30 dark:text-green-300';
       case 'approved':

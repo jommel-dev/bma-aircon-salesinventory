@@ -338,6 +338,11 @@ export class SalesOrderComponent {
     if (Number.isInteger(editId) && editId > 0) {
       void this.openEditDrawerById(editId);
     }
+
+    const query = this.route.snapshot.queryParamMap.get('q') ?? '';
+    if (query.trim()) {
+      this.search = query.trim();
+    }
   }
 
   ngOnDestroy(): void {

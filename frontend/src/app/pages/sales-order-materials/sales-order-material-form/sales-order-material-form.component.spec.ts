@@ -1,10 +1,13 @@
 import { SalesOrderMaterialFormComponent } from './sales-order-material-form.component';
 import { RbacService } from '../../../shared/services/rbac.service';
+import { AuthService } from '../../../shared/services/auth.service';
 import { SalesOrderService } from '../../../shared/services/sales-order.service';
 import { SalesOrderMaterialService } from '../../../shared/services/sales-order-material.service';
 import { NotificationService } from '../../../shared/services/notification.service';
 import { PrintSalesOrderService } from '../../../shared/services/print-sales-order.service';
 import { DomSanitizer } from '@angular/platform-browser';
+import { StockRealtimeService } from '../../../shared/services/stock-realtime.service';
+import { Subject } from 'rxjs';
 
 describe('SalesOrderMaterialFormComponent - Non-Inventory Item Handling', () => {
   let component: SalesOrderMaterialFormComponent;
@@ -27,7 +30,9 @@ describe('SalesOrderMaterialFormComponent - Non-Inventory Item Handling', () => 
       'createMaterialSalesOrder',
       'updateMaterialSalesOrder',
       'getMaterialSalesOrderById',
+      'checkMaterialStock',
     ]);
+    mockSalesOrderMaterialService.checkMaterialStock.and.returnValue(Promise.resolve({ items: [] }));
 
     mockNotificationService = jasmine.createSpyObj('NotificationService', ['success', 'error']);
     mockPrintSalesOrderService = jasmine.createSpyObj('PrintSalesOrderService', ['generatePrintPreview']);
@@ -35,11 +40,16 @@ describe('SalesOrderMaterialFormComponent - Non-Inventory Item Handling', () => 
 
     component = new SalesOrderMaterialFormComponent(
       mockRbacService,
+      {} as AuthService,
       mockSalesOrderService,
       mockSalesOrderMaterialService,
       mockNotificationService,
       mockPrintSalesOrderService,
       mockSanitizer,
+      {
+        connect: () => undefined,
+        updates$: new Subject().asObservable(),
+      } as StockRealtimeService,
     );
   });
 

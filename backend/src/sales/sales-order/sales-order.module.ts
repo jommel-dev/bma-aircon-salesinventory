@@ -10,9 +10,10 @@ import { MaterialsModule } from 'src/inventory/materials/materials.module';
 import { PurchaseModule } from 'src/inventory/purchase/purchase.module';
 import { AuditLogModule } from 'src/audit-log/audit-log.module';
 import { BackorderModule } from '../backorder/backorder.module';
+import { StockRealtimeModule } from 'src/realtime/stock-realtime.module';
 
 @Module({
-  imports: [DatabaseModule, MaterialStockModule, MaterialTransactionsModule, MaterialsModule, PurchaseModule, AuditLogModule, BackorderModule],
+  imports: [DatabaseModule, MaterialStockModule, MaterialTransactionsModule, MaterialsModule, PurchaseModule, AuditLogModule, BackorderModule, StockRealtimeModule],
   controllers: [SalesOrderController],
   providers: [SalesOrderService, JwtAuthGuard],
 })

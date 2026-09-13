@@ -70,15 +70,14 @@ export class SetupComponent implements OnInit {
         return;
       }
 
-      // Poll for progress
-      await this.pollSetupProgress();
+      await this.pollSetupProgress('create-admin');
     } catch (err: any) {
       this.error = err?.response?.data?.message ?? err?.message ?? 'Schema initialization failed.';
       this.step = 'error';
     }
   }
 
-  private async pollSetupProgress(): Promise<void> {
+  private async pollSetupProgress(doneStep: Extract<SetupStep, 'create-admin' | 'complete'> = 'create-admin'): Promise<void> {
     const poll = async (): Promise<void> => {
       try {
         const res = await apiClient.get<{
@@ -96,7 +95,7 @@ export class SetupComponent implements OnInit {
 
         if (data.status === 'done') {
           this.progressPercent = 100;
-          this.step = 'create-admin';
+          this.step = doneStep;
           return;
         }
 
@@ -177,7 +176,9 @@ export class SetupComponent implements OnInit {
     }
 
     this.step = 'initializing';
-    this.progress = 'Restoring database from backup file...';
+    this.progress = 'Uploading backup file...';
+    this.progressPercent = 0;
+    this.progressDetail = this.restoreFile.name;
     this.error = '';
     this.isRestoring = true;
 
@@ -191,14 +192,14 @@ export class SetupComponent implements OnInit {
         { headers: { 'Content-Type': 'multipart/form-data' }, timeout: 0 },
       );
 
-      if (response.data.success) {
-        this.progress = response.data.message || 'Database restored successfully!';
-        // After restore, DB has users already — go to complete
-        this.step = 'complete';
-      } else {
-        this.error = response.data.message || 'Restore failed.';
+      if (!response.data.success) {
+        this.error = response.data.message || 'Failed to start restore.';
         this.step = 'error';
+        return;
       }
+
+      this.progress = 'Restore started. Importing in safe batches...';
+      await this.pollSetupProgress('complete');
     } catch (err: any) {
       this.error = err?.response?.data?.message ?? err?.message ?? 'Restore failed.';
       this.step = 'error';

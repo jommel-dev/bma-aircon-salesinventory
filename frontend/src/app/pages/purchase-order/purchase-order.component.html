@@ -557,7 +557,7 @@
                   </div>
                   <div>
                     <label class="mb-1 block text-xs font-medium text-gray-600 dark:text-gray-300">Quantity <span class="text-error-500">*</span></label>
-                    <input type="number" [(ngModel)]="activeItem.quantity" (ngModelChange)="recalculateTotalAmount()" [name]="'acmQty_' + activeProductTabIndex" [readonly]="isTransferPOViewOnly" min="1" max="999999" class="w-full rounded-lg border bg-white px-3 py-2 text-sm dark:bg-gray-900" [ngClass]="isAcmQuantityInvalid(activeProductTabIndex) ? 'border-error-500 dark:border-error-400' : 'border-gray-300 dark:border-gray-700'" />
+                    <input type="number" [(ngModel)]="activeItem.quantity" (ngModelChange)="recalculateTotalAmount()" [name]="'acmQty_' + activeProductTabIndex" [readonly]="isTransferPOViewOnly" min="1" max="9999999" class="w-full rounded-lg border bg-white px-3 py-2 text-sm dark:bg-gray-900" [ngClass]="isAcmQuantityInvalid(activeProductTabIndex) ? 'border-error-500 dark:border-error-400' : 'border-gray-300 dark:border-gray-700'" />
                     @if (isAcmQuantityInvalid(activeProductTabIndex)) {
                       <p class="mt-1 text-xs text-error-600 dark:text-error-400">Quantity must be a whole number between 1 and 999,999</p>
                     }

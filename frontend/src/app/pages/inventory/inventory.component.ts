@@ -1,7 +1,8 @@
-import { Component, OnInit, HostListener, ElementRef, ViewChildren, QueryList, AfterViewChecked } from '@angular/core';
+import { Component, OnInit, OnDestroy, HostListener, ElementRef, ViewChildren, QueryList, AfterViewChecked } from '@angular/core';
 import { CommonModule } from '@angular/common';
 import { FormsModule } from '@angular/forms';
-import { firstValueFrom } from 'rxjs';
+import { firstValueFrom, Subscription } from 'rxjs';
+import { ActivatedRoute } from '@angular/router';
 import { PageBreadcrumbComponent } from '../../shared/components/common/page-breadcrumb/page-breadcrumb.component';
 import {
   MaterialInventoryService,
@@ -14,6 +15,7 @@ import {
 } from '../../shared/services/material-inventory.service';
 import { computeMaterialRow, ComputedMaterialRow } from './material-computations.util';
 import { getStockStatus, getStockBadgeConfig, StockStatus, StockBadgeConfig } from './stock-status.util';
+import { StockRealtimeService } from '../../shared/services/stock-realtime.service';
 
 /** A single material row in the all-in-one creation form */
 interface AllInOneMaterialRow {
@@ -36,7 +38,7 @@ interface AllInOneMaterialRow {
   imports: [CommonModule, FormsModule, PageBreadcrumbComponent],
   templateUrl: './inventory.component.html',
 })
-export class InventoryComponent implements OnInit, AfterViewChecked {
+export class InventoryComponent implements OnInit, OnDestroy, AfterViewChecked {
   /** Query all inline edit inputs for auto-focus */
   @ViewChildren('inlineInput') inlineInputs!: QueryList<ElementRef>;
 
@@ -289,13 +291,28 @@ export class InventoryComponent implements OnInit, AfterViewChecked {
   /** Stock migration results after submission */
   stockMigrationResults: { success: boolean; summary: { total: number; updated: number; failed: number }; results: any[] } | null = null;
 
+  private stockUpdatesSub: Subscription | null = null;
+  private pendingStockUpdates: Array<{ materialId: number; onHandStock: number }> = [];
+  private pendingMaterialId: number | null = null;
+
   constructor(
     private readonly materialInventoryService: MaterialInventoryService,
-    private readonly elementRef: ElementRef
+    private readonly elementRef: ElementRef,
+    private readonly stockRealtimeService: StockRealtimeService,
+    private readonly route: ActivatedRoute,
   ) {}
 
   ngOnInit(): void {
     void this.loadTree();
+    this.stockRealtimeService.connect();
+    this.stockUpdatesSub = this.stockRealtimeService.updates$.subscribe((items) => {
+      this.applyLiveStockUpdates(items);
+    });
+  }
+
+  ngOnDestroy(): void {
+    this.stockUpdatesSub?.unsubscribe();
+    this.stockUpdatesSub = null;
   }
 
   ngAfterViewChecked(): void {
@@ -322,7 +339,44 @@ export class InventoryComponent implements OnInit, AfterViewChecked {
       this.treeNodes = [];
     } finally {
       this.isTreeLoading = false;
+      this.applySearchNavigation();
     }
+  }
+
+  private applySearchNavigation(): void {
+    const materialId = Number(this.route.snapshot.queryParamMap.get('materialId'));
+    const brandId = Number(this.route.snapshot.queryParamMap.get('brandId'));
+    const productTypeId = Number(this.route.snapshot.queryParamMap.get('productTypeId'));
+
+    if (Number.isFinite(brandId) && brandId > 0) {
+      const parent = this.treeNodes.find((node) => node.children?.some((brand) => brand.id === brandId));
+      const brand = parent?.children?.find((item) => item.id === brandId);
+      if (parent) {
+        this.expandedNodes.add(parent.id);
+      }
+      if (brand) {
+        this.pendingMaterialId = Number.isFinite(materialId) && materialId > 0 ? materialId : null;
+        this.selectBrand(brand);
+        return;
+      }
+    }
+
+    if (Number.isFinite(productTypeId) && productTypeId > 0) {
+      this.expandedNodes.add(productTypeId);
+      this.pendingMaterialId = Number.isFinite(materialId) && materialId > 0 ? materialId : this.pendingMaterialId;
+      this.selectProductType(productTypeId);
+    }
+  }
+
+  private applyPendingMaterialFilter(): void {
+    if (!this.pendingMaterialId) {
+      return;
+    }
+    const match = this.materials.find((material) => material.id === this.pendingMaterialId);
+    if (match) {
+      this.materialFilter = match.material_code || match.material_name;
+    }
+    this.pendingMaterialId = null;
   }
 
   /**
@@ -390,6 +444,8 @@ export class InventoryComponent implements OnInit, AfterViewChecked {
     try {
       const rawMaterials: Material[] = await this.materialInventoryService.getMaterials(undefined, brandId);
       this.materials = rawMaterials.map(computeMaterialRow);
+      this.flushPendingStockUpdates();
+      this.applyPendingMaterialFilter();
     } catch {
       this.materialsError = 'Failed to load materials.';
       this.materials = [];
@@ -408,6 +464,8 @@ export class InventoryComponent implements OnInit, AfterViewChecked {
     try {
       const rawMaterials: Material[] = await this.materialInventoryService.getMaterials(undefined, undefined, productTypeId);
       this.materials = rawMaterials.map(computeMaterialRow);
+      this.flushPendingStockUpdates();
+      this.applyPendingMaterialFilter();
     } catch {
       this.materialsError = 'Failed to load materials.';
       this.materials = [];
@@ -423,6 +481,58 @@ export class InventoryComponent implements OnInit, AfterViewChecked {
   getStockBadge(row: ComputedMaterialRow): StockBadgeConfig {
     const status = getStockStatus(row.on_hand_stock, row.reorder_level);
     return getStockBadgeConfig(status);
+  }
+
+  private flushPendingStockUpdates(): void {
+    if (this.pendingStockUpdates.length === 0) {
+      return;
+    }
+    const pending = this.pendingStockUpdates;
+    this.pendingStockUpdates = [];
+    this.applyLiveStockUpdates(pending);
+  }
+
+  private applyLiveStockUpdates(
+    items: Array<{ materialId: number; onHandStock: number }>,
+  ): void {
+    if (!Array.isArray(items) || items.length === 0) {
+      return;
+    }
+
+    if (this.materials.length === 0) {
+      this.pendingStockUpdates = items;
+      return;
+    }
+
+    const stockByMaterial = new Map(
+      items.map((item) => [Number(item.materialId), Number(item.onHandStock)]),
+    );
+    let changed = false;
+    const nextMaterials = this.materials.map((row) => {
+      if (!stockByMaterial.has(row.id)) {
+        return row;
+      }
+      const onHandStock = Math.max(0, stockByMaterial.get(row.id) ?? row.on_hand_stock);
+      if (onHandStock === row.on_hand_stock) {
+        return row;
+      }
+      changed = true;
+      return computeMaterialRow({
+        ...row,
+        on_hand_stock: onHandStock,
+      });
+    });
+
+    if (changed) {
+      this.materials = nextMaterials;
+    }
+
+    if (this.editForm.id && stockByMaterial.has(this.editForm.id)) {
+      this.editForm = {
+        ...this.editForm,
+        on_hand_stock: Math.max(0, stockByMaterial.get(this.editForm.id) ?? this.editForm.on_hand_stock),
+      };
+    }
   }
 
   /**
@@ -997,7 +1107,7 @@ export class InventoryComponent implements OnInit, AfterViewChecked {
     try {
       const response = await this.materialInventoryService.getHistory(materialId);
       this.priceHistory = response.priceHistory ?? [];
-      this.stockMovements = response.stockMovements ?? [];
+      this.stockMovements = this.sortStockMovementsForHistory(response.stockMovements ?? []);
     } catch (err: any) {
       this.historyError =
         err?.response?.data?.message ||
@@ -1019,10 +1129,60 @@ export class InventoryComponent implements OnInit, AfterViewChecked {
   }
 
   /**
+   * Newest dates first. When PO inbound and backorder OUT share a timestamp,
+   * keep IN above the deduction so the ledger reads as receive-then-fulfill.
+   */
+  private sortStockMovementsForHistory(movements: StockMovementRecord[]): StockMovementRecord[] {
+    const typeRank = (type: string): number => {
+      switch (String(type ?? '').trim().toUpperCase()) {
+        case 'IN':
+          return 0;
+        case 'RETURN':
+          return 1;
+        case 'ADJUST':
+          return 2;
+        case 'OUT':
+          return 3;
+        default:
+          return 4;
+      }
+    };
+
+    return [...movements].sort((a, b) => {
+      const timeDiff = new Date(b.created_at).getTime() - new Date(a.created_at).getTime();
+      if (timeDiff !== 0) {
+        return timeDiff;
+      }
+      const typeDiff = typeRank(a.movement_type) - typeRank(b.movement_type);
+      if (typeDiff !== 0) {
+        return typeDiff;
+      }
+      return (Number(a.id) || 0) - (Number(b.id) || 0);
+    });
+  }
+
+  /**
    * Check if a stock movement is a deficit record (OUT from SO).
    */
   isDeficitRecord(movement: StockMovementRecord): boolean {
     return movement.movement_type === 'OUT' && movement.source_type === 'SO';
+  }
+
+  formatMovementSource(movement: StockMovementRecord): string {
+    if (movement.source_ref) {
+      return movement.source_ref;
+    }
+    const type = String(movement.source_type ?? '').trim().toUpperCase();
+    if (type === 'SO' || type === 'SALES' || type === 'SALES_ORDER') {
+      return `SO #${movement.source_id}`;
+    }
+    if (type === 'PO' || type === 'PURCHASE' || type === 'PURCHASE_ORDER') {
+      return `PO #${movement.source_id}`;
+    }
+    if (type === 'MANUAL' || type === 'ADJUST') {
+      return 'Manual';
+    }
+    return movement.source_id ? String(movement.source_id) : '—';
   }
 
   /**

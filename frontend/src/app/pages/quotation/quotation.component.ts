@@ -820,10 +820,15 @@ export class QuotationComponent implements OnInit, OnDestroy {
       }
 
       const salesOrderId = Number(response.data?.salesOrderId ?? 0);
+      const soNumber = String(response.data?.soNumber ?? '').trim();
+      const hasMaterialItems = Boolean(response.data?.hasMaterialItems);
       this.uiMessage = salesOrderId > 0
-        ? `Quotation converted successfully. Sales Order ID: ${salesOrderId}`
+        ? `Quotation converted successfully. Sales Order ${soNumber || '#' + salesOrderId} is on the Pending tab.`
         : response.message ?? 'Quotation converted successfully';
       await this.loadQuotations();
+      if (hasMaterialItems && salesOrderId > 0) {
+        await this.router.navigate(['/users/sales-order-materials/edit', salesOrderId]);
+      }
     } catch (error: unknown) {
       if (axios.isAxiosError(error)) {
         this.uiError =

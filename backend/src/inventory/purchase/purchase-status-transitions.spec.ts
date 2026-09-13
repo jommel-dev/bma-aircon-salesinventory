@@ -3,6 +3,7 @@ import { PurchaseService } from './purchase.service';
 import { DatabaseService } from 'src/database/database.service';
 import { AuditLogService } from 'src/audit-log/audit-log.service';
 import { MaterialStockService } from 'src/inventory/material-stock/material-stock.service';
+import { BackorderService } from 'src/sales/backorder/backorder.service';
 
 /**
  * Unit tests for PO status transition logic.
@@ -35,6 +36,7 @@ describe('PurchaseService - Status Transitions', () => {
         { provide: DatabaseService, useValue: mockDatabaseService },
         { provide: MaterialStockService, useValue: mockMaterialStockService },
         { provide: AuditLogService, useValue: mockAuditLogService },
+        { provide: BackorderService, useValue: { allocateIncomingStockToBackorders: jest.fn() } },
       ],
     }).compile();
 
@@ -258,7 +260,7 @@ describe('PurchaseService - Status Transitions', () => {
       expect(result.success).toBe(true);
     });
 
-    it('should reject when ACM PO is in approved status', async () => {
+    it('should complete an ACM PO from approved and post stock', async () => {
       mockDatabaseService.query.mockResolvedValue({ rows: [], rowCount: 0 });
 
       mockDatabaseService.withTransaction.mockImplementation(async (fn) => {
@@ -267,18 +269,29 @@ describe('PurchaseService - Status Transitions', () => {
             .mockResolvedValueOnce({
               rowCount: 1,
               rows: [{ po_type: 'ACM' }],
-            }) // PO type check
+            })
             .mockResolvedValueOnce({
               rowCount: 1,
               rows: [{ status: 'approved' }],
-            }) // status check
+            })
+            .mockResolvedValueOnce({
+              rows: [
+                { column_name: 'material_id' },
+                { column_name: 'quantity' },
+                { column_name: 'purchase_id' },
+                { column_name: 'trans_type' },
+              ],
+            })
+            .mockResolvedValueOnce({ rowCount: 0, rows: [] })
+            .mockResolvedValueOnce({ rows: [{ column_name: 'status' }] })
+            .mockResolvedValueOnce({ rowCount: 1 })
+            .mockResolvedValue({ rows: [], rowCount: 0 }),
         };
         return fn(mockClient);
       });
 
       const result = await service.completeRequest(1, 100);
-      expect(result.success).toBe(false);
-      expect(result.message).toContain("Cannot complete purchase order from status 'approved'");
+      expect(result.success).toBe(true);
     });
 
     it('should return error when PO not found', async () => {
@@ -366,7 +379,7 @@ describe('PurchaseService - Status Transitions', () => {
       expect(result.success).toBe(false);
     });
 
-    it('should reject complete from approved (ACM)', async () => {
+    it('should complete ACM from approved without requiring receive first', async () => {
       mockDatabaseService.query.mockResolvedValue({ rows: [], rowCount: 0 });
 
       mockDatabaseService.withTransaction.mockImplementation(async (fn) => {
@@ -379,13 +392,25 @@ describe('PurchaseService - Status Transitions', () => {
             .mockResolvedValueOnce({
               rowCount: 1,
               rows: [{ status: 'approved' }],
-            }),
+            })
+            .mockResolvedValueOnce({
+              rows: [
+                { column_name: 'material_id' },
+                { column_name: 'quantity' },
+                { column_name: 'purchase_id' },
+                { column_name: 'trans_type' },
+              ],
+            })
+            .mockResolvedValueOnce({ rowCount: 0, rows: [] })
+            .mockResolvedValueOnce({ rows: [{ column_name: 'status' }] })
+            .mockResolvedValueOnce({ rowCount: 1 })
+            .mockResolvedValue({ rows: [], rowCount: 0 }),
         };
         return fn(mockClient);
       });
 
       const result = await service.completeRequest(1, 100);
-      expect(result.success).toBe(false);
+      expect(result.success).toBe(true);
     });
 
     it('should return invalid purchase id for id <= 0', async () => {

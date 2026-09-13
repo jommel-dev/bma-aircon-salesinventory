@@ -739,20 +739,23 @@ export class MaterialsService {
     if (onHandChanged) {
       const previousStock = Number(current.on_hand_stock ?? 0);
       const delta = nextOnHandStock - previousStock;
-      await this.db.query(
-        `INSERT INTO tblmaterial_stock_movement (
-          material_id, movement_type, qty, source_type, source_id, source_line_key, remarks, created_by
-        )
-        VALUES ($1, 'ADJUST', $2, 'MANUAL', $3, $4, $5, $6)`,
-        [
-          id,
-          delta,
-          id,
-          `EDIT-${id}-${Date.now()}`,
-          `On-hand stock changed from ${previousStock} to ${nextOnHandStock} via material edit`,
-          userId,
-        ],
-      );
+      if (delta !== 0) {
+        await this.db.query(
+          `INSERT INTO tblmaterial_stock_movement (
+            material_id, movement_type, qty, source_type, source_id, source_line_key, remarks, created_by
+          )
+          VALUES ($1, $2, $3, 'MANUAL', $4, $5, $6, $7)`,
+          [
+            id,
+            delta > 0 ? 'IN' : 'OUT',
+            Math.abs(delta),
+            id,
+            `EDIT-${id}-${Date.now()}`,
+            `On-hand stock changed from ${previousStock} to ${nextOnHandStock} via material edit`,
+            userId,
+          ],
+        );
+      }
     }
 
     const updated = await this.findOne(id);
@@ -1084,10 +1087,21 @@ export class MaterialsService {
         m.unit,
         m.unit_price,
         m.sell_price,
-        m.on_hand_stock,
+        GREATEST(COALESCE(m.on_hand_stock, 0) - COALESCE(reserved.qty, 0), 0)::int AS on_hand_stock,
+        COALESCE(m.on_hand_stock, 0)::int AS physical_stock,
+        COALESCE(reserved.qty, 0)::int AS reserved_qty,
         m.reorder_level
       FROM tblmaterials m
       LEFT JOIN tblbrands b ON m.brand_id = b.id
+      LEFT JOIN (
+        SELECT soi.material_id, SUM(soi.qty)::int AS qty
+        FROM tblsales_order_items soi
+        INNER JOIN tblsales_order so ON so.id = soi.sales_order_id
+        WHERE LOWER(TRIM(COALESCE(so.status, ''))) = 'pending'
+          AND COALESCE(soi.is_non_inventory, false) = false
+          AND soi.material_id IS NOT NULL
+        GROUP BY soi.material_id
+      ) reserved ON reserved.material_id = m.id
       WHERE m.deleted_at IS NULL
         AND NULLIF(TRIM(m.material_code), '') IS NOT NULL
         AND ${clause}
@@ -1096,7 +1110,15 @@ export class MaterialsService {
     `;
 
     const result = await this.db.query(query, [...filterParams, cappedLimit]);
-    return result.rows;
+    return result.rows.map((row) => ({
+      ...row,
+      unit_price: Number(row.unit_price) || 0,
+      sell_price: Number(row.sell_price) || 0,
+      on_hand_stock: Math.max(0, Number(row.on_hand_stock) || 0),
+      physical_stock: Math.max(0, Number(row.physical_stock) || 0),
+      reserved_qty: Math.max(0, Number(row.reserved_qty) || 0),
+      reorder_level: Number(row.reorder_level) || 0,
+    }));
   }
 
   /**
@@ -1108,7 +1130,8 @@ export class MaterialsService {
    * Returns:
    * - Price history from tblmaterial_price_history (latest 100)
    * - Stock movements from tblmaterial_stock_movement (latest 100)
-   * Both ordered by created_at DESC
+   * Dates newest-first; within the same second IN is listed before OUT
+   * so PO inbound appears above the backorder deduction it funded.
    * =====================================================
    */
   async getHistory(id: number): Promise<{
@@ -1128,10 +1151,57 @@ export class MaterialsService {
     `;
 
     const stockMovementsQuery = `
-      SELECT id, movement_type, qty, source_type, source_id, source_line_key, remarks, created_by, created_at
-      FROM tblmaterial_stock_movement
-      WHERE material_id = $1
-      ORDER BY created_at DESC
+      SELECT
+        sm.id,
+        sm.movement_type,
+        sm.qty,
+        sm.source_type,
+        sm.source_id,
+        sm.source_line_key,
+        sm.remarks,
+        sm.created_by,
+        sm.created_at,
+        NULLIF(TRIM(COALESCE(
+          so.so_number::text,
+          to_jsonb(so)->>'so_number',
+          to_jsonb(so)->>'soNumber',
+          ''
+        )), '') AS so_number,
+        NULLIF(TRIM(COALESCE(
+          po.po_number::text,
+          to_jsonb(po)->>'po_number',
+          to_jsonb(po)->>'poNumber',
+          ''
+        )), '') AS po_number,
+        NULLIF(TRIM(COALESCE(
+          related_po.po_number::text,
+          to_jsonb(related_po)->>'po_number',
+          to_jsonb(related_po)->>'poNumber',
+          ''
+        )), '') AS related_po_number
+      FROM tblmaterial_stock_movement sm
+      LEFT JOIN tblsales_order so
+        ON UPPER(TRIM(COALESCE(sm.source_type, ''))) IN ('SO', 'SALES', 'SALES_ORDER')
+       AND so.id = sm.source_id
+      LEFT JOIN tblpurchase_orders po
+        ON UPPER(TRIM(COALESCE(sm.source_type, ''))) IN ('PO', 'PURCHASE', 'PURCHASE_ORDER')
+       AND po.id = sm.source_id
+      LEFT JOIN tblpurchase_orders related_po
+        ON related_po.id = CASE
+          WHEN sm.source_line_key ~ '^backorder_fulfillment_[0-9]+-[0-9]+$'
+            THEN (regexp_match(sm.source_line_key, 'backorder_fulfillment_[0-9]+-([0-9]+)$'))[1]::int
+          ELSE NULL
+        END
+      WHERE sm.material_id = $1
+      ORDER BY sm.created_at DESC,
+        CASE UPPER(TRIM(COALESCE(sm.movement_type, '')))
+          WHEN 'IN' THEN 0
+          WHEN 'RETURN' THEN 1
+          WHEN 'ADJUST' THEN 2
+          WHEN 'OUT' THEN 3
+          ELSE 4
+        END ASC,
+        sm.id ASC
       LIMIT 100
     `;
 
@@ -1149,18 +1219,107 @@ export class MaterialsService {
         created_by: row.created_by ?? null,
         created_at: row.created_at,
       })),
-      stockMovements: movementResult.rows.map((row) => ({
-        id: row.id,
-        movement_type: row.movement_type,
-        qty: Number(row.qty),
-        source_type: row.source_type,
-        source_id: Number(row.source_id),
-        source_line_key: row.source_line_key,
-        remarks: row.remarks ?? null,
-        created_by: row.created_by ?? null,
-        created_at: row.created_at,
-      })),
+      stockMovements: movementResult.rows.map((row) => this.mapStockMovementHistory(row)),
     };
+  }
+
+  private mapStockMovementHistory(row: {
+    id: number;
+    movement_type: string;
+    qty: number;
+    source_type: string;
+    source_id: number;
+    source_line_key?: string | null;
+    remarks?: string | null;
+    created_by?: number | null;
+    created_at: string;
+    so_number?: string | null;
+    po_number?: string | null;
+    related_po_number?: string | null;
+  }) {
+    const sourceId = Number(row.source_id);
+    const relatedPoId = this.parseBackorderPurchaseId(row.source_line_key);
+    return {
+      id: row.id,
+      movement_type: row.movement_type,
+      qty: Number(row.qty),
+      source_type: row.source_type,
+      source_id: sourceId,
+      source_ref: this.formatMovementSourceRef(
+        row.source_type,
+        sourceId,
+        row.so_number,
+        row.po_number,
+      ),
+      source_line_key: row.source_line_key,
+      remarks: this.rewriteMovementRemarks(
+        row.remarks ?? null,
+        sourceId,
+        row.so_number,
+        row.po_number,
+        relatedPoId,
+        row.related_po_number,
+      ),
+      created_by: row.created_by ?? null,
+      created_at: row.created_at,
+    };
+  }
+
+  private formatMovementSourceRef(
+    sourceType: string,
+    sourceId: number,
+    soNumber?: string | null,
+    poNumber?: string | null,
+  ): string {
+    const type = String(sourceType ?? '').trim().toUpperCase();
+    if (['SO', 'SALES', 'SALES_ORDER'].includes(type)) {
+      return `SO #${soNumber?.trim() || sourceId}`;
+    }
+    if (['PO', 'PURCHASE', 'PURCHASE_ORDER'].includes(type)) {
+      return `PO #${poNumber?.trim() || sourceId}`;
+    }
+    if (['MANUAL', 'ADJUST'].includes(type)) {
+      return 'Manual';
+    }
+    return Number.isFinite(sourceId) && sourceId > 0 ? String(sourceId) : '';
+  }
+
+  private parseBackorderPurchaseId(lineKey?: string | null): number | null {
+    const match = String(lineKey ?? '').match(/^backorder_fulfillment_\d+-(\d+)$/);
+    if (!match) {
+      return null;
+    }
+    const purchaseId = Number(match[1]);
+    return Number.isFinite(purchaseId) && purchaseId > 0 ? purchaseId : null;
+  }
+
+  private rewriteMovementRemarks(
+    remarks: string | null,
+    sourceId: number,
+    soNumber?: string | null,
+    poNumber?: string | null,
+    relatedPoId?: number | null,
+    relatedPoNumber?: string | null,
+  ): string | null {
+    if (!remarks) {
+      return null;
+    }
+
+    let next = remarks;
+    const soLabel = soNumber?.trim();
+    const poLabel = poNumber?.trim();
+    const relatedLabel = relatedPoNumber?.trim();
+
+    if (soLabel && Number.isFinite(sourceId) && sourceId > 0) {
+      next = next.replace(new RegExp(`SO\\s*#${sourceId}\\b`, 'gi'), `SO #${soLabel}`);
+    }
+    if (poLabel && Number.isFinite(sourceId) && sourceId > 0) {
+      next = next.replace(new RegExp(`PO\\s*#${sourceId}\\b`, 'gi'), `PO #${poLabel}`);
+    }
+    if (relatedLabel && relatedPoId) {
+      next = next.replace(new RegExp(`PO\\s*#${relatedPoId}\\b`, 'gi'), `PO #${relatedLabel}`);
+    }
+    return next;
   }
 
   /**
@@ -1324,16 +1483,17 @@ export class MaterialsService {
     `;
     await this.db.query(updateQuery, [newStock, userId, materialId]);
 
-    // Step 6: Record Stock_Movement with movement_type = 'ADJUST'
+    // Step 6: Record a signed-safe movement (qty is always positive)
     const movementQuery = `
       INSERT INTO tblmaterial_stock_movement (
         material_id, movement_type, qty, source_type, source_id, source_line_key, remarks, created_by
       )
-      VALUES ($1, 'ADJUST', $2, 'MANUAL', $3, $4, $5, $6)
+      VALUES ($1, $2, $3, 'MANUAL', $4, $5, $6, $7)
     `;
     await this.db.query(movementQuery, [
       materialId,
-      dto.direction === 'increase' ? dto.quantity : -dto.quantity,
+      dto.direction === 'increase' ? 'IN' : 'OUT',
+      dto.quantity,
       materialId,
       `ADJ-${materialId}-${Date.now()}`,
       dto.remarks || null,

@@ -501,9 +501,10 @@ describe('MaterialsService - adjustStock()', () => {
       // Verify movement insert
       const movementCall = mockDb.query.mock.calls[3];
       expect(movementCall[0]).toContain('tblmaterial_stock_movement');
-      expect(movementCall[0]).toContain('ADJUST');
-      expect(movementCall[1][1]).toBe(20); // positive qty for increase
-      expect(movementCall[1][4]).toBe('Restocked'); // remarks
+      expect(movementCall[0]).toContain('tblmaterial_stock_movement');
+      expect(movementCall[1][1]).toBe('IN');
+      expect(movementCall[1][2]).toBe(20); // positive qty for increase
+      expect(movementCall[1][5]).toBe('Restocked'); // remarks
     });
   });
 
@@ -557,9 +558,9 @@ describe('MaterialsService - adjustStock()', () => {
       expect(result.message).toBe('Stock decreased by 20');
       expect(result.material.on_hand_stock).toBe(30);
 
-      // Verify movement qty is negative for decrease
       const movementCall = mockDb.query.mock.calls[3];
-      expect(movementCall[1][1]).toBe(-20);
+      expect(movementCall[1][1]).toBe('OUT');
+      expect(movementCall[1][2]).toBe(20);
     });
 
     it('should reject decrease that would reduce stock below zero', async () => {
@@ -713,7 +714,8 @@ describe('MaterialsService - update()', () => {
       String(call[0]).includes('tblmaterial_stock_movement'),
     );
     expect(priceHistoryCall?.[1]).toEqual([1, 110, 160, 1]);
-    expect(movementCall?.[1][1]).toBe(30);
+    expect(movementCall?.[1][1]).toBe('IN');
+    expect(movementCall?.[1][2]).toBe(30);
   });
 
   it('should skip password when only name changes', async () => {
@@ -948,5 +950,90 @@ describe('MaterialsService - recordStockDeficit()', () => {
     const insertCall = mockDb.query.mock.calls[0];
     const remarks = insertCall[1][4];
     expect(remarks).toBe('Stock deficit of 15 units. Material sourced from another supplier.');
+  });
+});
+
+describe('MaterialsService - getHistory()', () => {
+  let service: MaterialsService;
+  let mockDb: { query: jest.Mock };
+
+  beforeEach(async () => {
+    mockDb = { query: jest.fn() };
+    const module: TestingModule = await Test.createTestingModule({
+      providers: [
+        MaterialsService,
+        { provide: DatabaseService, useValue: mockDb },
+        { provide: AuditLogService, useValue: { logMutation: jest.fn() } },
+      ],
+    }).compile();
+    service = module.get<MaterialsService>(MaterialsService);
+  });
+
+  it('lists same-second IN before OUT so PO inbound traces above backorder deduct', async () => {
+    mockDb.query
+      .mockResolvedValueOnce({ rows: [{ id: 114, material_name: 'Copper Tube' }] })
+      .mockResolvedValueOnce({ rows: [] })
+      .mockResolvedValueOnce({ rows: [] });
+
+    await service.getHistory(114);
+
+    const movementSql = String(
+      mockDb.query.mock.calls.find(([sql]) =>
+        String(sql).includes('FROM tblmaterial_stock_movement'),
+      )?.[0] ?? '',
+    );
+
+    expect(movementSql).toContain('ORDER BY sm.created_at DESC');
+    expect(movementSql).toContain("WHEN 'IN' THEN 0");
+    expect(movementSql).toContain("WHEN 'OUT' THEN 3");
+    expect(movementSql).toContain('LEFT JOIN tblsales_order');
+    expect(movementSql).toContain('LEFT JOIN tblpurchase_orders');
+  });
+
+  it('shows SO/PO document numbers instead of internal ids', async () => {
+    mockDb.query
+      .mockResolvedValueOnce({ rows: [{ id: 114, material_name: 'Copper Tube' }] })
+      .mockResolvedValueOnce({ rows: [] })
+      .mockResolvedValueOnce({
+        rows: [
+          {
+            id: 1,
+            movement_type: 'OUT',
+            qty: 10,
+            source_type: 'SO',
+            source_id: 11690,
+            source_line_key: 'backorder_fulfillment_896-1488',
+            remarks: 'Backorder fulfillment for SO #11690 from PO #1488',
+            created_by: 1,
+            created_at: '2026-09-13T14:32:00.000Z',
+            so_number: '2026-3315',
+            po_number: null,
+            related_po_number: '2026-0131',
+          },
+          {
+            id: 2,
+            movement_type: 'IN',
+            qty: 15,
+            source_type: 'PO',
+            source_id: 1488,
+            source_line_key: 'po-1488-item-3155',
+            remarks: 'Inbound from PO #1488 (auto-completed)',
+            created_by: 1,
+            created_at: '2026-09-13T14:32:00.000Z',
+            so_number: null,
+            po_number: '2026-0131',
+            related_po_number: null,
+          },
+        ],
+      });
+
+    const result = await service.getHistory(114);
+
+    expect(result.stockMovements[0].source_ref).toBe('SO #2026-3315');
+    expect(result.stockMovements[0].remarks).toBe(
+      'Backorder fulfillment for SO #2026-3315 from PO #2026-0131',
+    );
+    expect(result.stockMovements[1].source_ref).toBe('PO #2026-0131');
+    expect(result.stockMovements[1].remarks).toBe('Inbound from PO #2026-0131 (auto-completed)');
   });
 });

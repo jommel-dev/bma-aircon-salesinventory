@@ -52,6 +52,7 @@ export interface StockMovementRecord {
   qty: number;
   source_type: string;
   source_id: number;
+  source_ref?: string;
   source_line_key: string;
   remarks: string | null;
   created_by: number | null;
