@@ -266,14 +266,6 @@ export class SalesOrderMaterialService {
   }
 
   /**
-   * Get the next SO number that will be assigned.
-   */
-  async getNextSoNumber(): Promise<string> {
-    const response = await apiClient.get('/sales-order/materials/next-number');
-    return response.data?.soNumber ?? '';
-  }
-
-  /**
     * Smart search materials by material code.
    */
   async checkMaterialStock(

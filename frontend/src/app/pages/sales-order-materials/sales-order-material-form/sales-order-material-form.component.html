@@ -15,9 +15,6 @@
       <h3 class="text-lg font-semibold text-gray-800 dark:text-white">
         {{ orderId ? 'Edit Sales Order' : 'Create Sales Order' }}
       </h3>
-      <p *ngIf="!orderId && nextSoNumber" class="mt-0.5 text-sm text-gray-500 dark:text-gray-400">
-        Sales Order #: <span class="font-medium text-brand-600 dark:text-brand-400">{{ nextSoNumber }}</span>
-      </p>
       <p *ngIf="orderId && currentSoNumber" class="mt-0.5 text-sm text-gray-500 dark:text-gray-400">
         SO#: <span class="font-medium text-brand-600 dark:text-brand-400">{{ currentSoNumber }}</span>
       </p>

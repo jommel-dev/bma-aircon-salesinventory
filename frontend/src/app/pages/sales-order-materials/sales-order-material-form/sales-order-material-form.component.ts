@@ -95,7 +95,7 @@ export class SalesOrderMaterialFormComponent implements OnInit, OnDestroy {
   pendingSubmissionStatus: string = '';
 
   // ─── SO Number Display ──────────────────────────────────────────────────────
-  nextSoNumber: string = '';
+  /** Set only after the order is loaded from the server. Unsaved orders have no number. */
   currentSoNumber: string = '';
 
   /** Stores the original salesType from the loaded order (for edit mode preservation). */
@@ -151,7 +151,6 @@ export class SalesOrderMaterialFormComponent implements OnInit, OnDestroy {
     } else {
       // Restore unsaved draft if available (only for new orders)
       this.restoreDraft();
-      void this.loadNextSoNumber();
       // Start auto-saving every 5 seconds
       this.draftAutoSaveTimer = setInterval(() => this.saveDraftToStorage(), 5000);
     }
@@ -237,18 +236,6 @@ export class SalesOrderMaterialFormComponent implements OnInit, OnDestroy {
     try {
       localStorage.removeItem(this.DRAFT_STORAGE_KEY);
     } catch { /* ignore */ }
-  }
-
-  /**
-   * Fetch the next SO number to display in the form header.
-   */
-  private async loadNextSoNumber(): Promise<void> {
-    try {
-      const result = await this.salesOrderMaterialService.getNextSoNumber();
-      this.nextSoNumber = result;
-    } catch {
-      this.nextSoNumber = '';
-    }
   }
 
   // ─── Delivery Date Logic ────────────────────────────────────────────────────
@@ -991,7 +978,7 @@ export class SalesOrderMaterialFormComponent implements OnInit, OnDestroy {
         })
       : '';
 
-    const soNumber = this.currentSoNumber || this.nextSoNumber || 'DRAFT';
+    const soNumber = this.currentSoNumber || 'DRAFT';
     const totalAmount = Math.round(
       this.productItems.reduce((sum, item) => sum + (item.total ?? 0), 0) * 100,
     ) / 100;
