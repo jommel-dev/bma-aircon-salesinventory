@@ -1,0 +1,275 @@
+<div class="min-h-screen bg-gray-50 dark:bg-gray-950">
+  <app-page-breadcrumb pageTitle="Back Orders" />
+
+  <div
+    class="mt-4 flex flex-col gap-3 rounded-2xl border px-5 py-4 sm:flex-row sm:items-center sm:justify-between"
+    [ngClass]="recordingEnabled
+      ? 'border-gray-200 bg-white dark:border-gray-800 dark:bg-white/3'
+      : 'border-amber-300 bg-amber-50 dark:border-amber-700 dark:bg-amber-900/20'"
+  >
+    <div>
+      <p class="text-sm font-semibold text-gray-900 dark:text-white">
+        Back order recording is {{ recordingEnabled ? 'on' : 'off' }}
+      </p>
+      <p class="mt-1 text-sm text-gray-600 dark:text-gray-300">
+        @if (recordingEnabled) {
+          Shortages on new sales orders are saved here. Turn this off while you fix inventory. Sales orders still save.
+        } @else {
+          New sales orders still save. Shortages are not recorded, and incoming stock does not auto-fill existing back orders until you turn this back on.
+        }
+      </p>
+      @if (recordingMessage) {
+        <p class="mt-2 text-sm text-red-600 dark:text-red-400">{{ recordingMessage }}</p>
+      }
+    </div>
+    <button
+      type="button"
+      (click)="toggleRecording()"
+      [disabled]="!canToggleRecording || isSavingRecording"
+      class="shrink-0 rounded-lg px-4 py-2 text-sm font-medium text-white transition disabled:cursor-not-allowed disabled:opacity-50"
+      [ngClass]="recordingEnabled ? 'bg-amber-600 hover:bg-amber-700' : 'bg-brand-600 hover:bg-brand-700'"
+    >
+      {{ isSavingRecording ? 'Saving...' : (recordingEnabled ? 'Turn off' : 'Turn on') }}
+    </button>
+  </div>
+
+  <div class="mt-4 grid grid-cols-1 gap-3 sm:grid-cols-3">
+    <div class="rounded-2xl border border-gray-200 bg-white px-5 py-4 dark:border-gray-800 dark:bg-white/3">
+      <p class="text-xs font-medium uppercase tracking-wide text-gray-500 dark:text-gray-400">Open lines</p>
+      <p class="mt-1 text-2xl font-semibold text-gray-900 dark:text-white">{{ formatQty(counts.open) }}</p>
+    </div>
+    <div class="rounded-2xl border border-gray-200 bg-white px-5 py-4 dark:border-gray-800 dark:bg-white/3">
+      <p class="text-xs font-medium uppercase tracking-wide text-gray-500 dark:text-gray-400">Still short</p>
+      <p class="mt-1 text-2xl font-semibold text-gray-900 dark:text-white">{{ formatQty(counts.openRemainingQty) }}</p>
+    </div>
+    <div class="rounded-2xl border border-gray-200 bg-white px-5 py-4 dark:border-gray-800 dark:bg-white/3">
+      <p class="text-xs font-medium uppercase tracking-wide text-gray-500 dark:text-gray-400">All records</p>
+      <p class="mt-1 text-2xl font-semibold text-gray-900 dark:text-white">{{ formatQty(counts.all) }}</p>
+    </div>
+  </div>
+
+  <div class="mt-4 border-b border-gray-200 dark:border-gray-800">
+    <ul class="flex flex-wrap -mb-px text-sm font-medium text-center">
+      @for (tab of tabs; track tab.key) {
+        <li class="me-2">
+          <button
+            type="button"
+            (click)="setTab(tab.key)"
+            [ngClass]="{
+              'text-brand-700 border-brand-500 dark:text-brand-300': activeTab === tab.key,
+              'border-transparent text-gray-500 hover:text-brand-700 hover:border-brand-400 dark:text-gray-400 dark:hover:text-brand-300': activeTab !== tab.key
+            }"
+            [attr.aria-current]="activeTab === tab.key ? 'page' : null"
+            class="inline-flex items-center justify-center gap-2 border-b-2 p-4 transition-colors"
+          >
+            {{ tab.label }}
+            <span class="rounded-full bg-gray-100 px-2 py-0.5 text-xs text-gray-600 dark:bg-gray-800 dark:text-gray-300">
+              {{ tabCount(tab) }}
+            </span>
+          </button>
+        </li>
+      }
+    </ul>
+  </div>
+
+  <div class="mt-4 rounded-2xl border border-gray-200 bg-white p-5 dark:border-gray-800 dark:bg-white/3 xl:p-6">
+    <div class="mb-4 flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+      <input
+        type="search"
+        [value]="search"
+        (input)="onSearchChange($any($event.target).value)"
+        placeholder="Search order number, customer, or material..."
+        class="w-full rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm text-gray-700 focus:border-brand-300 focus:outline-none dark:border-gray-700 dark:bg-gray-900 dark:text-gray-300 sm:max-w-md"
+      />
+      <button
+        type="button"
+        (click)="openSelectedFulfillDialog()"
+        [disabled]="selectedIds.size === 0"
+        class="rounded-lg bg-brand-600 px-4 py-2 text-sm font-medium text-white transition hover:bg-brand-700 disabled:cursor-not-allowed disabled:opacity-50"
+      >
+        Mark fulfilled{{ selectedIds.size > 0 ? ' (' + selectedIds.size + ')' : '' }}
+      </button>
+    </div>
+
+    @if (isLoading) {
+      <div class="py-10 text-center text-sm text-gray-500 dark:text-gray-400">Loading back orders...</div>
+    } @else if (errorMessage) {
+      <div class="rounded-lg border border-red-300 bg-red-50 px-4 py-3 text-sm text-red-600 dark:border-red-500/30 dark:bg-red-500/10 dark:text-red-400">
+        {{ errorMessage }}
+      </div>
+    } @else {
+      <div class="overflow-x-auto">
+        <table class="w-full min-w-[960px]">
+          <thead>
+            <tr class="border-b border-gray-200 dark:border-gray-800">
+              <th class="w-10 px-2 py-3">
+                <input
+                  type="checkbox"
+                  [checked]="allPageSelected"
+                  [disabled]="selectableRows.length === 0"
+                  (change)="toggleSelectAll()"
+                  aria-label="Select all open back orders on this page"
+                  class="rounded border-gray-300 text-brand-600 focus:ring-brand-500"
+                />
+              </th>
+              <th class="px-4 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-400">Created</th>
+              <th class="px-4 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-400">Order</th>
+              <th class="px-4 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-400">Customer</th>
+              <th class="px-4 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-400">Material</th>
+              <th class="px-4 py-3 text-right text-xs font-medium text-gray-500 dark:text-gray-400">Ordered</th>
+              <th class="px-4 py-3 text-right text-xs font-medium text-gray-500 dark:text-gray-400">On hand</th>
+              <th class="px-4 py-3 text-right text-xs font-medium text-gray-500 dark:text-gray-400">Short</th>
+              <th class="px-4 py-3 text-right text-xs font-medium text-gray-500 dark:text-gray-400">Filled</th>
+              <th class="px-4 py-3 text-right text-xs font-medium text-gray-500 dark:text-gray-400">Remaining</th>
+              <th class="px-4 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-400">Status</th>
+              <th class="px-4 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-400">Action</th>
+            </tr>
+          </thead>
+          <tbody>
+            @for (row of rows; track row.id) {
+              <tr class="border-b border-gray-100 hover:bg-gray-50 dark:border-gray-800 dark:hover:bg-gray-900">
+                <td class="w-10 px-2 py-3">
+                  <input
+                    type="checkbox"
+                    [checked]="isSelected(row.id)"
+                    [disabled]="!canFulfill(row)"
+                    (change)="toggleRow(row)"
+                    [attr.aria-label]="'Select back order ' + row.id"
+                    class="rounded border-gray-300 text-brand-600 focus:ring-brand-500 disabled:opacity-40"
+                  />
+                </td>
+                <td class="px-4 py-3 text-sm text-gray-600 dark:text-gray-300">
+                  {{ row.createdAt ? (row.createdAt | date: 'MMM d, y') : '—' }}
+                </td>
+                <td class="px-4 py-3 text-sm font-medium">
+                  <a
+                    [routerLink]="['/users/sales-order-materials/edit', row.salesOrderId]"
+                    class="text-brand-700 hover:underline dark:text-brand-300"
+                  >
+                    {{ row.soNumber || ('#' + row.salesOrderId) }}
+                  </a>
+                </td>
+                <td class="px-4 py-3 text-sm text-gray-600 dark:text-gray-300">{{ row.customerName || '—' }}</td>
+                <td class="px-4 py-3 text-sm text-gray-800 dark:text-gray-200">
+                  <div class="font-medium">{{ row.materialName || '—' }}</div>
+                  @if (row.materialCode) {
+                    <div class="text-xs text-gray-500 dark:text-gray-400">{{ row.materialCode }}</div>
+                  }
+                </td>
+                <td class="px-4 py-3 text-right text-sm text-gray-700 dark:text-gray-300">{{ formatQty(row.orderedQty) }}</td>
+                <td class="px-4 py-3 text-right text-sm text-gray-700 dark:text-gray-300">{{ formatQty(row.onHandQty) }}</td>
+                <td class="px-4 py-3 text-right text-sm text-gray-700 dark:text-gray-300">{{ formatQty(row.backorderQty) }}</td>
+                <td class="px-4 py-3 text-right text-sm text-gray-700 dark:text-gray-300">{{ formatQty(row.fulfilledQty) }}</td>
+                <td class="px-4 py-3 text-right text-sm font-medium text-gray-900 dark:text-white">{{ formatQty(row.remainingQty) }}</td>
+                <td class="px-4 py-3">
+                  <span class="inline-flex rounded-full px-2.5 py-0.5 text-xs font-semibold" [ngClass]="statusClass(row.status)">
+                    {{ statusLabel(row.status) }}
+                  </span>
+                </td>
+                <td class="px-4 py-3">
+                  @if (canFulfill(row)) {
+                    <button
+                      type="button"
+                      (click)="openFulfillDialog([row])"
+                      class="rounded-lg border border-brand-300 bg-brand-50 px-3 py-1.5 text-xs font-medium text-brand-700 transition hover:bg-brand-100 dark:border-brand-500/40 dark:bg-brand-900/20 dark:text-brand-300"
+                    >
+                      Mark fulfilled
+                    </button>
+                  }
+                </td>
+              </tr>
+            }
+          </tbody>
+        </table>
+      </div>
+
+      @if (rows.length === 0) {
+        <div class="flex flex-col items-center justify-center px-6 py-12">
+          <p class="text-sm text-gray-500 dark:text-gray-400">No back orders found in this tab.</p>
+        </div>
+      }
+
+      @if (totalPages > 1) {
+        <div class="flex items-center justify-between border-t border-gray-200 px-4 py-4 dark:border-gray-800">
+          <p class="text-sm text-gray-600 dark:text-gray-400">
+            Showing {{ (page - 1) * limit + 1 }} to {{ Math.min(page * limit, total) }} of {{ total }}
+          </p>
+          <div class="flex items-center gap-2">
+            <button
+              type="button"
+              (click)="goToPage(page - 1)"
+              [disabled]="page === 1"
+              class="rounded-lg border border-gray-300 px-3 py-1.5 text-sm font-medium text-gray-700 transition hover:bg-gray-50 disabled:cursor-not-allowed disabled:opacity-50 dark:border-gray-700 dark:bg-gray-900 dark:text-gray-300 dark:hover:bg-gray-800"
+            >
+              Previous
+            </button>
+            <span class="text-sm text-gray-600 dark:text-gray-400">Page {{ page }} of {{ totalPages }}</span>
+            <button
+              type="button"
+              (click)="goToPage(page + 1)"
+              [disabled]="page === totalPages"
+              class="rounded-lg border border-gray-300 px-3 py-1.5 text-sm font-medium text-gray-700 transition hover:bg-gray-50 disabled:cursor-not-allowed disabled:opacity-50 dark:border-gray-700 dark:bg-gray-900 dark:text-gray-300 dark:hover:bg-gray-800"
+            >
+              Next
+            </button>
+          </div>
+        </div>
+      }
+    }
+  </div>
+
+  @if (isFulfillDialogOpen) {
+    <div class="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4">
+      <div class="w-full max-w-lg rounded-2xl border border-gray-200 bg-white p-5 shadow-xl dark:border-gray-800 dark:bg-gray-900">
+        <h2 class="text-base font-semibold text-gray-900 dark:text-white">Mark back orders fulfilled</h2>
+        <p class="mt-1 text-sm text-gray-600 dark:text-gray-300">
+          {{ fulfillTargets.length }} selected record{{ fulfillTargets.length === 1 ? '' : 's' }} will be marked fulfilled. Stock is not changed.
+        </p>
+        <ul class="mt-3 max-h-36 space-y-1 overflow-y-auto text-sm text-gray-700 dark:text-gray-300">
+          @for (row of fulfillTargets; track row.id) {
+            <li>{{ row.soNumber || ('#' + row.salesOrderId) }} — {{ row.materialCode || row.materialName || 'Material' }} — remaining {{ formatQty(row.remainingQty) }}</li>
+          }
+        </ul>
+        <label class="mt-4 block text-sm font-medium text-gray-700 dark:text-gray-300">
+          Remarks
+          <textarea
+            [(ngModel)]="fulfillRemarks"
+            rows="3"
+            class="mt-1 w-full rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm text-gray-800 focus:border-brand-300 focus:outline-none dark:border-gray-700 dark:bg-gray-950 dark:text-gray-200"
+            placeholder="Why these back orders are being marked fulfilled"
+          ></textarea>
+        </label>
+        <label class="mt-3 block text-sm font-medium text-gray-700 dark:text-gray-300">
+          Your password
+          <input
+            type="password"
+            [(ngModel)]="fulfillPassword"
+            autocomplete="current-password"
+            class="mt-1 w-full rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm text-gray-800 focus:border-brand-300 focus:outline-none dark:border-gray-700 dark:bg-gray-950 dark:text-gray-200"
+          />
+        </label>
+        @if (fulfillError) {
+          <p class="mt-3 text-sm text-red-600 dark:text-red-400">{{ fulfillError }}</p>
+        }
+        <div class="mt-5 flex justify-end gap-2">
+          <button
+            type="button"
+            (click)="closeFulfillDialog()"
+            [disabled]="isFulfilling"
+            class="rounded-lg border border-gray-300 px-4 py-2 text-sm font-medium text-gray-700 dark:border-gray-700 dark:text-gray-300"
+          >
+            Cancel
+          </button>
+          <button
+            type="button"
+            (click)="confirmFulfill()"
+            [disabled]="isFulfilling"
+            class="rounded-lg bg-brand-600 px-4 py-2 text-sm font-medium text-white hover:bg-brand-700 disabled:opacity-50"
+          >
+            {{ isFulfilling ? 'Saving...' : 'Confirm fulfill' }}
+          </button>
+        </div>
+      </div>
+    </div>
+  }
+</div>

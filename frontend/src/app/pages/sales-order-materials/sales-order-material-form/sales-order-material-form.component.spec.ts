@@ -7,6 +7,7 @@ import { NotificationService } from '../../../shared/services/notification.servi
 import { PrintSalesOrderService } from '../../../shared/services/print-sales-order.service';
 import { DomSanitizer } from '@angular/platform-browser';
 import { StockRealtimeService } from '../../../shared/services/stock-realtime.service';
+import { BackorderService } from '../../../shared/services/backorder.service';
 import { Subject } from 'rxjs';
 
 describe('SalesOrderMaterialFormComponent - Non-Inventory Item Handling', () => {
@@ -50,6 +51,10 @@ describe('SalesOrderMaterialFormComponent - Non-Inventory Item Handling', () => 
         connect: () => undefined,
         updates$: new Subject().asObservable(),
       } as StockRealtimeService,
+      {
+        getRecording: () => Promise.resolve({ enabled: true }),
+        setRecording: () => Promise.resolve({ enabled: true }),
+      } as BackorderService,
     );
   });
 

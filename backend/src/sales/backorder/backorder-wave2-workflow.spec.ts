@@ -33,7 +33,30 @@ describe('Wave 2 – Backorder stock workflow', () => {
     service = module.get(BackorderService);
   });
 
+  describe('manualFulfillBackorders', () => {
+    it('requires remarks before checking the password', async () => {
+      await expect(
+        service.manualFulfillBackorders({
+          ids: [1],
+          remarks: '   ',
+          password: 'secret',
+          userId: 1,
+        }),
+      ).rejects.toThrow('Remarks are required');
+      expect(databaseService.query).not.toHaveBeenCalled();
+    });
+  });
+
   describe('processBackordersForSalesOrder', () => {
+    it('does not create a backorder when recording is turned off', async () => {
+      databaseService.query.mockResolvedValue({ rows: [{ enabled: false }], rowCount: 1 });
+
+      const result = await service.processBackordersForSalesOrder(50, 1);
+
+      expect(result).toEqual({ backorderCount: 0, createdBackorders: [] });
+      expect(databaseService.withTransaction).not.toHaveBeenCalled();
+    });
+
     it('creates a backorder for the shortage and does not write an OUT movement', async () => {
       clientQuery
         .mockResolvedValueOnce({ rows: [{ status: 'pending' }], rowCount: 1 })

@@ -1,6 +1,7 @@
 import { Injectable, BadRequestException } from '@nestjs/common';
+import { createHash } from 'crypto';
 import { DatabaseService } from 'src/database/database.service';
-import { AuditActorContext, AuditLogService } from 'src/audit-log/audit-log.service';
+import { AuditActorContext, AuditLogService, redactAuditRequestBody } from 'src/audit-log/audit-log.service';
 import { MaterialStockService } from 'src/inventory/material-stock/material-stock.service';
 
 interface BackorderItem {
@@ -21,6 +22,8 @@ interface BackorderCreationResult {
 
 @Injectable()
 export class BackorderService {
+  private recordingColumnReady = false;
+
   constructor(
     private readonly databaseService: DatabaseService,
     private readonly auditLogService: AuditLogService,
@@ -36,6 +39,10 @@ export class BackorderService {
     salesOrderId: number,
     userId?: number,
   ): Promise<{ backorderCount: number; createdBackorders: BackorderCreationResult[] }> {
+    if (!(await this.isRecordingEnabled())) {
+      return { backorderCount: 0, createdBackorders: [] };
+    }
+
     const createdBackorders: BackorderCreationResult[] = [];
 
     try {
@@ -267,6 +274,214 @@ export class BackorderService {
   }
 
   /**
+   * Paginated backorder list for the Back Orders screen.
+   * status: open | pending | partial_fulfilled | fulfilled | cancelled | all
+   */
+  async listBackorders(options: {
+    status?: string;
+    search?: string;
+    page?: number;
+    limit?: number;
+  }) {
+    const status = this.normalizeListStatus(options.status);
+    const page = Math.max(1, Number(options.page) || 1);
+    const limit = Math.min(100, Math.max(1, Number(options.limit) || 20));
+    const offset = (page - 1) * limit;
+    const search = String(options.search ?? '').trim();
+
+    const where: string[] = [];
+    const params: unknown[] = [];
+
+    if (status === 'open') {
+      where.push(`mb.status IN ('pending', 'partial_fulfilled')`);
+    } else if (status !== 'all') {
+      params.push(status);
+      where.push(`mb.status = $${params.length}`);
+    }
+
+    if (search) {
+      params.push(`%${search}%`);
+      const placeholder = `$${params.length}`;
+      where.push(`(
+        COALESCE(so.so_number, '') ILIKE ${placeholder}
+        OR COALESCE(c.name, '') ILIKE ${placeholder}
+        OR COALESCE(m.material_name, '') ILIKE ${placeholder}
+        OR COALESCE(m.material_code, '') ILIKE ${placeholder}
+        OR mb.id::text ILIKE ${placeholder}
+      )`);
+    }
+
+    const whereSql = where.length > 0 ? `WHERE ${where.join(' AND ')}` : '';
+    const fromSql = `
+      FROM tblmaterial_backorder mb
+      LEFT JOIN tblmaterials m ON mb.material_id = m.id
+      LEFT JOIN tblsales_order so ON mb.sales_order_id = so.id
+      LEFT JOIN tblcustomer c ON so.customer_id = c.id
+    `;
+
+    const rowsResult = await this.databaseService.query(
+      `SELECT
+        mb.id,
+        mb.sales_order_id,
+        so.so_number,
+        c.name AS customer_name,
+        mb.material_id,
+        m.material_name,
+        m.material_code,
+        mb.ordered_qty,
+        mb.on_hand_qty,
+        mb.backorder_qty,
+        mb.fulfilled_qty,
+        (mb.backorder_qty - COALESCE(mb.fulfilled_qty, 0)) AS remaining_qty,
+        mb.status,
+        mb.created_at
+      ${fromSql}
+      ${whereSql}
+      ORDER BY mb.created_at DESC, mb.id DESC
+      LIMIT $${params.length + 1} OFFSET $${params.length + 2}`,
+      [...params, limit, offset],
+    );
+
+    const countResult = await this.databaseService.query<{ total: number }>(
+      `SELECT COUNT(*)::int AS total ${fromSql} ${whereSql}`,
+      params,
+    );
+
+    const statusCounts = await this.databaseService.query<{
+      status: string;
+      n: number;
+      remaining: string | number;
+    }>(
+      `SELECT status,
+              COUNT(*)::int AS n,
+              COALESCE(SUM(backorder_qty - COALESCE(fulfilled_qty, 0)), 0) AS remaining
+       FROM tblmaterial_backorder
+       GROUP BY status`,
+    );
+
+    const counts = {
+      pending: 0,
+      partialFulfilled: 0,
+      fulfilled: 0,
+      cancelled: 0,
+      open: 0,
+      all: 0,
+      openRemainingQty: 0,
+    };
+
+    for (const row of statusCounts.rows) {
+      const n = this.toNumber(row.n);
+      const remaining = this.toNumber(row.remaining);
+      counts.all += n;
+      if (row.status === 'pending') {
+        counts.pending = n;
+        counts.open += n;
+        counts.openRemainingQty += remaining;
+      } else if (row.status === 'partial_fulfilled') {
+        counts.partialFulfilled = n;
+        counts.open += n;
+        counts.openRemainingQty += remaining;
+      } else if (row.status === 'fulfilled') {
+        counts.fulfilled = n;
+      } else if (row.status === 'cancelled') {
+        counts.cancelled = n;
+      }
+    }
+
+    const total = this.toNumber(countResult.rows[0]?.total);
+
+    return {
+      data: rowsResult.rows.map((row) => this.mapListRow(row)),
+      total,
+      page,
+      limit,
+      totalPages: total === 0 ? 0 : Math.ceil(total / limit),
+      counts,
+    };
+  }
+
+  async isRecordingEnabled(): Promise<boolean> {
+    await this.ensureRecordingColumn();
+    const result = await this.databaseService.query<{ enabled: boolean | null }>(
+      `SELECT backorder_recording_enabled AS enabled
+       FROM tblsettings
+       ORDER BY id ASC
+       LIMIT 1`,
+    );
+    if (!result.rowCount) {
+      return true;
+    }
+    return result.rows[0]?.enabled !== false;
+  }
+
+  async setRecordingEnabled(enabled: boolean): Promise<{ enabled: boolean }> {
+    await this.ensureRecordingColumn();
+    const existing = await this.databaseService.query<{ id: number }>(
+      `SELECT id FROM tblsettings ORDER BY id ASC LIMIT 1`,
+    );
+    if (existing.rowCount && existing.rows[0]?.id) {
+      await this.databaseService.query(
+        `UPDATE tblsettings SET backorder_recording_enabled = $1 WHERE id = $2`,
+        [enabled, existing.rows[0].id],
+      );
+    } else {
+      await this.databaseService.query(
+        `INSERT INTO tblsettings (backorder_recording_enabled) VALUES ($1)`,
+        [enabled],
+      );
+    }
+    return { enabled };
+  }
+
+  private async ensureRecordingColumn(): Promise<void> {
+    if (this.recordingColumnReady) {
+      return;
+    }
+    await this.databaseService.query(
+      `ALTER TABLE tblsettings
+       ADD COLUMN IF NOT EXISTS backorder_recording_enabled BOOLEAN NOT NULL DEFAULT TRUE`,
+    );
+    this.recordingColumnReady = true;
+  }
+
+  private normalizeListStatus(status?: string): string {
+    const value = String(status ?? 'open').trim().toLowerCase();
+    const allowed = new Set([
+      'open',
+      'pending',
+      'partial_fulfilled',
+      'fulfilled',
+      'cancelled',
+      'all',
+    ]);
+    return allowed.has(value) ? value : 'open';
+  }
+
+  private toNumber(value: unknown): number {
+    const parsed = Number(value);
+    return Number.isFinite(parsed) ? parsed : 0;
+  }
+
+  private mapListRow(row: Record<string, unknown>) {
+    return {
+      id: this.toNumber(row['id']),
+      salesOrderId: this.toNumber(row['sales_order_id']),
+      soNumber: row['so_number'] == null ? '' : String(row['so_number']),
+      customerName: row['customer_name'] == null ? '' : String(row['customer_name']),
+      materialId: this.toNumber(row['material_id']),
+      materialName: row['material_name'] == null ? '' : String(row['material_name']),
+      materialCode: row['material_code'] == null ? '' : String(row['material_code']),
+      orderedQty: this.toNumber(row['ordered_qty']),
+      onHandQty: this.toNumber(row['on_hand_qty']),
+      backorderQty: this.toNumber(row['backorder_qty']),
+      fulfilledQty: this.toNumber(row['fulfilled_qty']),
+      remainingQty: this.toNumber(row['remaining_qty']),
+      status: row['status'] == null ? '' : String(row['status']),
+      createdAt: row['created_at'] == null ? null : String(row['created_at']),
+    };
+  }
+
+  /**
    * Apply inbound stock (already posted by a PO receive) to open backorders FIFO.
    * Does not write another IN — the purchase path already increased on_hand_stock.
    * Does write the deferred SO OUT so completed short orders finally deduct.
@@ -285,6 +500,9 @@ export class BackorderService {
   }> {
     const qty = Number(incomingQty);
     if (!Number.isFinite(materialId) || materialId <= 0 || !Number.isFinite(qty) || qty <= 0) {
+      return { allocatedQty: 0, allocations: [] };
+    }
+    if (!(await this.isRecordingEnabled())) {
       return { allocatedQty: 0, allocations: [] };
     }
 
@@ -421,6 +639,149 @@ export class BackorderService {
     }
 
     return this.databaseService.withTransaction((client) => run(client));
+  }
+
+  /**
+   * Mark open back orders fulfilled without changing stock.
+   * Requires the acting user's password. Writes the selected records and remarks to the audit log.
+   */
+  async manualFulfillBackorders(input: {
+    ids: number[];
+    remarks: string;
+    password: string;
+    userId?: number;
+    auditActor?: AuditActorContext;
+  }): Promise<{ fulfilledCount: number; records: Array<Record<string, unknown>> }> {
+    const remarks = String(input.remarks ?? '').trim();
+    if (!remarks) {
+      throw new BadRequestException('Remarks are required');
+    }
+    const password = String(input.password ?? '');
+    if (!password) {
+      throw new BadRequestException('Password is required');
+    }
+    const userId = Number(input.userId);
+    if (!Number.isFinite(userId) || userId <= 0) {
+      throw new BadRequestException('Password is required');
+    }
+
+    const ids = [...new Set(
+      (input.ids ?? [])
+        .map((id) => Number(id))
+        .filter((id) => Number.isFinite(id) && id > 0),
+    )];
+    if (ids.length === 0) {
+      throw new BadRequestException('Select at least one back order');
+    }
+    if (ids.length > 200) {
+      throw new BadRequestException('Select 200 back orders or fewer at a time');
+    }
+
+    await this.assertUserPassword(userId, password);
+
+    const selected = await this.databaseService.query(
+      `SELECT
+         mb.id,
+         mb.sales_order_id,
+         so.so_number,
+         c.name AS customer_name,
+         mb.material_id,
+         m.material_name,
+         m.material_code,
+         mb.ordered_qty,
+         mb.on_hand_qty,
+         mb.backorder_qty,
+         mb.fulfilled_qty,
+         (mb.backorder_qty - COALESCE(mb.fulfilled_qty, 0)) AS remaining_qty,
+         mb.status
+       FROM tblmaterial_backorder mb
+       LEFT JOIN tblmaterials m ON mb.material_id = m.id
+       LEFT JOIN tblsales_order so ON mb.sales_order_id = so.id
+       LEFT JOIN tblcustomer c ON so.customer_id = c.id
+       WHERE mb.id = ANY($1::bigint[])
+       ORDER BY mb.id ASC`,
+      [ids],
+    );
+
+    const openRows = selected.rows.filter((row) => {
+      const status = String(row.status ?? '');
+      return status === 'pending' || status === 'partial_fulfilled';
+    });
+    if (openRows.length === 0) {
+      throw new BadRequestException('None of the selected back orders can be fulfilled');
+    }
+
+    const openIds = openRows.map((row) => Number(row.id));
+    const records = openRows.map((row) => this.mapListRow(row as Record<string, unknown>));
+    const fulfilledRecords = records.map((record) => ({
+      ...record,
+      status: 'fulfilled',
+      fulfilledQty: record.backorderQty,
+      remainingQty: 0,
+    }));
+    const actor = input.auditActor ?? { userId };
+    const description = `Manually fulfilled ${records.length} back order(s)`;
+
+    const updated = await this.databaseService.withTransaction(async (client) => {
+      const updateResult = await client.query(
+        `UPDATE tblmaterial_backorder
+         SET status = 'fulfilled',
+             fulfilled_qty = backorder_qty,
+             updated_at = NOW(),
+             updated_by = $2
+         WHERE id = ANY($1::bigint[])
+           AND status IN ('pending', 'partial_fulfilled')
+         RETURNING id`,
+        [openIds, userId],
+      );
+
+      await client.query(
+        `INSERT INTO tblaudit_logs
+           (action, entity_type, entity_id, user_id, username, role_name, branch_id, ip_address, metadata)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9::jsonb)`,
+        [
+          'BACKORDER_MANUAL_FULFILL',
+          'backorder',
+          'manual-fulfill',
+          userId,
+          actor.username ?? null,
+          actor.roleName ?? null,
+          actor.branchId ?? null,
+          actor.ipAddress ?? null,
+          JSON.stringify({
+            description,
+            remarks,
+            passwordVerified: true,
+            selectedBackorders: records,
+            requestBody: redactAuditRequestBody({
+              ids: openIds,
+              remarks,
+              password,
+            }),
+            before: { records },
+            after: { status: 'fulfilled', records: fulfilledRecords },
+          }),
+        ],
+      );
+
+      return updateResult;
+    });
+
+    return {
+      fulfilledCount: updated.rowCount ?? records.length,
+      records,
+    };
+  }
+
+  private async assertUserPassword(userId: number, password: string): Promise<void> {
+    const passwordSha1 = createHash('sha1').update(password).digest('hex');
+    const result = await this.databaseService.query(
+      `SELECT id FROM tblusers WHERE id = $1 AND password = $2 LIMIT 1`,
+      [userId, passwordSha1],
+    );
+    if (!result.rowCount) {
+      throw new BadRequestException('Incorrect password');
+    }
   }
 
   /**

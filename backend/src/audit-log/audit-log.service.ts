@@ -401,12 +401,19 @@ export class AuditLogService {
   }
 
   async logMutation(entry: AuditMutationEntry): Promise<void> {
+    await this.log(this.toLogEntry(entry));
+  }
+
+  async logMutationStrict(entry: AuditMutationEntry): Promise<void> {
+    await this.persist(this.toLogEntry(entry));
+  }
+
+  private toLogEntry(entry: AuditMutationEntry): AuditLogEntry {
     const before = this.normalizeRecord(entry.before);
     const after = this.normalizeRecord(entry.after);
     const requestBody = this.normalizeRecord(entry.requestBody);
     const changes = this.buildChanges(before, after);
-
-    await this.log({
+    return {
       action: entry.action,
       entityType: entry.entityType,
       entityId: entry.entityId,
@@ -423,7 +430,7 @@ export class AuditLogService {
         changes,
         ...(entry.metadata ?? {}),
       },
-    });
+    };
   }
 
   /**
@@ -444,22 +451,17 @@ export class AuditLogService {
     } = entry;
 
     try {
-      await this.databaseService.query(
-        `INSERT INTO tblaudit_logs
-           (action, entity_type, entity_id, user_id, username, role_name, branch_id, ip_address, metadata)
-         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)`,
-        [
-          String(action ?? '').trim(),
-          String(entityType ?? '').trim(),
-          entityId != null ? String(entityId) : null,
-          userId != null && Number.isFinite(Number(userId)) ? Number(userId) : null,
-          username ? String(username).trim() : null,
-          roleName ? String(roleName).trim() : null,
-          branchId != null && Number.isFinite(Number(branchId)) ? Number(branchId) : null,
-          ipAddress ? String(ipAddress).trim() : null,
-          metadata ? JSON.stringify(metadata) : null,
-        ],
-      );
+      await this.persist({
+        action,
+        entityType,
+        entityId,
+        userId,
+        username,
+        roleName,
+        branchId,
+        ipAddress,
+        metadata,
+      });
     } catch (error) {
       console.error('[AuditLogService] Failed to persist audit log', {
         action,
@@ -468,5 +470,25 @@ export class AuditLogService {
         error: error instanceof Error ? error.message : error,
       });
     }
+  }
+
+  private async persist(entry: AuditLogEntry): Promise<void> {
+    const entityId = entry.entityId != null ? String(entry.entityId).slice(0, 100) : null;
+    await this.databaseService.query(
+      `INSERT INTO tblaudit_logs
+         (action, entity_type, entity_id, user_id, username, role_name, branch_id, ip_address, metadata)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)`,
+      [
+        String(entry.action ?? '').trim(),
+        String(entry.entityType ?? '').trim(),
+        entityId,
+        entry.userId != null && Number.isFinite(Number(entry.userId)) ? Number(entry.userId) : null,
+        entry.username ? String(entry.username).trim() : null,
+        entry.roleName ? String(entry.roleName).trim() : null,
+        entry.branchId != null && Number.isFinite(Number(entry.branchId)) ? Number(entry.branchId) : null,
+        entry.ipAddress ? String(entry.ipAddress).trim() : null,
+        entry.metadata ? JSON.stringify(entry.metadata) : null,
+      ],
+    );
   }
 }

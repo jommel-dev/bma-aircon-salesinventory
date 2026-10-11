@@ -24,6 +24,16 @@ import { apiClient } from '../../shared/services/api-client';
 
 type SettingsTab = 'system' | 'branches' | 'print-settings' | 'rbac-configs' | 'audit-logs' | 'database';
 
+interface AuditBackorderRow {
+  soNumber?: string;
+  salesOrderId?: string | number;
+  customerName?: string;
+  materialCode?: string;
+  materialName?: string;
+  backorderQty?: string | number;
+  status?: string;
+}
+
 interface SettingsPermissionOption {
   key: string;
   label: string;
@@ -413,6 +423,17 @@ export class SettingsComponent implements OnInit {
   getAuditChanges(item: AuditLogListItem | null | undefined): Array<{ field: string; oldValue: unknown; newValue: unknown }> {
     const changes = item?.metadata?.changes;
     return Array.isArray(changes) ? changes : [];
+  }
+
+  getAuditRemarks(item: AuditLogListItem | null | undefined): string {
+    const metadata = item?.metadata;
+    const requestBody = metadata?.requestBody;
+    return String(metadata?.['remarks'] ?? requestBody?.['remarks'] ?? '').trim();
+  }
+
+  getSelectedBackorders(item: AuditLogListItem | null | undefined): AuditBackorderRow[] {
+    const rows = item?.metadata?.['selectedBackorders'];
+    return Array.isArray(rows) ? (rows as AuditBackorderRow[]) : [];
   }
 
   async loadRbacConfig(): Promise<void> {

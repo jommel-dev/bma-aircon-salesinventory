@@ -36,6 +36,13 @@ export const guestOnlyMatchGuard: CanMatchFn = () => {
 export const rbacGuard: CanActivateFn = (route) => {
   const rbacService = inject(RbacService);
 
+  if (route.data?.['superAdminOnly']) {
+    if (!rbacService.isAuthenticated()) {
+      return toLogin();
+    }
+    return rbacService.isSuperAdmin() ? true : toDashboard();
+  }
+
   const menu = route.data?.['menu'] as MenuKey | undefined;
   const permission = route.data?.['permission'] as PermissionKey | undefined;
 

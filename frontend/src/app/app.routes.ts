@@ -13,6 +13,7 @@ import { InventoryComponent } from './pages/inventory/inventory.component';
 import { QuotationComponent } from './pages/quotation/quotation.component';
 import { QuotationFormPageComponent } from './pages/quotation/quotation-form/quotation-form-page.component';
 import { SalesOrderMaterialsComponent } from './pages/sales-order-materials/sales-order-materials.component';
+import { BackordersComponent } from './pages/backorders/backorders.component';
 import { SalesOrderMaterialFormPageComponent } from './pages/sales-order-materials/sales-order-material-form/sales-order-material-form-page.component';
 import { PoMaterialsListComponent } from './pages/purchase-order-materials/po-materials-list/po-materials-list.component';
 import { PoMaterialsFormPageComponent } from './pages/purchase-order-materials/po-materials-form/po-materials-form-page.component';
@@ -132,6 +133,15 @@ export const routes: Routes = [
           permission: 'canRead',
         },
         title: 'Sales Order Materials',
+      },
+      {
+        path: 'backorders',
+        component: BackordersComponent,
+        canActivate: [rbacGuard],
+        data: {
+          superAdminOnly: true,
+        },
+        title: 'Back Orders',
       },
       {
         path: 'sales-order-materials/create',

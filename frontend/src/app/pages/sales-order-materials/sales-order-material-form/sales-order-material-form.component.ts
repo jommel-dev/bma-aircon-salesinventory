@@ -16,6 +16,7 @@ import {
   SalesOrderMaterialService,
 } from '../../../shared/services/sales-order-material.service';
 import { NotificationService } from '../../../shared/services/notification.service';
+import { BackorderService } from '../../../shared/services/backorder.service';
 import { StockRealtimeService } from '../../../shared/services/stock-realtime.service';
 import { Subscription } from 'rxjs';
 import {
@@ -120,6 +121,7 @@ export class SalesOrderMaterialFormComponent implements OnInit, OnDestroy {
   private materialSearchDebounceTimer: ReturnType<typeof setTimeout> | null = null;
   private stockUpdatesSub: Subscription | null = null;
   private readonly debounceMs = 300;
+  private backorderRecordingEnabled = true;
 
   constructor(
     private readonly rbacService: RbacService,
@@ -130,6 +132,7 @@ export class SalesOrderMaterialFormComponent implements OnInit, OnDestroy {
     private readonly printSalesOrderService: PrintSalesOrderService,
     private readonly sanitizer: DomSanitizer,
     private readonly stockRealtimeService: StockRealtimeService,
+    private readonly backorderService: BackorderService,
   ) {}
 
   private readonly DRAFT_STORAGE_KEY = 'so_material_form_draft';
@@ -141,6 +144,7 @@ export class SalesOrderMaterialFormComponent implements OnInit, OnDestroy {
     this.paymentDetails = [this.createEmptyPaymentDetail()];
 
     void this.loadCustomerOptions();
+    void this.loadBackorderRecording();
     this.stockRealtimeService.connect();
     this.stockUpdatesSub = this.stockRealtimeService.updates$.subscribe((items) => {
       this.applyLiveStockUpdates(items);
@@ -749,6 +753,15 @@ export class SalesOrderMaterialFormComponent implements OnInit, OnDestroy {
    */
   private stockRefreshTimer: ReturnType<typeof setTimeout> | null = null;
 
+  private async loadBackorderRecording(): Promise<void> {
+    try {
+      const result = await this.backorderService.getRecording();
+      this.backorderRecordingEnabled = result.enabled;
+    } catch {
+      this.backorderRecordingEnabled = true;
+    }
+  }
+
   private applyLiveStockUpdates(
     items: Array<{ materialId: number; availableQty: number }>,
   ): void {
@@ -843,7 +856,11 @@ export class SalesOrderMaterialFormComponent implements OnInit, OnDestroy {
         continue;
       }
 
-      warnings.push(`⚠️ ${message} Shortage will be fulfilled as a backorder.`);
+      warnings.push(
+        this.backorderRecordingEnabled
+          ? `⚠️ ${message} Shortage will be fulfilled as a backorder.`
+          : `⚠️ ${message} Back order recording is off, so this shortage will not be recorded. You can still save the order.`,
+      );
     }
 
     return { warnings, errors };
