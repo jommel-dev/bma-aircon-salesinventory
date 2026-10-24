@@ -10,6 +10,7 @@ import {
   BackorderService,
 } from '../../shared/services/backorder.service';
 import { RbacService } from '../../shared/services/rbac.service';
+import * as ExcelJS from 'exceljs';
 
 interface TabDefinition {
   key: BackorderListStatus;
@@ -64,6 +65,8 @@ export class BackordersComponent implements OnInit, OnDestroy {
   fulfillPassword = '';
   fulfillError = '';
   isFulfilling = false;
+  isExporting = false;
+  exportError = '';
 
   private searchDebounceTimer: ReturnType<typeof setTimeout> | null = null;
 
@@ -263,6 +266,109 @@ export class BackordersComponent implements OnInit, OnDestroy {
     } finally {
       this.isFulfilling = false;
     }
+  }
+
+  async exportOpenToExcel(): Promise<void> {
+    if (this.isExporting) {
+      return;
+    }
+    this.isExporting = true;
+    this.exportError = '';
+    try {
+      const rows = await this.loadAllOpenBackorders();
+      const workbook = new ExcelJS.Workbook();
+      const worksheet = workbook.addWorksheet('Open Back Orders');
+      const today = new Date().toISOString().slice(0, 10);
+
+      worksheet.mergeCells('A1:L1');
+      const title = worksheet.getCell('A1');
+      title.value = `Open Back Orders — pending and partial — ${today}`;
+      title.font = { bold: true, size: 14 };
+
+      worksheet.addRow([]);
+      const header = worksheet.addRow([
+        'Created',
+        'Order',
+        'Customer',
+        'Material code',
+        'Material',
+        'Status',
+        'Ordered',
+        'On hand',
+        'Short',
+        'Filled',
+        'Remaining',
+      ]);
+      header.font = { bold: true };
+      header.eachCell((cell) => {
+        cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFE8E8E8' } };
+        cell.border = { bottom: { style: 'thin' } };
+      });
+
+      let remainingTotal = 0;
+      for (const row of rows) {
+        remainingTotal += Number(row.remainingQty) || 0;
+        const dataRow = worksheet.addRow([
+          row.createdAt ? new Date(row.createdAt) : '',
+          row.soNumber || String(row.salesOrderId),
+          row.customerName || '',
+          row.materialCode || '',
+          row.materialName || '',
+          this.statusLabel(row.status),
+          Number(row.orderedQty) || 0,
+          Number(row.onHandQty) || 0,
+          Number(row.backorderQty) || 0,
+          Number(row.fulfilledQty) || 0,
+          Number(row.remainingQty) || 0,
+        ]);
+        dataRow.getCell(1).numFmt = 'yyyy-mm-dd';
+        for (const column of [7, 8, 9, 10, 11]) {
+          dataRow.getCell(column).numFmt = '#,##0.##';
+        }
+      }
+
+      worksheet.addRow([]);
+      const totalRow = worksheet.addRow(['', '', '', '', '', 'Remaining total', '', '', '', '', remainingTotal]);
+      totalRow.font = { bold: true };
+      totalRow.getCell(11).numFmt = '#,##0.##';
+
+      worksheet.columns.forEach((column, index) => {
+        const widths = [14, 16, 32, 16, 36, 12, 12, 12, 12, 12, 14];
+        column.width = widths[index] ?? 14;
+      });
+
+      const buffer = await workbook.xlsx.writeBuffer();
+      const blob = new Blob([buffer], {
+        type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+      });
+      const url = URL.createObjectURL(blob);
+      const link = document.createElement('a');
+      link.href = url;
+      link.download = `Open_Backorders_${today}.xlsx`;
+      link.click();
+      URL.revokeObjectURL(url);
+    } catch {
+      this.exportError = 'Could not export the open back orders. Try again.';
+    } finally {
+      this.isExporting = false;
+    }
+  }
+
+  private async loadAllOpenBackorders(): Promise<BackorderListItem[]> {
+    const rows: BackorderListItem[] = [];
+    let page = 1;
+    let totalPages = 1;
+    do {
+      const result = await this.backorderService.list({
+        status: 'open',
+        page,
+        limit: 100,
+      });
+      rows.push(...(result.data ?? []));
+      totalPages = Math.max(1, result.totalPages ?? 1);
+      page += 1;
+    } while (page <= totalPages);
+    return rows;
   }
 
   formatQty(value: number | null | undefined): string {

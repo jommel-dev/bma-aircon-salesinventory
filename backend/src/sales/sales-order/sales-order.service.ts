@@ -8158,6 +8158,18 @@ export class SalesOrderService {
     };
   }
 
+  private canChangeMaterialSalesOrderCustomer(
+    currentStatus: string,
+    roleName?: string | null,
+  ): boolean {
+    const role = String(roleName ?? '').trim().toLowerCase();
+    if (role === 'admin' || role === 'superadmin' || role === 'super admin') {
+      return true;
+    }
+
+    return String(currentStatus ?? '').trim().toLowerCase() === 'draft';
+  }
+
   async updateMaterialSalesOrder(
     id: number,
     dto: UpdateMaterialSalesOrderDto,
@@ -8204,9 +8216,15 @@ export class SalesOrderService {
 
           console.log('Step 2 success');
 
-          // 3. Handle customer upsert if customer data is provided
+          // 3. Handle customer upsert if customer data is provided.
+          // Draft orders can change customer. After the order leaves Draft, only
+          // admin and super admin may change it; other roles keep the stored customer.
           let customerId: string | null = existingOrder.customer_id;
-          if (dto.customer_id || dto.customer) {
+          const allowCustomerChange = this.canChangeMaterialSalesOrderCustomer(
+            String(existingOrder.status ?? ''),
+            auditActor?.roleName,
+          );
+          if (allowCustomerChange && (dto.customer_id || dto.customer)) {
             customerId = await this.upsertCustomerFromPayload(client, {
               customer_id: dto.customer_id,
               customer: dto.customer as any,

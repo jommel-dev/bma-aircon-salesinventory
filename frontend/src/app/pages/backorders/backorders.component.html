@@ -81,6 +81,15 @@
         placeholder="Search order number, customer, or material..."
         class="w-full rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm text-gray-700 focus:border-brand-300 focus:outline-none dark:border-gray-700 dark:bg-gray-900 dark:text-gray-300 sm:max-w-md"
       />
+      <div class="flex flex-wrap items-center gap-2">
+        <button
+          type="button"
+          (click)="exportOpenToExcel()"
+          [disabled]="isExporting"
+          class="rounded-lg border border-green-300 bg-green-50 px-4 py-2 text-sm font-medium text-green-700 transition hover:bg-green-100 disabled:cursor-not-allowed disabled:opacity-50 dark:border-green-500/40 dark:bg-green-900/20 dark:text-green-300"
+        >
+          {{ isExporting ? 'Exporting...' : 'Export open to Excel' }}
+        </button>
       <button
         type="button"
         (click)="openSelectedFulfillDialog()"
@@ -89,7 +98,11 @@
       >
         Mark fulfilled{{ selectedIds.size > 0 ? ' (' + selectedIds.size + ')' : '' }}
       </button>
+      </div>
     </div>
+    @if (exportError) {
+      <p class="mb-3 text-sm text-red-600 dark:text-red-400">{{ exportError }}</p>
+    }
 
     @if (isLoading) {
       <div class="py-10 text-center text-sm text-gray-500 dark:text-gray-400">Loading back orders...</div>

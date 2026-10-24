@@ -54,7 +54,7 @@ describe('SalesOrderMaterialFormComponent - Non-Inventory Item Handling', () => 
       {
         getRecording: () => Promise.resolve({ enabled: true }),
         setRecording: () => Promise.resolve({ enabled: true }),
-      } as BackorderService,
+      } as unknown as BackorderService,
     );
   });
 
@@ -229,6 +229,52 @@ describe('SalesOrderMaterialFormComponent - Non-Inventory Item Handling', () => 
 
       // Should pass non-inventory validation (the item is not non-inventory)
       expect(component.validationError).toBe('');
+    });
+  });
+
+  describe('canEditCustomer', () => {
+    it('lets every user edit the customer on a new order and on a draft', () => {
+      component.isAdmin = false;
+      component.orderId = undefined;
+      expect(component.canEditCustomer).toBeTrue();
+
+      component.orderId = 12;
+      component.orderStatus = 'draft';
+      expect(component.canEditCustomer).toBeTrue();
+    });
+
+    it('locks the customer for non-admin users after the order leaves draft', () => {
+      component.isAdmin = false;
+      component.orderId = 12;
+
+      component.orderStatus = 'pending';
+      expect(component.canEditCustomer).toBeFalse();
+
+      component.orderStatus = 'complete';
+      expect(component.canEditCustomer).toBeFalse();
+
+      component.orderStatus = 'voided';
+      expect(component.canEditCustomer).toBeFalse();
+    });
+
+    it('lets admin and super admin edit the customer on any status', () => {
+      component.isAdmin = true;
+      component.orderId = 12;
+      component.orderStatus = 'pending';
+      expect(component.canEditCustomer).toBeTrue();
+    });
+
+    it('ignores customer search changes when the customer is locked', () => {
+      component.isAdmin = false;
+      component.orderId = 12;
+      component.orderStatus = 'pending';
+      component.customerSearch = 'Acme';
+      component.selectedCustomerId = 'cust-1';
+
+      component.onCustomerSearchChange('Other Customer');
+
+      expect(component.customerSearch).toBe('Acme');
+      expect(component.selectedCustomerId).toBe('cust-1');
     });
   });
 });
