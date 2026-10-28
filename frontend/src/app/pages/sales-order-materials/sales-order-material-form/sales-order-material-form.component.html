@@ -57,14 +57,12 @@
           name="customerSearch"
           placeholder="Search and select customer"
           autocomplete="off"
-          [readonly]="!canEditCustomer"
           (focus)="onCustomerComboboxFocus()"
           (blur)="onCustomerComboboxBlur()"
-          class="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm dark:border-gray-700"
-          [ngClass]="canEditCustomer ? 'bg-white dark:bg-gray-900' : 'cursor-not-allowed bg-gray-50 text-gray-600 dark:bg-gray-800 dark:text-gray-300'"
+          class="w-full rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm dark:border-gray-700 dark:bg-gray-900"
         />
 
-        @if (isCustomerDropdownOpen && canEditCustomer) {
+        @if (isCustomerDropdownOpen) {
           <div class="absolute z-40 mt-1 max-h-56 w-full overflow-y-auto rounded-lg border border-gray-200 bg-white shadow-lg dark:border-gray-700 dark:bg-gray-900">
             @if (getFilteredCustomerOptions().length === 0) {
               <p class="px-3 py-2 text-xs text-gray-500 dark:text-gray-400">No customers found.</p>
@@ -84,11 +82,7 @@
         }
       </div>
       <p class="mt-1 text-xs text-gray-500 dark:text-gray-400">
-        @if (canEditCustomer) {
-          Type customer name and pick one from the list, or enter a new customer name.
-        } @else {
-          Customer is locked after the order leaves Draft. Admin and super admin can still change it.
-        }
+        Type customer name and pick one from the list, or enter a new customer name.
       </p>
 
       @if (selectedCustomerId || customerSearch.trim()) {
@@ -100,9 +94,7 @@
               [(ngModel)]="customerForm.address"
               name="customer_address"
               placeholder="Enter address"
-              [readonly]="!canEditCustomer"
-              class="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm dark:border-gray-700"
-              [ngClass]="canEditCustomer ? 'bg-white dark:bg-gray-900' : 'cursor-not-allowed bg-gray-50 text-gray-600 dark:bg-gray-800 dark:text-gray-300'"
+              class="w-full rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm dark:border-gray-700 dark:bg-gray-900"
             />
           </div>
           <div>
@@ -112,9 +104,7 @@
               [(ngModel)]="customerForm.contact_person"
               name="customer_contact_person"
               placeholder="Enter contact person"
-              [readonly]="!canEditCustomer"
-              class="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm dark:border-gray-700"
-              [ngClass]="canEditCustomer ? 'bg-white dark:bg-gray-900' : 'cursor-not-allowed bg-gray-50 text-gray-600 dark:bg-gray-800 dark:text-gray-300'"
+              class="w-full rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm dark:border-gray-700 dark:bg-gray-900"
             />
           </div>
           <div>
@@ -124,9 +114,7 @@
               [(ngModel)]="customerForm.contact_number"
               name="customer_contact_number"
               placeholder="Enter contact number"
-              [readonly]="!canEditCustomer"
-              class="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm dark:border-gray-700"
-              [ngClass]="canEditCustomer ? 'bg-white dark:bg-gray-900' : 'cursor-not-allowed bg-gray-50 text-gray-600 dark:bg-gray-800 dark:text-gray-300'"
+              class="w-full rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm dark:border-gray-700 dark:bg-gray-900"
             />
           </div>
         </div>

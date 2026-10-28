@@ -42,9 +42,13 @@ export class PrintSalesOrderService {
     const pdfDoc = await PDFDocument.create();
     const font = await pdfDoc.embedFont(StandardFonts.Helvetica);
     const boldFont = await pdfDoc.embedFont(StandardFonts.HelveticaBold);
+    const printData = this.sanitizePrintData(data, font);
+    const watermark = options?.watermark
+      ? this.sanitizePdfText(options.watermark, boldFont)
+      : undefined;
 
     // Paginate items
-    const pages = this.paginateItems(data.items);
+    const pages = this.paginateItems(printData.items);
 
     for (let pageIndex = 0; pageIndex < pages.length; pageIndex++) {
       const isFirstPage = pageIndex === 0;
@@ -65,7 +69,7 @@ export class PrintSalesOrderService {
 
       // Draw header info on first page
       if (isFirstPage) {
-        this.drawHeader(page, font, boldFont, data, width, height);
+        this.drawHeader(page, font, boldFont, printData, width, height);
       }
 
       // Draw items
@@ -76,7 +80,7 @@ export class PrintSalesOrderService {
       if (pageIndex === pages.length - 1) {
         const totalY =  height - 670;
         const totalX = width - 110;
-        page.drawText(this.formatNumber(data.totalAmount), {
+        page.drawText(this.formatNumber(printData.totalAmount), {
           x: totalX,
           y: totalY,
           size: 11,
@@ -85,8 +89,8 @@ export class PrintSalesOrderService {
         });
       }
 
-      if (options?.watermark) {
-        this.drawWatermark(page, boldFont, options.watermark, width, height);
+      if (watermark) {
+        this.drawWatermark(page, boldFont, watermark, width, height);
       }
     }
 
@@ -260,9 +264,73 @@ export class PrintSalesOrderService {
     }
   }
 
+  /**
+   * Helvetica is WinAnsi-only. Customer names/addresses often contain ₱, smart quotes,
+   * or replacement chars (U+FFFD) from bad encodings — those crash widthOfTextAtSize.
+   */
+  private sanitizePdfText(text: string, font: PDFFont): string {
+    const mapped: Record<string, string> = {
+      '\u0009': ' ',
+      '\u000a': ' ',
+      '\u000d': ' ',
+      '\u00a0': ' ',
+      '\u2007': ' ',
+      '\u2009': ' ',
+      '\u202f': ' ',
+      '\u2018': "'",
+      '\u2019': "'",
+      '\u201a': "'",
+      '\u201b': "'",
+      '\u201c': '"',
+      '\u201d': '"',
+      '\u201e': '"',
+      '\u2013': '-',
+      '\u2014': '-',
+      '\u2212': '-',
+      '\u2022': '-',
+      '\u00b7': '-',
+      '\u2026': '...',
+      '\u00d7': 'x',
+      '\u20b1': 'PHP',
+      '\u20ac': 'EUR',
+      '\ufffd': '?',
+    };
+
+    let result = '';
+    for (const char of String(text ?? '')) {
+      const candidate = mapped[char] ?? char;
+      try {
+        font.encodeText(candidate);
+        result += candidate;
+      } catch {
+        result += '?';
+      }
+    }
+
+    return result;
+  }
+
+  private sanitizePrintData(data: PrintSalesOrderData, font: PDFFont): PrintSalesOrderData {
+    return {
+      ...data,
+      dealer: this.sanitizePdfText(data.dealer ?? '', font),
+      address: this.sanitizePdfText(data.address ?? '', font),
+      deliveryDate: this.sanitizePdfText(data.deliveryDate ?? '', font),
+      soNumber: this.sanitizePdfText(data.soNumber ?? '', font),
+      paymentTerm: this.sanitizePdfText(data.paymentTerm ?? '', font),
+      terms: this.sanitizePdfText(data.terms ?? '', font),
+      items: (data.items ?? []).map((item) => ({
+        ...item,
+        unit: this.sanitizePdfText(item.unit ?? '', font),
+        description: this.sanitizePdfText(item.description ?? '', font),
+      })),
+    };
+  }
+
   private wrapText(font: PDFFont, text: string, maxWidth: number, fontSize: number): string[] {
-    if (!text) return [''];
-    const words = text.split(' ');
+    const safeText = this.sanitizePdfText(text, font);
+    if (!safeText) return [''];
+    const words = safeText.split(' ');
     const lines: string[] = [];
     let currentLine = '';
 

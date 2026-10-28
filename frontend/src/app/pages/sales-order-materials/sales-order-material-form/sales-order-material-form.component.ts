@@ -89,18 +89,6 @@ export class SalesOrderMaterialFormComponent implements OnInit, OnDestroy {
     return (status === 'complete' || status === 'completed') && !this.isAdmin;
   }
 
-  /**
-   * Customer can be changed while creating an order or while it is still Draft.
-   * After it moves to another tab, only admin and super admin can change it.
-   */
-  get canEditCustomer(): boolean {
-    if (this.isAdmin || !this.orderId) {
-      return true;
-    }
-
-    return (this.orderStatus ?? '').trim().toLowerCase() === 'draft';
-  }
-
   // ─── Stock Validation Modal ─────────────────────────────────────────────────
   isValidationModalOpen = false;
   validationWarnings: string[] = [];
@@ -276,10 +264,6 @@ export class SalesOrderMaterialFormComponent implements OnInit, OnDestroy {
   // ─── Customer Search ────────────────────────────────────────────────────────
 
   onCustomerSearchChange(value: string): void {
-    if (!this.canEditCustomer) {
-      return;
-    }
-
     this.customerSearch = value;
     this.selectedCustomerId = null;
     this.isCustomerDropdownOpen = true;
@@ -309,10 +293,6 @@ export class SalesOrderMaterialFormComponent implements OnInit, OnDestroy {
   }
 
   selectCustomer(customerId: string): void {
-    if (!this.canEditCustomer) {
-      return;
-    }
-
     this.selectedCustomerId = customerId;
     const selected = this.customerOptions.find((c) => c.id === customerId);
     if (!selected) return;
@@ -326,11 +306,6 @@ export class SalesOrderMaterialFormComponent implements OnInit, OnDestroy {
   }
 
   onCustomerComboboxFocus(): void {
-    if (!this.canEditCustomer) {
-      this.isCustomerDropdownOpen = false;
-      return;
-    }
-
     this.isCustomerDropdownOpen = true;
     if (this.customerOptions.length === 0) {
       void this.loadCustomerOptions(this.customerSearch);
@@ -1326,20 +1301,16 @@ export class SalesOrderMaterialFormComponent implements OnInit, OnDestroy {
       remarks: this.remarks || undefined,
     };
 
-    // Customer info. Omit it when the field is locked so a pending/complete/voided
-    // save from a non-admin keeps the customer already stored on the order.
-    if (this.canEditCustomer) {
-      if (this.selectedCustomerId) {
-        payload.customer_id = this.selectedCustomerId;
-      }
-      if (this.customerForm.name) {
-        payload.customer = {
-          name: this.customerForm.name,
-          address: this.customerForm.address || undefined,
-          contact_person: this.customerForm.contact_person || undefined,
-          contact_number: this.customerForm.contact_number || undefined,
-        };
-      }
+    if (this.selectedCustomerId) {
+      payload.customer_id = this.selectedCustomerId;
+    }
+    if (this.customerForm.name) {
+      payload.customer = {
+        name: this.customerForm.name,
+        address: this.customerForm.address || undefined,
+        contact_person: this.customerForm.contact_person || undefined,
+        contact_number: this.customerForm.contact_number || undefined,
+      };
     }
 
     // NOTE: salesType is always "sales" — no Sales Type field in UI
